@@ -11,4 +11,5 @@ DATE=$(date +"%Y-%m-%d")
 OUTPUT="Camera/timelapse/$DATE"
 
 test -d $OUTPUT || mkdir -p $OUTPUT
-rpicam-still --timeout $TIMEOUT --timelapse $((TIMELAPSE * 1000)) -o $OUTPUT/%04d.jpg
+start_index=$(ls $OUTPUT | wc -l)
+rpicam-still --timeout $TIMEOUT --timelapse $((TIMELAPSE * 1000)) -o $OUTPUT/image_%05d.jpg -n -w 1920 -h 1080 --framestart $start_index
