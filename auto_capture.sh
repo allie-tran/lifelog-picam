@@ -15,4 +15,4 @@ OUTPUT="Camera/timelapse/$DATE"
 echo "Saving images to $OUTPUT"
 test -d $OUTPUT || mkdir -p $OUTPUT
 start_index=$(ls $OUTPUT | wc -l)
-rpicam-still --timeout $TIMEOUT -o $OUTPUT/image_%05d.jpg -n -w 1920 -h 1080 --framestart $start_index --rotation 180 --timelapse $(($TIMELAPSE * 10000))
+rpicam-still --timeout $TIMEOUT -o $OUTPUT/image_%05d.jpg -n --framestart $start_index --timelapse $(($TIMELAPSE * 1000))

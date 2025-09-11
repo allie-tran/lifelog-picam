@@ -1,2 +1,2 @@
 timelapse/
-auto_capture.log monitor.log
+*.log
