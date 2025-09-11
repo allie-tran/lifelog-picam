@@ -3,7 +3,7 @@
 # it will send the file to a remote server using HTTP POST request.
 
 # Configuration
-DATE=$(date + "%Y-%m-%d_%H%M")
+DATE=$(date +"%Y-%m-%d")
 DIR="Camera/timelapse/$DATE"
 
 REMOTE_URL="https://dcu.allietran.com/omi/be/upload"
@@ -18,7 +18,8 @@ send_file() {
 }
 
 # Monitor the directory for new files
-inotifywait -m -e create --format '%w%f' "$DIR" | while read -r NEW_FILE;
+echo "Watching $DIR"
+inotifywait -m "$DIR" -e create | while read -r directory action NEW_FILE
 do
     send_file "$NEW_FILE"
 done

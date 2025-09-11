@@ -7,8 +7,8 @@ done
 
 TIMEOUT=0
 TIMELAPSE=30 # in seconds
-DATE=$(date + "%Y-%m-%d_%H%M")
+DATE=$(date +"%Y-%m-%d")
 OUTPUT="Camera/timelapse/$DATE"
 
 test -d $OUTPUT || mkdir -p $OUTPUT
-rpicam-still --raw --timeout $TIMEOUT --timelapse $((TIMELAPSE * 1000)) -o $OUTPUT/%04d.jpg
+rpicam-still --timeout $TIMEOUT --timelapse $((TIMELAPSE * 1000)) -o $OUTPUT/%04d.jpg
