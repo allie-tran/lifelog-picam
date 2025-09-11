@@ -6,7 +6,7 @@
 DATE=$(date +"%Y-%m-%d")
 DIR="Camera/timelapse/$DATE"
 
-REMOTE_URL="https://dcu.allietran.com/omi/be/upload"
+REMOTE_URL="https://dcu.allietran.com/omi/be/upload-image"
 
 # function to send file to remote server
 send_file() {
@@ -14,12 +14,12 @@ send_file() {
     timestamp=$(date -r "$file_path" +"%s")
     timestamp=$((timestamp * 1000))
     echo "Sending file: $file_path"
-    curl -X POST -F "file=@${file_path}" -F "timestamp=${timestamp}" "$REMOTE_URL"
+    curl -X PUT -F "file=@${file_path};timestamp=${timestamp}" "$REMOTE_URL"
 }
 
 # Monitor the directory for new files
 echo "Watching $DIR"
 inotifywait -m "$DIR" -e create | while read -r directory action NEW_FILE
 do
-    send_file "$NEW_FILE"
+    send_file "$DIR/$NEW_FILE"
 done
