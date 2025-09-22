@@ -17,7 +17,12 @@ send_file() {
     timestamp=$(date -r "$file_path" +"%s")
     timestamp=$((timestamp * 1000))
     # sending file with retry logic
+    retried=0
     while true; do
+        if [ $retried -ge 5 ]; then
+            echo "Failed to send $file_path after 5 attempts. Skipping."
+            return
+        fi
         response=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -F "file=@${file_path}" -F "timestamp=${timestamp}" "$REMOTE_URL")
         if [ "$response" -eq 200 ]; then
             echo "File $file_path sent successfully."
@@ -26,10 +31,10 @@ send_file() {
         else
             echo "Failed to send $file_path. HTTP status code: $response. Retrying in 5 seconds..."
             sleep 5
+            retried=$((retried + 1))
         fi
     done
 }
-
 
 # back up other folders that are not today
 for folder in Camera/timelapse/*; do
