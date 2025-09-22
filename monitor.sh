@@ -8,8 +8,21 @@ DIR="Camera/timelapse/$DATE"
 LOG_FILE="Camera/logs/$DATE.log"
 
 # REMOTE_URL="https://dcu.allietran.com/omi/be/upload-image"
-REMOTE_URL="https://mysceal.computing.dcu.ie/omi/be/upload-image"
+UPLOAD_URL="https://mysceal.computing.dcu.ie/omi/be/upload-image"
+CHECK_URL="https://mysceal.computing.dcu.ie/omi/be/check-image-uploaded"
 
+check_image_uploaded() {
+    local file_path="$1"
+    timestamp=$(date -r "$file_path" +"%s")
+    timestamp=$((timestamp * 1000))
+
+    response=$(curl -s -o /dev/null -w "%{http_code}" -G "$CHECK_URL" --data-urlencode "timestamp=${timestamp}")
+    if [ "$response" -eq 200 ]; then
+        return 0  # File exists on server
+    else
+        return 1  # File does not exist on server
+    fi
+}
 
 # function to send file to remote server
 send_file() {
@@ -23,7 +36,7 @@ send_file() {
             echo "Failed to send $file_path after 5 attempts. Skipping."
             return
         fi
-        response=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -F "file=@${file_path}" -F "timestamp=${timestamp}" "$REMOTE_URL")
+        response=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -F "file=@${file_path}" -F "timestamp=${timestamp}" "$UPLOAD_URL")
         if [ "$response" -eq 200 ]; then
             echo "File $file_path sent successfully."
             echo "$file_path" >> "$LOG_FILE"
@@ -39,10 +52,9 @@ send_file() {
 # back up other folders that are not today
 for folder in Camera/timelapse/*; do
     if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
-        log_date=$(basename "$folder")
-        log_file="Camera/logs/$log_date.log"
         for file in "$folder"/*; do
-            if ! grep -q "^$file$" "$log_file"; then
+            # Check if the file has already been sent
+            if ! check_image_uploaded "$file"; then
                 send_file "$file"
             fi
         done
