@@ -1,0 +1,147 @@
+import os
+import base64
+from datetime import datetime
+from typing import Annotated
+from PIL import Image
+
+from fastapi import FastAPI, Form, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+# Allow CORS for all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://mysceal.computing.dcu.ie", "https://dcu.allietran.com", "*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+async def root():
+    return {"message": "Hello, World!"}
+
+
+DIR = "Lifelog"
+
+@app.get("/check-image-uploaded")
+async def check_image_uploaded(timestamp: Annotated[str, Form()]):
+    print(f"Checking image for timestamp: {timestamp}")
+    try:
+        dt = datetime.fromtimestamp(int(timestamp) / 1000)  # Convert milliseconds to seconds
+    except ValueError:
+        return {"exists": False, "message": "Invalid timestamp format."}
+
+    date = dt.strftime("%Y-%m-%d")
+    file_name = f"{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
+    file_path = f"{DIR}/{date}/{file_name}"
+
+    if os.path.exists(file_path):
+        return True
+
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
+@app.put("/upload-image")
+async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = ""):
+    if timestamp:
+        now = datetime.fromtimestamp(
+            int(timestamp) / 1000
+        )  # Convert milliseconds to seconds
+    else:
+        print("No timestamp provided, using current time.")
+        now = datetime.now()
+
+    date = now.strftime("%Y-%m-%d")
+    if not os.path.exists(f"{DIR}/{date}"):
+        os.makedirs(f"{DIR}/{date}")
+
+    file_name = f"{now.strftime('%Y%m%d_%H%M%S')}.jpg"
+    if os.path.exists(f"{DIR}/{date}/{file_name}"):
+        print(f"File {file_name} already exists for date {date}.")
+    else:
+        # Rotate 90 degrees if needed
+        image = Image.open(file.file)
+        exif = image.getexif()
+        if image.width > image.height:
+            image = image.rotate(-90, expand=True)
+            # Update EXIF orientation tag
+            exif[274] = 1  # Normal orientation
+        # Save image with EXIF data
+        image.save(f"{DIR}/{date}/{file_name}", exif=exif)
+
+def to_base64(image_data: bytes) -> str:
+    """Convert image data to base64 string."""
+    return base64.b64encode(image_data).decode("utf-8")
+
+@app.get("/check-image")
+async def check_image(date: str, timestamp: str):
+    """Check if an image exists for the given date and timestamp."""
+    try:
+        dt = datetime.fromtimestamp(int(timestamp) / 1000)  # Convert milliseconds to seconds
+    except ValueError:
+        return {"exists": False, "message": "Invalid timestamp format."}
+
+    file_name = f"{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
+    file_path = f"{DIR}/{date}/{file_name}"
+
+    if os.path.exists(file_path):
+        return {"exists": True, "message": f"Image {file_name} exists for date {date}."}
+    else:
+        return {"exists": False, "message": f"Image {file_name} does not exist for date {date}."}
+
+@app.get("/get-images", response_model=dict)
+async def get_images(date: str = "", page: int = 0):
+    print(f"Fetching images for date: {date}")
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    dir_path = f"{DIR}/{date}"
+    if not os.path.exists(dir_path):
+        return {"message": f"No images found for date {date}"}
+
+    all_files = sorted(
+        os.listdir(dir_path), reverse=True
+    )
+
+    # Pagination
+    items_per_page = 3 * 10
+    start_index = page * items_per_page
+    end_index = start_index + items_per_page
+    all_files = all_files[start_index:end_index]
+
+    images = []
+    for file_name in all_files:
+        if file_name.endswith(".jpg"):
+            with open(f"{dir_path}/{file_name}", "rb") as f:
+                image_data = f.read()
+                image_data = to_base64(image_data)
+            timestamp = datetime.strptime(
+                file_name.split(".")[0], "%Y%m%d_%H%M%S"
+            ).timestamp()
+            images.append(
+                {
+                    "data": image_data,
+                    "timestamp": timestamp * 1000,  # Convert to milliseconds
+                }
+            )
+
+    return {
+        "date": date,
+        "images": images,
+        "total_pages": (len(os.listdir(dir_path)) + items_per_page - 1) // items_per_page,
+    }
+
+@app.get("/get-all-dates")
+def get_all_dates():
+    """Get all dates with images."""
+    if not os.path.exists(DIR):
+        return []
+
+    dates = []
+    for entry in os.listdir(DIR):
+        if os.path.isdir(os.path.join(DIR, entry)):
+            dates.append(entry)
+
+    return sorted(dates)
