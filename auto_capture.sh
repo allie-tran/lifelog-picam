@@ -20,7 +20,7 @@ start_index=$(ls -l $OUTPUT | wc -l)
 
 # Configuration
 DATE=$(date +"%Y-%m-%d")
-LOG_FILE="Camera/logs/$DATE.log"
+LOG_FILE="$OUTPUT/synced_files.txt"
 
 # REMOTE_URL="https://dcu.allietran.com/omi/be/upload-image"
 UPLOAD_URL="https://dcu.allietran.com/omi/be/upload-image"
@@ -101,19 +101,17 @@ if check_if_connected; then
     echo "Checking previous folders"
     for folder in Camera/timelapse/*; do
         echo "Checking $folder"
-        if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
             if ! check_if_folder_is_synced "$folder"; then
                 echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
                 for file in "$folder"/*; do
-	            if [[ "$file" == *.jpg ]]; then
-			    # Check if the file has already been sent
-			    if ! check_image_uploaded "$file"; then
-				send_file "$file"
-			    fi
-		    fi
+                    if [[ "$file" == *.jpg ]]; then
+                        # Check if the file has already been sent
+                        if ! check_image_uploaded "$file"; then
+                            send_file "$file"
+                        fi
+                    fi
                 done
             fi
-        fi
     done
     echo "All previous folders are synced."
 fi

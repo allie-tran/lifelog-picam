@@ -2,21 +2,28 @@ import base64
 import os
 from datetime import datetime
 from typing import Annotated
-from dotenv import load_dotenv
 
+import numpy as np
+from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
-import numpy as np
-from preprocess import compress_image
-from preprocess import save_features, load_features, retrieve_image, encode_image
-from constants import DIR
 from app_types import Array2D
+from constants import DIR
+from preprocess import (
+    compress_image,
+    encode_image,
+    load_features,
+    retrieve_image,
+    save_features,
+)
+
 
 class CustomFastAPI(FastAPI):
     features: Array2D[np.float32]
     image_paths: list[str]
+
 
 app = CustomFastAPI()
 
@@ -57,9 +64,13 @@ async def startup_event():
                 compress_image(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     print(f"Processing {relative_path}")
-                    _, app.features, app.image_paths = encode_image(relative_path, app.features, app.image_paths)
+                    _, app.features, app.image_paths = encode_image(
+                        relative_path, app.features, app.image_paths
+                    )
                     i += 1
-                    assert len(app.features) == len(app.image_paths), f"{len(app.features)} != {len(app.image_paths)}"
+                    assert len(app.features) == len(
+                        app.image_paths
+                    ), f"{len(app.features)} != {len(app.image_paths)}"
             # if i > 100:
             #     break
 
@@ -84,6 +95,7 @@ async def check_image_uploaded(timestamp: int):
     file_path = f"{DIR}/{date}/{file_name}"
 
     if os.path.exists(file_path):
+        print(f"Image {file_name} exists for date {date}.")
         return True
 
     raise HTTPException(status_code=404, detail="Image not found")
@@ -118,7 +130,9 @@ async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = "")
         # Save image with EXIF data
         output_path = f"{DIR}/{date}/{file_name}"
         image.save(output_path, exif=exif)
-        _, app.features, app.image_paths = encode_image(f"{date}/{file_name}", app.features, app.image_paths)
+        _, app.features, app.image_paths = encode_image(
+            f"{date}/{file_name}", app.features, app.image_paths
+        )
         compress_image(output_path)
 
 
@@ -141,6 +155,7 @@ async def check_image(date: str, timestamp: str):
     file_path = f"{DIR}/{date}/{file_name}"
 
     if os.path.exists(file_path):
+        print(f"Image {file_name} exists for date {date}.")
         return {"exists": True, "message": f"Image {file_name} exists for date {date}."}
     else:
         return {
@@ -150,7 +165,7 @@ async def check_image(date: str, timestamp: str):
 
 
 @app.get("/get-images", response_model=dict)
-async def get_images(date: str = "", page: int = 0):
+async def get_images(date: str = "", page: int = 1):
     print(f"Fetching images for date: {date}")
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
@@ -160,12 +175,14 @@ async def get_images(date: str = "", page: int = 0):
         return {"message": f"No images found for date {date}"}
 
     all_files = sorted(os.listdir(dir_path), reverse=True)
+    print(all_files[:10])
 
     # Pagination
     items_per_page = 3 * 10
-    start_index = page * items_per_page
+    start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
     all_files = all_files[start_index:end_index]
+    print(all_files)
 
     images = []
     for file_name in all_files:
