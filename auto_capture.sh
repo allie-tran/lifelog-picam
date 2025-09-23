@@ -14,7 +14,7 @@ OUTPUT="Camera/timelapse/$DATE"
 
 echo "Saving images to $OUTPUT"
 test -d $OUTPUT || mkdir -p $OUTPUT
-start_index=$(ls $OUTPUT | wc -l)
+start_index=$(ls -l $OUTPUT | wc -l)
 
 # rpicam-still --timeout $TIMEOUT -o $OUTPUT/image_%05d.jpg -n --framestart $start_index --timelapse $(($TIMELAPSE * 1000))
 
@@ -39,11 +39,9 @@ check_image_uploaded() {
 
     response=$(curl -s -o /dev/null -w "%{http_code}" -G "$CHECK_URL" --data-urlencode "timestamp=${timestamp}")
     if [ "$response" -eq 200 ]; then
-        echo "OK"
         echo "$file_path" >> "$log_file"
         return 0  # File exists on server
     else
-        echo "File $file_path does not exist on server."
         return 1  # File does not exist on server
     fi
 }
@@ -98,25 +96,27 @@ check_if_folder_is_synced() {
 }
 
 # back up other folders that are not today
-# if check_if_connected; then
-#     echo "Internet connection is available."
-#     echo "Checking previous folders"
-#     for folder in Camera/timelapse/*; do
-#     echo "$folder"
-#         if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
-#             if ! check_if_folder_is_synced "$folder"; then
-#                 echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
-#                 for file in "$folder"/*; do
-#                     # Check if the file has already been sent
-#                     if ! check_image_uploaded "$file"; then
-#                         send_file "$file"
-#                     fi
-#                 done
-#             fi
-#         fi
-#     done
-#     echo "All previous folders are synced."
-# fi
+if check_if_connected; then
+    echo "Internet connection is available."
+    echo "Checking previous folders"
+    for folder in Camera/timelapse/*; do
+        echo "Checking $folder"
+        if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
+            if ! check_if_folder_is_synced "$folder"; then
+                echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
+                for file in "$folder"/*; do
+	            if [[ "$file" == *.jpg ]]; then
+			    # Check if the file has already been sent
+			    if ! check_image_uploaded "$file"; then
+				send_file "$file"
+			    fi
+		    fi
+                done
+            fi
+        fi
+    done
+    echo "All previous folders are synced."
+fi
 
 # Monitor the directory for new files
 # echo "Watching $DIR"
@@ -125,7 +125,7 @@ check_if_folder_is_synced() {
 #     send_file "$DIR/$NEW_FILE"
 # done
 
-echo "Starting timelapse capture loop."
+echo "Starting timelapse capture loop at $start_index"
 while true; do
     file_name="image_$(printf "%05d" $start_index).jpg"
     rpicam-still -o $OUTPUT/$file_name -n
