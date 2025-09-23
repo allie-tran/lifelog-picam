@@ -23,7 +23,7 @@ async def root():
     return {"message": "Hello, World!"}
 
 
-DIR = "Lifelog"
+DIR = "/mnt/ssd0/Images/LifelogPicam" # Directory to store images
 
 @app.get("/check-image-uploaded")
 async def check_image_uploaded(timestamp: Annotated[str, Form()]):
@@ -114,15 +114,12 @@ async def get_images(date: str = "", page: int = 0):
     images = []
     for file_name in all_files:
         if file_name.endswith(".jpg"):
-            with open(f"{dir_path}/{file_name}", "rb") as f:
-                image_data = f.read()
-                image_data = to_base64(image_data)
             timestamp = datetime.strptime(
                 file_name.split(".")[0], "%Y%m%d_%H%M%S"
             ).timestamp()
             images.append(
                 {
-                    "data": image_data,
+                    "image_path": f"{date}/{file_name}",
                     "timestamp": timestamp * 1000,  # Convert to milliseconds
                 }
             )

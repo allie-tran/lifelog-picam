@@ -1,0 +1,12 @@
+.App {
+  text-align: center;
+}
+
+.image-grid {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+}
