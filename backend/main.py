@@ -71,14 +71,13 @@ async def shutdown_event():
 
 
 @app.get("/check-image-uploaded")
-async def check_image_uploaded(timestamp: Annotated[str, Form()]):
-    print(f"Checking image for timestamp: {timestamp}")
+async def check_image_uploaded(timestamp: int):
     try:
         dt = datetime.fromtimestamp(
             int(timestamp) / 1000
         )  # Convert milliseconds to seconds
     except ValueError:
-        return {"exists": False, "message": "Invalid timestamp format."}
+        raise HTTPException(status_code=400, detail="Invalid timestamp format.")
 
     date = dt.strftime("%Y-%m-%d")
     file_name = f"{dt.strftime('%Y%m%d_%H%M%S')}.jpg"

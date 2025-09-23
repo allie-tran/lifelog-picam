@@ -20,7 +20,6 @@ start_index=$(ls $OUTPUT | wc -l)
 
 # Configuration
 DATE=$(date +"%Y-%m-%d")
-DIR="Camera/timelapse/$DATE"
 LOG_FILE="Camera/logs/$DATE.log"
 
 # REMOTE_URL="https://dcu.allietran.com/omi/be/upload-image"
@@ -43,7 +42,7 @@ check_image_uploaded() {
 # function to send file to remote server
 send_file() {
     local file_path="$1"
-	echo "Sending $file_path"
+    echo "Sending $file_path"
     timestamp=$(date -r "$file_path" +"%s")
     timestamp=$((timestamp * 1000))
     # sending file with retry logic
@@ -90,22 +89,25 @@ check_if_folder_is_synced() {
 }
 
 # back up other folders that are not today
-echo "Checking previous folders"
-for folder in Camera/timelapse/*; do
-	echo "$folder"
-    if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
-        if ! check_if_folder_is_synced "$folder"; then
-            echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
-            for file in "$folder"/*; do
-                # Check if the file has already been sent
-                if ! check_image_uploaded "$file"; then
-                    send_file "$file"
-                fi
-            done
+if check_if_connected; then
+    echo "Internet connection is available."
+    echo "Checking previous folders"
+    for folder in Camera/timelapse/*; do
+    echo "$folder"
+        if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
+            if ! check_if_folder_is_synced "$folder"; then
+                echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
+                for file in "$folder"/*; do
+                    # Check if the file has already been sent
+                    if ! check_image_uploaded "$file"; then
+                        send_file "$file"
+                    fi
+                done
+            fi
         fi
-    fi
-done
-echo "All previous folders are synced."
+    done
+    echo "All previous folders are synced."
+fi
 
 # Monitor the directory for new files
 # echo "Watching $DIR"
