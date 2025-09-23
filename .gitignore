@@ -3,3 +3,4 @@ IMAGES/
 Lifelog/
 *.log
 
+backend/siglip_features.npz
