@@ -39,9 +39,11 @@ check_image_uploaded() {
 
     response=$(curl -s -o /dev/null -w "%{http_code}" -G "$CHECK_URL" --data-urlencode "timestamp=${timestamp}")
     if [ "$response" -eq 200 ]; then
+        echo "OK"
         echo "$file_path" >> "$log_file"
         return 0  # File exists on server
     else
+        echo "File $file_path does not exist on server."
         return 1  # File does not exist on server
     fi
 }
@@ -86,8 +88,8 @@ check_if_folder_is_synced() {
     for file in "$folder_path"/*; do
         if [ -f "$file" ] && [[ "$file" == *.jpg ]]; then
             if ! check_image_uploaded "$file" "$folder_path/synced_files.txt"; then
-                return 1  # Found a file that is not uploaded
                 echo "Not synced"
+                return 1  # Found a file that is not uploaded
             fi
         fi
     done
