@@ -24,8 +24,8 @@ DIR="Camera/timelapse/$DATE"
 LOG_FILE="Camera/logs/$DATE.log"
 
 # REMOTE_URL="https://dcu.allietran.com/omi/be/upload-image"
-UPLOAD_URL="https://mysceal.computing.dcu.ie/omi/be/upload-image"
-CHECK_URL="https://mysceal.computing.dcu.ie/omi/be/check-image-uploaded"
+UPLOAD_URL="https://dcu.allietran.com/omi/be/upload-image"
+CHECK_URL="https://dcu.allietran.com/omi/be/check-image-uploaded"
 
 check_image_uploaded() {
     local file_path="$1"
@@ -43,6 +43,7 @@ check_image_uploaded() {
 # function to send file to remote server
 send_file() {
     local file_path="$1"
+	echo "Sending $file_path"
     timestamp=$(date -r "$file_path" +"%s")
     timestamp=$((timestamp * 1000))
     # sending file with retry logic
@@ -58,8 +59,8 @@ send_file() {
             echo "$file_path" >> "$LOG_FILE"
             break
         else
-            echo "Failed to send $file_path. HTTP status code: $response. Retrying in 5 seconds..."
-            sleep 5
+            echo "Failed to send $file_path. HTTP status code: $response. Retrying in 1 seconds..."
+            sleep 1
             retried=$((retried + 1))
         fi
     done
@@ -73,20 +74,25 @@ check_if_connected() {
 check_if_folder_is_synced() {
     local folder_path="$1"
     if [ -e "$folder_path/.synced" ]; then
+	   echo "OK"
         return 0  # Folder is marked as synced
     fi
     for file in "$folder_path"/*; do
         if [ -f "$file" ]; then
             if ! check_image_uploaded "$file"; then
                 return 1  # Found a file that is not uploaded
+		echo "Not synced"
             fi
         fi
     done
+    echo "OK"
     touch "$folder_path/.synced"
 }
 
 # back up other folders that are not today
+echo "Checking previous folders"
 for folder in Camera/timelapse/*; do
+	echo "$folder"
     if [ -d "$folder" ] && [ "$(basename "$folder")" != "$DATE" ]; then
         if ! check_if_folder_is_synced "$folder"; then
             echo "Folder $folder is not fully synced. Will attempt to upload remaining files."
