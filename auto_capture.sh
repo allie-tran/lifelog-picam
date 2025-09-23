@@ -28,11 +28,18 @@ CHECK_URL="https://dcu.allietran.com/omi/be/check-image-uploaded"
 
 check_image_uploaded() {
     local file_path="$1"
+    local log_file="$2"
+    # Check if the file is in the log file
+    if grep -Fxq "$file_path" "$log_file"; then
+        return 0  # File already logged as sent
+    fi
+
     timestamp=$(date -r "$file_path" +"%s")
     timestamp=$((timestamp * 1000))
 
     response=$(curl -s -o /dev/null -w "%{http_code}" -G "$CHECK_URL" --data-urlencode "timestamp=${timestamp}")
     if [ "$response" -eq 200 ]; then
+        echo "$file_path" >> "$log_file"
         return 0  # File exists on server
     else
         return 1  # File does not exist on server
@@ -73,14 +80,14 @@ check_if_connected() {
 check_if_folder_is_synced() {
     local folder_path="$1"
     if [ -e "$folder_path/.synced" ]; then
-	   echo "OK"
+        echo "OK"
         return 0  # Folder is marked as synced
     fi
     for file in "$folder_path"/*; do
-        if [ -f "$file" ]; then
-            if ! check_image_uploaded "$file"; then
+        if [ -f "$file" ] && [[ "$file" == *.jpg ]]; then
+            if ! check_image_uploaded "$file" "$folder_path/synced_files.txt"; then
                 return 1  # Found a file that is not uploaded
-		echo "Not synced"
+                echo "Not synced"
             fi
         fi
     done
@@ -127,7 +134,7 @@ while true; do
 
     # Upload the latest image to the server
     if check_if_connected; then
-        if ! check_image_uploaded "$OUTPUT/$file_name"; then
+        if ! check_image_uploaded "$OUTPUT/$file_name" "$OUTPUT/synced_files.txt"; then
             if send_file "$OUTPUT/$file_name"
             then
                 # Retry sending missing files
