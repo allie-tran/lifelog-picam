@@ -136,31 +136,27 @@ while true; do
 
     # Upload the latest image to the server
     if check_if_connected; then
-        if ! check_image_uploaded "$OUTPUT/$file_name" "$OUTPUT/synced_files.txt"; then
-            if send_file "$OUTPUT/$file_name"
-            then
-                # Retry sending missing files
-                if [ -f missing_files.txt ]; then
-                    echo "Retrying to send missing files..."
-                    while read -r missing_file; do
-                        if [ -f "$missing_file" ]; then
-                            send_file "$missing_file" && sed -i "\|$missing_file|d" missing_files.txt
-                        else
-                            echo "File $missing_file does not exist anymore. Removing from missing files list."
-                            sed -i "\|$missing_file|d" missing_files.txt
-                        fi
-                    done < missing_files.txt
-
-                    # If the file is empty after retries, remove it
-                    if [ ! -s missing_files.txt ]; then
-                        rm missing_files.txt
+        if send_file "$OUTPUT/$file_name"
+        then
+            # Retry sending missing files
+            if [ -f missing_files.txt ]; then
+                echo "Retrying to send missing files..."
+                while read -r missing_file; do
+                    if [ -f "$missing_file" ]; then
+                        send_file "$missing_file" && sed -i "\|$missing_file|d" missing_files.txt
+                    else
+                        echo "File $missing_file does not exist anymore. Removing from missing files list."
+                        sed -i "\|$missing_file|d" missing_files.txt
                     fi
+                done < missing_files.txt
+
+                # If the file is empty after retries, remove it
+                if [ ! -s missing_files.txt ]; then
+                    rm missing_files.txt
                 fi
-            else
-                echo $OUTPUT/$file_name >> missing_files.txt
             fi
         else
-            echo "File $OUTPUT/$file_name already exists on server. Skipping upload."
+            echo $OUTPUT/$file_name >> missing_files.txt
         fi
     else
         echo "No internet connection. Will try to upload later."

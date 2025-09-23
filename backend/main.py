@@ -107,6 +107,7 @@ async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = "")
     if os.path.exists(f"{DIR}/{date}/{file_name}"):
         print(f"File {file_name} already exists for date {date}.")
     else:
+        print(f"Saving file {file_name} for date {date}.")
         # Rotate 90 degrees if needed
         image = Image.open(file.file)
         exif = image.getexif()
