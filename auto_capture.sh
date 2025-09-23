@@ -128,7 +128,7 @@ check_if_folder_is_synced() {
 echo "Starting timelapse capture loop."
 while true; do
     file_name="image_$(printf "%05d" $start_index).jpg"
-    rpicam-still --timeout $TIMEOUT -o $OUTPUT/$file_name -n
+    rpicam-still -o $OUTPUT/$file_name -n
 
     echo "Captured image_$((start_index)).jpg"
     start_index=$((start_index + 1))
