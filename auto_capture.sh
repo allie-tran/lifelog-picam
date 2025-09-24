@@ -106,7 +106,7 @@ if check_if_connected; then
                 for file in "$folder"/*; do
                     if [[ "$file" == *.jpg ]]; then
                         # Check if the file has already been sent
-                        if ! check_image_uploaded "$file"; then
+                        if ! check_image_uploaded "$file" "$folder/synced_files.txt"; then
                             send_file "$file"
                         fi
                     fi
