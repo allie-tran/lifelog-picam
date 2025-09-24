@@ -123,13 +123,13 @@ fi
 #     send_file "$DIR/$NEW_FILE"
 # done
 
-echo "Starting timelapse capture loop at $start_index"
+echo "Starting timelapse capture loop"
 while true; do
-    file_name="image_$(printf "%05d" $start_index).jpg"
+    # file_name="image_$(printf "%05d" $start_index).jpg"
+    file_name="$(date +"%Y%m%d_%H%M%S").jpg"
     rpicam-still -o $OUTPUT/$file_name -n
 
-    echo "Captured image_$((start_index)).jpg"
-    start_index=$((start_index + 1))
+    echo "Captured $file_name"
     sleep $TIMELAPSE
 
     # Upload the latest image to the server

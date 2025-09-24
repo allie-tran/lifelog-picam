@@ -7,7 +7,7 @@ import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from app_types import Array2D
 from constants import DIR
@@ -121,7 +121,10 @@ async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = "")
     else:
         print(f"Saving file {file_name} for date {date}.")
         # Rotate 90 degrees if needed
-        image = Image.open(file.file)
+        try:
+            image = Image.open(file.file)
+        except UnidentifiedImageError:
+            raise HTTPException(status_code=400, detail="Invalid image file.")
         exif = image.getexif()
         if image.width > image.height:
             image = image.rotate(-90, expand=True)
@@ -229,7 +232,7 @@ def search(query: str):
 
 @app.get("/login")
 def login(password: str):
-    if password == os.getenv("ADMIN_PASSWORD"):
+    if password in os.getenv("ADMIN_PASSWORD").split(","):
         return {"success": True}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
