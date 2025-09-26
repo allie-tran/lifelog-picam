@@ -133,7 +133,7 @@ function App() {
                   imagePath={image.image_path}
                   timestamp={image.timestamp}
                   onClick={() =>
-                    setSelectedImage(`${IMAGE_HOST_URL}/${image.image_path}`)
+                    setSelectedImage(`${IMAGE_HOST_URL}/${image.image_path}.jpg`)
                   }
                 />
               ))}
@@ -149,7 +149,12 @@ function App() {
             }}
           />
         </Stack>
-        {selectedImage && <ImageZoom imageUrl={selectedImage} />}
+        {selectedImage && (
+          <ImageZoom
+            imageUrl={selectedImage}
+            onClose={() => setSelectedImage(null)}
+          />
+        )}
       </LocalizationProvider>
     </PasswordLock>
   );
@@ -210,32 +215,21 @@ const SearchInterface = () => {
   );
 };
 
-const ImageZoom = ({ imageUrl }: { imageUrl: string }) => {
+const ImageZoom = ({
+  imageUrl,
+  onClose,
+}: {
+  imageUrl: string;
+  onClose: () => void;
+}) => {
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        backgroundColor: "rgba(0, 0, 0, 0.8)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 1000,
-      }}
-      onClick={() => {
-        const element = document.getElementById("app");
-        element?.scrollIntoView({ behavior: "smooth" });
-      }}
-    >
+    <ModalWithCloseButton open={true} onClose={onClose}>
       <img
         src={imageUrl}
         alt="Zoomed"
-        style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px" }}
+        style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
       />
-    </div>
+    </ModalWithCloseButton>
   );
 };
 
@@ -299,7 +293,11 @@ const ImageWithDate = ({
       <img
         src={imageUrl}
         alt={imagePath}
-        style={{ maxWidth: "300px", height: "auto", borderRadius: "8px" }}
+        style={{
+          maxWidth: "clamp(150px, 33vw, 300px)",
+          height: "auto",
+          borderRadius: "8px",
+        }}
         onClick={onClick}
       />
       <div>{formattedDate}</div>

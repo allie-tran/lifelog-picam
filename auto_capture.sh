@@ -123,12 +123,11 @@ done
 echo "Camera is ready. Starting timelapse capture."
 echo "Starting timelapse capture loop"
 while true; do
+    current_time=$(date + %s)
     # file_name="image_$(printf "%05d" $start_index).jpg"
     file_name="$(date +"%Y%m%d_%H%M%S").jpg"
     rpicam-still -o $OUTPUT/$file_name -n
-
     echo "Captured $file_name"
-    sleep $TIMELAPSE
 
     # Upload the latest image to the server
     if check_if_connected; then
@@ -138,6 +137,11 @@ while true; do
             if [ -f missing_files.txt ]; then
                 echo "Retrying to send missing files..."
                 while read -r missing_file; do
+                    time_elapsed=$(( $(date +%s) - current_time ))
+                    if [ $time_elapsed -ge $TIMELAPSE ]; then
+                        echo "Time limit reached for this cycle. Will continue in the next cycle."
+                        break
+                    fi
                     if [ -f "$missing_file" ]; then
                         send_file "$missing_file" && sed -i "\|$missing_file|d" missing_files.txt
                     else
@@ -157,5 +161,9 @@ while true; do
     else
         echo "No internet connection. Will try to upload later."
         echo $OUTPUT/$file_name >> missing_files.txt
+    fi
+    time_elapsed=$(( $(date +%s) - current_time ))
+    if [ $time_elapsed -lt $TIMELAPSE ]; then
+        sleep $(( TIMELAPSE - time_elapsed ))
     fi
 done
