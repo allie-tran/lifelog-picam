@@ -1,22 +1,12 @@
 #!/bin/bash
 
-while ! rpicam-still --output starting.jpg
-do
-    echo "Waiting for camera to be ready..."
-    sleep 1
-done
-
-echo "Camera is ready. Starting timelapse capture."
 TIMEOUT=0
-TIMELAPSE=30 # in seconds
+TIMELAPSE=10 # in seconds
 DATE=$(date +"%Y-%m-%d")
 OUTPUT="Camera/timelapse/$DATE"
 
 echo "Saving images to $OUTPUT"
 test -d $OUTPUT || mkdir -p $OUTPUT
-start_index=$(ls -l $OUTPUT | wc -l)
-
-# rpicam-still --timeout $TIMEOUT -o $OUTPUT/image_%05d.jpg -n --framestart $start_index --timelapse $(($TIMELAPSE * 1000))
 
 # Configuration
 DATE=$(date +"%Y-%m-%d")
@@ -123,6 +113,14 @@ fi
 #     send_file "$DIR/$NEW_FILE"
 # done
 
+
+while ! rpicam-still --output starting.jpg
+do
+    echo "Waiting for camera to be ready..."
+    sleep 1
+done
+
+echo "Camera is ready. Starting timelapse capture."
 echo "Starting timelapse capture loop"
 while true; do
     # file_name="image_$(printf "%05d" $start_index).jpg"
