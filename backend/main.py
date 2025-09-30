@@ -2,6 +2,7 @@ import base64
 import os
 from datetime import datetime
 from typing import Annotated
+from pydantic import BaseModel
 
 import numpy as np
 from dotenv import load_dotenv
@@ -232,7 +233,31 @@ def search(query: str):
 
 @app.get("/login")
 def login(password: str):
-    if password in os.getenv("ADMIN_PASSWORD").split(","):
+    if password in os.getenv("ADMIN_PASSWORD", "").split(","):
         return {"success": True}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+class CheckFilesRequest(BaseModel):
+    date: str
+    all_files: list[str]
+
+@app.post("/check-all-images-uploaded")
+def check_all_files_exist(request: CheckFilesRequest):
+    date = request.date
+    all_files = request.all_files
+    print(f"Checking files for date: {date}")
+    if not date:
+        return {"message": "Date is required."}
+
+    dir_path = f"{DIR}/{date}"
+    if not os.path.exists(dir_path):
+        return {"message": f"No images found for date {date}"}
+
+    existing_files = set(os.listdir(dir_path))
+    missing_files = [f for f in all_files if f not in existing_files]
+
+    if missing_files:
+        return missing_files
+    else:
+        return []
