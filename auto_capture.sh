@@ -45,8 +45,8 @@ send_file() {
     # sending file with retry logic
     retried=0
     while true; do
-        if [ $retried -ge 5 ]; then
-            echo "Failed to send $file_path after 5 attempts. Skipping."
+        if [ $retried -ge 1 ]; then
+            echo "Failed to send $file_path. Skipping."
             return
         fi
         response=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -F "file=@${file_path}" -F "timestamp=${timestamp}" "$UPLOAD_URL")
@@ -124,7 +124,6 @@ echo "Camera is ready. Starting timelapse capture."
 echo "Starting timelapse capture loop"
 while true; do
     current_time=$(date + %s)
-    # file_name="image_$(printf "%05d" $start_index).jpg"
     file_name="$(date +"%Y%m%d_%H%M%S").jpg"
     rpicam-still -o $OUTPUT/$file_name -n
     echo "Captured $file_name"
@@ -162,6 +161,8 @@ while true; do
         echo "No internet connection. Will try to upload later."
         echo $OUTPUT/$file_name >> missing_files.txt
     fi
+
+    echo "Finished uploading"
     time_elapsed=$(( $(date +%s) - current_time ))
     if [ $time_elapsed -lt $TIMELAPSE ]; then
         sleep $(( TIMELAPSE - time_elapsed ))
