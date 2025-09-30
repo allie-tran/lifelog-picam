@@ -8,6 +8,7 @@ import requests
 UPLOAD_URL = "https://dcu.allietran.com/omi/be/upload-image"
 CHECK_URL = "https://dcu.allietran.com/omi/be/check-image-uploaded"
 CHECK_ALL_URL = "https://dcu.allietran.com/omi/be/check-all-images-uploaded"
+OUTPUT = "Camera/timelapse"
 
 missing_files = set()
 uploaded_files = set()
@@ -28,7 +29,7 @@ def send_image(image_path):
             "file": (os.path.basename(image_path), img_file, "image/jpeg"),
             "timestamp": (None, str(timestamp)),
         }
-        response = requests.post(UPLOAD_URL, files=files)
+        response = requests.put(UPLOAD_URL, files=files)
 
     if response.status_code == 200:
         print(f"Uploaded: {image_path}")
@@ -47,20 +48,21 @@ def check_if_connected():
 
 
 def check_if_folder_is_synced(date: str):
-    if os.path.exists(os.path.join(OUTPUT, date, ".synced")):
-        print(f"Folder {date} is already synced.")
+    DATE_DIR = os.path.join(OUTPUT, date)
+    if os.path.exists(os.path.join(DATE_DIR, ".synced")):
+        print(f"Folder {DATE_DIR} is already synced.")
         return []
 
     files = set(
-        os.path.join(OUTPUT, f) for f in os.listdir(OUTPUT) if f.endswith(".jpg")
+        os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR)
     )
+    files = set(f for f in files if f.endswith(".jpg"))
     files.difference_update(uploaded_files)
 
     if not files:
         print(f"All files in folder {date} are already uploaded.")
-        # create "folder/.synced"
         with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-            f.write("All files are synced.\n")
+           f.write("All files are synced.\n")
         return []
 
     payload = {"date": date, "all_files": list(files)}
@@ -68,11 +70,15 @@ def check_if_folder_is_synced(date: str):
         response = requests.post(CHECK_ALL_URL, json=payload, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            synced_files = set(data.get("synced_files", []))
-            missing = files - synced_files
+            missing = set(data)
+            synced_files = files - missing
             missing_files.update(missing)
             uploaded_files.update(synced_files)
             print(f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing.")
+            if not missing:
+                with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
+                   f.write("All files are synced.\n")
+
             return list(missing)
     except requests.RequestException as e:
         print(f"Error checking folder sync status: {e}")
@@ -82,7 +88,6 @@ def check_if_folder_is_synced(date: str):
 # Try to sync files every 5 minutes if connected to the internet
 if __name__ == "__main__":
     # Check all "synced_files.txt" in all subfolders
-    OUTPUT = "Camera/timelapse"
     LOG_FILE = "synced_files.txt"
     for folder in os.listdir(OUTPUT):
         folder_path = os.path.join(OUTPUT, folder)
