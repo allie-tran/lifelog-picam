@@ -6,11 +6,14 @@ import {
   Badge,
   Box,
   Button,
+  createTheme,
   Modal,
   Pagination,
+  responsiveFontSizes,
   Stack,
   TextField,
   Typography,
+  useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
@@ -21,6 +24,7 @@ import {
 } from "@mui/x-date-pickers";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import dayjs, { Dayjs } from "dayjs";
+import { ThemeProvider } from "@emotion/react";
 
 const BASE_URL = `${window.location.origin}/${window.location.pathname.split("/")[1]}`;
 let BACKEND_URL = `${BASE_URL}/be`;
@@ -57,12 +61,34 @@ const searchImages = async (query: string) => {
   return response.data as ImageData[];
 };
 
+declare module "@mui/material/styles" {
+  interface Theme {
+    status: {
+      danger: string;
+    };
+  }
+  // allow configuration using `createTheme()`
+  interface ThemeOptions {
+    status?: {
+      danger?: string;
+    };
+  }
+}
+
+let theme = createTheme({
+  palette: {
+    primary: {
+      main: "#BD93F9",
+    },
+    secondary: {
+      main: "#dc004e",
+    },
+  },
+});
+theme = responsiveFontSizes(theme);
+
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
   const { allDates = [], day, outsideCurrentMonth, ...other } = props;
-
-  const isSelected =
-    !props.outsideCurrentMonth && allDates.includes(day.format("YYYY-MM-DD"));
-
   if (!allDates.includes(day.format("YYYY-MM-DD"))) {
     return (
       <PickersDay
@@ -103,60 +129,64 @@ function App() {
   const images = data?.images;
 
   return (
-    <PasswordLock>
-      <LocalizationProvider dateAdapter={AdapterDayjs}>
-        <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
-          <Typography variant="h4" color="primary" fontWeight="bold">
-            {data?.date || "All Dates"}
-          </Typography>
-          <DatePicker
-            label="Select Date"
-            value={date}
-            onChange={(newValue) => {
-              setDate(newValue);
-              setPage(1);
-            }}
-            slots={{
-              day: (props) => (
-                <AvailableDay {...props} allDates={allDates || []} />
-              ),
-            }}
-          />
-          <SearchInterface />
-          {error && <div>Failed to load images</div>}
-          {!images && !error && <div>Loading...</div>}
-          {images && (
-            <div className="image-grid">
-              {images.map((image: ImageData) => (
-                <ImageWithDate
-                  key={image.image_path}
-                  imagePath={image.image_path}
-                  timestamp={image.timestamp}
-                  onClick={() =>
-                    setSelectedImage(`${IMAGE_HOST_URL}/${image.image_path}.jpg`)
-                  }
-                />
-              ))}
-            </div>
+    <ThemeProvider theme={theme}>
+      <PasswordLock>
+        <LocalizationProvider dateAdapter={AdapterDayjs}>
+          <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
+            <Typography variant="h4" color="primary" fontWeight="bold">
+              {data?.date || "All Dates"}
+            </Typography>
+            <DatePicker
+              label="Select Date"
+              value={date}
+              onChange={(newValue) => {
+                setDate(newValue);
+                setPage(1);
+              }}
+              slots={{
+                day: (props) => (
+                  <AvailableDay {...props} allDates={allDates || []} />
+                ),
+              }}
+            />
+            <SearchInterface />
+            {error && <div>Failed to load images</div>}
+            {!images && !error && <div>Loading...</div>}
+            {images && (
+              <div className="image-grid">
+                {images.map((image: ImageData) => (
+                  <ImageWithDate
+                    key={image.image_path}
+                    imagePath={image.image_path}
+                    timestamp={image.timestamp}
+                    onClick={() =>
+                      setSelectedImage(
+                        `${IMAGE_HOST_URL}/${image.image_path}.jpg`,
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            <Pagination
+              count={data?.total_pages || 1}
+              color="primary"
+              onChange={(_, page) => {
+                setPage(page);
+                const element = document.getElementById("app");
+                element?.scrollIntoView({ behavior: "smooth" });
+              }}
+            />
+          </Stack>
+          {selectedImage && (
+            <ImageZoom
+              imageUrl={selectedImage}
+              onClose={() => setSelectedImage(null)}
+            />
           )}
-          <Pagination
-            count={data?.total_pages || 1}
-            color="primary"
-            onChange={(_, page) => {
-              setPage(page);
-              const element = document.getElementById("app");
-              element?.scrollIntoView({ behavior: "smooth" });
-            }}
-          />
-        </Stack>
-        {selectedImage && (
-          <ImageZoom
-            imageUrl={selectedImage}
-            onClose={() => setSelectedImage(null)}
-          />
-        )}
-      </LocalizationProvider>
-    </PasswordLock>
+        </LocalizationProvider>
+      </PasswordLock>
+    </ThemeProvider>
   );
 }
 
@@ -285,23 +315,42 @@ const ImageWithDate = ({
   timestamp: string;
   onClick?: () => void;
 }) => {
+  const theme = useTheme();
   const imageUrl = `${THUMBNAIL_HOST_URL}/${imagePath}.webp`;
   const date = new Date(timestamp);
   const formattedDate = date.toLocaleString();
   return (
-    <div style={{ marginBottom: "20px" }}>
-      <img
-        src={imageUrl}
-        alt={imagePath}
-        style={{
-          maxWidth: "clamp(150px, 33vw, 300px)",
+    <Box
+      sx={{
+        marginBottom: "20px",
+        height: "auto",
+        position: "relative",
+        [theme.breakpoints.down("xs")]: {
+          width: "calc(45% - 4px)",
+        },
+        [theme.breakpoints.up("xs")]: {
+          width: "calc(33% - 4px)",
+        },
+        [theme.breakpoints.up("md")]: {
+          width: "calc(23% - 4px)",
+        },
+      }}
+    >
+      <Box
+        component="img"
+        sx={{
+          position: "relative",
+          cursor: onClick ? "pointer" : "default",
           height: "auto",
+          width: "100%",
           borderRadius: "8px",
         }}
         onClick={onClick}
+        src={imageUrl}
+        alt={imagePath}
       />
       <div>{formattedDate}</div>
-    </div>
+    </Box>
   );
 };
 
