@@ -48,6 +48,7 @@ def check_if_connected():
 
 def check_if_folder_is_synced(date: str):
     if os.path.exists(os.path.join(OUTPUT, date, ".synced")):
+        print(f"Folder {date} is already synced.")
         return []
 
     files = set(
@@ -56,6 +57,7 @@ def check_if_folder_is_synced(date: str):
     files.difference_update(uploaded_files)
 
     if not files:
+        print(f"All files in folder {date} are already uploaded.")
         # create "folder/.synced"
         with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
             f.write("All files are synced.\n")
@@ -70,10 +72,13 @@ def check_if_folder_is_synced(date: str):
             missing = files - synced_files
             missing_files.update(missing)
             uploaded_files.update(synced_files)
+            print(f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing.")
             return list(missing)
     except requests.RequestException as e:
         print(f"Error checking folder sync status: {e}")
 
+    print(f"Could not verify sync status for folder {date}. Assuming all files are missing.")
+    return list(files)
 # Try to sync files every 5 minutes if connected to the internet
 if __name__ == "__main__":
     # Check all "synced_files.txt" in all subfolders
@@ -88,6 +93,7 @@ if __name__ == "__main__":
                     for line in log:
                         uploaded_files.add(line.strip())
 
+    print(f"Loaded {len(uploaded_files)} uploaded files from logs.")
     while True:
         if check_if_connected():
             print("Connected to the internet. Checking for missing files...")
