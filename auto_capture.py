@@ -1,7 +1,8 @@
 import os
-from datetime import datetime
+
 # Wait for 5 minutes before checking again
 import time
+from datetime import datetime
 
 import requests
 
@@ -53,16 +54,14 @@ def check_if_folder_is_synced(date: str):
         print(f"Folder {DATE_DIR} is already synced.")
         return []
 
-    files = set(
-        os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR)
-    )
+    files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
     files = set(f for f in files if f.endswith(".jpg"))
     files.difference_update(uploaded_files)
 
     if not files:
         print(f"All files in folder {date} are already uploaded.")
         with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-           f.write("All files are synced.\n")
+            f.write("All files are synced.\n")
         return []
 
     payload = {"date": date, "all_files": list(files)}
@@ -74,17 +73,39 @@ def check_if_folder_is_synced(date: str):
             synced_files = files - missing
             missing_files.update(missing)
             uploaded_files.update(synced_files)
-            print(f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing.")
+            print(
+                f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing."
+            )
             if not missing:
                 with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-                   f.write("All files are synced.\n")
+                    f.write("All files are synced.\n")
 
             return list(missing)
     except requests.RequestException as e:
         print(f"Error checking folder sync status: {e}")
 
-    print(f"Could not verify sync status for folder {date}. Assuming all files are missing.")
+    print(
+        f"Could not verify sync status for folder {date}. Assuming all files are missing."
+    )
     return list(files)
+
+def check_if_outdated(date: str, threshold_days: int = 7):
+    DATE_DIR = os.path.join(OUTPUT, date)
+    if not os.path.exists(DATE_DIR):
+        return False
+
+    folder_date = datetime.strptime(date, "%Y-%m-%d")
+    age_days = (datetime.now() - folder_date).days
+    return age_days > threshold_days
+
+
+def cleanup(directory: str):
+    # Remove the whole directory and its contents
+    if os.path.exists(directory):
+        print(f"Cleaning up directory: {directory}")
+        os.system(f"rm -rf {directory}")
+
+
 # Try to sync files every 5 minutes if connected to the internet
 if __name__ == "__main__":
     # Check all "synced_files.txt" in all subfolders
@@ -100,6 +121,8 @@ if __name__ == "__main__":
 
     print(f"Loaded {len(uploaded_files)} uploaded files from logs.")
     while True:
+        print("-" * 40)
+        print("Current time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         if check_if_connected():
             print("Connected to the internet. Checking for missing files...")
             for folder in os.listdir(OUTPUT):
@@ -109,6 +132,9 @@ if __name__ == "__main__":
                     missing = check_if_folder_is_synced(date_str)
                     for file in missing:
                         send_image(file)
+
+                    if not missing and check_if_outdated(date_str):
+                        cleanup(folder_path)
         else:
             print("No internet connection. Retrying in 5 minutes.")
         time.sleep(300)
