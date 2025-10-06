@@ -1,0 +1,46 @@
+import axios from 'axios';
+import { BACKEND_URL } from './constants';
+import { ImageObject } from './types';
+
+export const getImages = async (page: number = 1, date?: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-images?page=${page}${date ? `&date=${date}` : ''}`
+    );
+    return response.data as {
+        date: string;
+        images: ImageObject[];
+        total_pages: number;
+    };
+};
+
+export const getAllDates = async () => {
+    const response = await axios.get(`${BACKEND_URL}/get-all-dates`);
+    console.log('response', response.data);
+    return response.data as string[];
+};
+
+export const searchImages = async (query: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/search-images?query=${query}`
+    );
+    return response.data as ImageObject[];
+};
+
+export const deleteImage = async (imagePath: string) => {
+    const response = await axios.delete(`${BACKEND_URL}/delete-image`, {
+        data: { image_path: imagePath },
+    });
+    return response.data;
+};
+
+export const getDeletedImages = async () => {
+    const response = await axios.get(`${BACKEND_URL}/get-deleted-images`);
+    return response.data as ImageObject[];
+};
+
+export const restoreImage = async (imagePath: string) => {
+    const response = await axios.post(`${BACKEND_URL}/restore-image`, {
+        image_path: imagePath,
+    });
+    return response.data;
+};

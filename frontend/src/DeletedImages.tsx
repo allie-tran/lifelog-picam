@@ -1,0 +1,61 @@
+import { Box, Button, Stack } from '@mui/material';
+import React from 'react';
+import './App.css';
+import { getDeletedImages, restoreImage } from './events';
+import ImageWithDate from './ImageWithDate';
+import ModalWithCloseButton from './ModalWithCloseButton';
+import { ImageObject } from './types';
+import { RestoreRounded } from '@mui/icons-material';
+
+const DeletedImages = () => {
+    const [results, setResults] = React.useState<ImageObject[]>([]);
+    const [open, setOpen] = React.useState(false);
+
+    const fetchImages = () => {
+        getDeletedImages().then((data) => {
+            setResults(data);
+        });
+    };
+
+    return (
+        <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+                variant="outlined"
+                onClick={() => {
+                    fetchImages();
+                    setOpen(true);
+                }}
+                sx={{ padding: '8px' }}
+            >
+                View Deleted Images
+            </Button>
+            <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
+                {results.length === 0 && <div>No results found</div>}
+                <Stack
+                    spacing={2}
+                    sx={{ width: '100%', flexWrap: 'wrap' }}
+                    direction="row"
+                    useFlexGap
+                >
+                    {results.map((image) => (
+                        <ImageWithDate
+                            key={image.image_path}
+                            imagePath={image.image_path}
+                            timestamp={image.timestamp}
+                            extra={
+                                <Button
+                                    color="error"
+                                    size="small"
+                                    onClick={() => restoreImage(image.image_path).then(() => fetchImages())}
+                                >
+                                    <RestoreRounded />
+                                </Button>
+                            }
+                        />
+                    ))}
+                </Stack>
+            </ModalWithCloseButton>
+        </Stack>
+    );
+};
+export default DeletedImages;
