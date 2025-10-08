@@ -54,7 +54,7 @@ def encode_image(image_path: str, features, image_paths):
     return vector, features, image_paths
 
 
-def retrieve_image(text: str, features, image_paths, k=100):
+def retrieve_image(text: str, features, image_paths, deleted_images: set[str], k=100):
     if len(features) == 0:
         print("No features available.")
         return []
@@ -64,6 +64,12 @@ def retrieve_image(text: str, features, image_paths, k=100):
     query_vector = siglip_model.encode_text(text, normalize=True)
 
     similarities = features @ query_vector
+
+    # Exclude deleted images
+    for i, path in enumerate(image_paths):
+        if path in deleted_images:
+            similarities[i] = -1.0  # Set similarity to -1 to exclude
+
     top_indices = np.argsort(similarities)[-k:][::-1]
 
     results = []

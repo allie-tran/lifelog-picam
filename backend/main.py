@@ -2,13 +2,13 @@ import base64
 import os
 from datetime import datetime
 from typing import Annotated
-from pydantic import BaseModel
 
 import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel
 
 from app_types import Array2D
 from constants import DIR
@@ -24,6 +24,7 @@ from preprocess import (
 class CustomFastAPI(FastAPI):
     features: Array2D[np.float32]
     image_paths: list[str]
+    deleted_images: set[str] = set()
 
 
 app = CustomFastAPI()
@@ -54,6 +55,10 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     print("Starting up server...")
+    app.deleted_images = set()
+    if os.path.exists("deleted_images.txt"):
+        with open("deleted_images.txt", "r") as f:
+            app.deleted_images = set(line.strip() for line in f.readlines())
     app.features, app.image_paths = load_features()
 
     i = 0
@@ -80,6 +85,12 @@ async def startup_event():
 async def shutdown_event():
     print("Shutting down server...")
     save_features(app.features, app.image_paths)
+
+
+@app.get("/save-features")
+async def save_features_endpoint():
+    save_features(app.features, app.image_paths)
+    return {"message": "Features saved successfully."}
 
 
 @app.get("/check-image-uploaded")
@@ -179,27 +190,36 @@ async def get_images(date: str = "", page: int = 1):
         return {"message": f"No images found for date {date}"}
 
     all_files = sorted(os.listdir(dir_path), reverse=True)
-    print(all_files[:10])
+    print(app.deleted_images)
+    all_files = [
+        f
+        for f in all_files
+        if f.endswith(".jpg") and f"{date}/{f}" not in app.deleted_images
+    ]
+    print(
+        [
+            (f, f"{date}/{f}", f"{date}/{f}" in app.deleted_images)
+            for f in all_files[:10]
+        ]
+    )
 
     # Pagination
     items_per_page = 3 * 10
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
     all_files = all_files[start_index:end_index]
-    print(all_files)
 
     images = []
     for file_name in all_files:
-        if file_name.endswith(".jpg"):
-            timestamp = datetime.strptime(
-                file_name.split(".")[0], "%Y%m%d_%H%M%S"
-            ).timestamp()
-            images.append(
-                {
-                    "image_path": f"{date}/{file_name.split('.')[0]}",
-                    "timestamp": timestamp * 1000,  # Convert to milliseconds
-                }
-            )
+        timestamp = datetime.strptime(
+            file_name.split(".")[0], "%Y%m%d_%H%M%S"
+        ).timestamp()
+        images.append(
+            {
+                "image_path": f"{date}/{file_name.split('.')[0]}",
+                "timestamp": timestamp * 1000,  # Convert to milliseconds
+            }
+        )
 
     return {
         "date": date,
@@ -208,6 +228,63 @@ async def get_images(date: str = "", page: int = 1):
         // items_per_page,
     }
 
+
+@app.get("/get-images-by-hour", response_model=dict)
+async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
+    print(f"Fetching images for date: {date} and hour: {hour}")
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+
+    dir_path = f"{DIR}/{date}"
+    if not os.path.exists(dir_path):
+        return {"message": f"No images found for date {date}"}
+
+    all_files = sorted(os.listdir(dir_path), reverse=True)
+    all_files = [
+        f
+        for f in all_files
+        if f.endswith(".jpg") and f"{date}/{f}" not in app.deleted_images
+    ]
+    all_hours = set(int(f[9:11]) for f in all_files)
+    if not hour:
+        # Get the latest hour
+        if not all_files:
+            return {"date": date, "hour": hour, "images": []}
+
+        hour = max(all_hours)
+        print(f"No hour specified, using latest hour: {hour}")
+
+    # Pagination
+    items_per_page = 3 * 10
+    start_index = (page - 1) * items_per_page
+    end_index = start_index + items_per_page
+
+    all_files = [
+        f for f in all_files if int(f[9:11]) == hour
+    ]
+    total_page = (len(all_files) + items_per_page - 1) // items_per_page
+    all_files = all_files[start_index:end_index]
+    images = []
+
+    for file_name in all_files:
+        timestamp = datetime.strptime(
+            file_name.split(".")[0], "%Y%m%d_%H%M%S"
+        ).timestamp()
+        images.append(
+            {
+                "image_path": f"{date}/{file_name.split('.')[0]}",
+                "timestamp": timestamp * 1000,  # Convert to milliseconds
+            }
+        )
+
+    return {
+        "date": date,
+        "hour": hour,
+        "images": images,
+        "available_hours": sorted(all_hours, reverse=True),
+        "total_pages": total_page,
+    }
 
 @app.get("/get-all-dates")
 def get_all_dates():
@@ -227,20 +304,27 @@ def get_all_dates():
 def search(query: str):
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
-    results = retrieve_image(query, app.features, app.image_paths)
+    results = retrieve_image(
+        query, app.features, app.image_paths, app.deleted_images, k=20
+    )
     return results
 
 
 @app.get("/login")
 def login(password: str):
     if password in os.getenv("ADMIN_PASSWORD", "").split(","):
+        save_features(
+            app.features, app.image_paths
+        )  # TODO!: find a better way to autosave
         return {"success": True}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+
 class CheckFilesRequest(BaseModel):
     date: str
     all_files: list[str]
+
 
 @app.post("/check-all-images-uploaded")
 def check_all_files_exist(request: CheckFilesRequest):
@@ -261,3 +345,65 @@ def check_all_files_exist(request: CheckFilesRequest):
         return missing_files
     else:
         return []
+
+
+class DeleteImageRequest(BaseModel):
+    image_path: str
+
+
+@app.delete("/delete-image")
+def delete_image(request: DeleteImageRequest):
+    image_path = request.image_path
+    image_path = f"{image_path}.jpg" if not image_path.endswith(".jpg") else image_path
+    print(f"Deleting image: {image_path}")
+    if image_path not in app.deleted_images:
+        app.deleted_images.add(image_path)
+        with open("deleted_images.txt", "a") as f:
+            f.write(f"{image_path}\n")
+
+
+@app.get("/get-deleted-images")
+def get_deleted_images():
+    deleted_list = list(app.deleted_images)
+    deleted_list = sorted(deleted_list, reverse=True)
+    timestamps = []
+    now = datetime.now().timestamp() * 1000
+    threshold = now - 30 * 24 * 60 * 60 # 30 days ago in milliseconds
+
+    for image_path in deleted_list:
+        timestamp = datetime.strptime(
+            image_path.split("/")[-1], "%Y%m%d_%H%M%S.jpg"
+        ).timestamp()
+
+        if timestamp * 1000 > threshold:
+            # Delete image permanently
+            full_path = os.path.join(DIR, image_path)
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            app.deleted_images.remove(image_path)
+            continue
+
+        timestamps.append(timestamp * 1000)
+
+    # Update the deleted_images.txt file
+    with open("deleted_images.txt", "w") as f:
+        for img in app.deleted_images:
+            f.write(f"{img}\n")
+
+    return [
+        {"image_path": img.split(".")[0], "timestamp": ts}
+        for img, ts in zip(deleted_list, timestamps)
+    ]
+
+
+@app.post("/restore-image")
+def restore_image(request: DeleteImageRequest):
+    image_path = request.image_path
+    image_path = f"{image_path}.jpg" if not image_path.endswith(".jpg") else image_path
+    if image_path in app.deleted_images:
+        app.deleted_images.remove(image_path)
+        with open("deleted_images.txt", "w") as f:
+            for img in app.deleted_images:
+                f.write(f"{img}\n")
+    else:
+        raise HTTPException(status_code=404, detail="Image not found in deleted list")
