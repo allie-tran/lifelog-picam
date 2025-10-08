@@ -13,6 +13,21 @@ export const getImages = async (page: number = 1, date?: string) => {
     };
 };
 
+
+export const getImagesByHour = async (date: string, hour: number) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-images-by-hour?date=${date}&hour=${hour}`
+    );
+    return response.data as {
+        date: string;
+        hour: number;
+        images: ImageObject[];
+        available_hours: number[];
+        total_pages: number;
+    };
+}
+
+
 export const getAllDates = async () => {
     const response = await axios.get(`${BACKEND_URL}/get-all-dates`);
     console.log('response', response.data);

@@ -6,7 +6,7 @@ import React from 'react';
 import useSWR from 'swr';
 import './App.css';
 import { IMAGE_HOST_URL } from './constants';
-import { deleteImage, getAllDates, getImages } from './events';
+import { deleteImage, getAllDates, getImages, getImagesByHour } from './events';
 import ImageWithDate from './ImageWithDate';
 import { ImageZoom } from './ImageZoom';
 import SearchInterface from './SearchInterface';
@@ -39,12 +39,13 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
 function MainPage() {
     const [page, setPage] = React.useState(1);
     const [date, setDate] = React.useState<Dayjs | null>(dayjs());
+    const [hour, setHour] = React.useState<number | null>(null);
     const [selectedImage, setSelectedImage] = React.useState<string | null>(
         null
     );
     const { data, error, mutate } = useSWR(
-        [page, date],
-        () => getImages(page, date ? date.format('YYYY-MM-DD') : undefined),
+        [page, date, hour],
+        () => getImagesByHour(date ? date.format('YYYY-MM-DD') : "", hour || 0),
         {
             revalidateOnFocus: false,
         }
@@ -55,6 +56,7 @@ function MainPage() {
     });
 
     const images = data?.images;
+    const availableHours = data?.available_hours || [];
 
     return (
         <>
@@ -80,6 +82,20 @@ function MainPage() {
                 />
                 <SearchInterface />
                 <DeletedImages />
+                <Stack direction="row" spacing={1}>
+                    {availableHours.map((h) => (
+                        <Button
+                            key={h}
+                            variant={hour === h ? 'contained' : 'outlined'}
+                            onClick={() => {
+                                setHour(h === hour ? null : h);
+                                setPage(1);
+                            }}
+                        >
+                            {h}:00
+                        </Button>
+                    ))}
+                </Stack>
                 {error && <div>Failed to load images</div>}
                 {!images && !error && <div>Loading...</div>}
                 {images && (
