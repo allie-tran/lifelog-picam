@@ -1,16 +1,20 @@
 import base64
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
 
 import numpy as np
+import redis
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from app_types import Array2D
+from auth import auth_app
 from constants import DIR
 from preprocess import (
     compress_image,
@@ -19,6 +23,7 @@ from preprocess import (
     retrieve_image,
     save_features,
 )
+from database import init_db
 
 
 class CustomFastAPI(FastAPI):
@@ -26,8 +31,16 @@ class CustomFastAPI(FastAPI):
     image_paths: list[str]
     deleted_images: set[str] = set()
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
+    await FastAPILimiter.init(redis_connection)
+    yield
+    await FastAPILimiter.close()
 
-app = CustomFastAPI()
+app = CustomFastAPI(lifespan=lifespan)
+app.mount("/auth", auth_app)
 
 DIM = 1152
 app.features, app.image_paths = np.empty((0, DIM), dtype=np.float32), []
@@ -52,8 +65,10 @@ async def root():
     return {"message": "Hello, World!"}
 
 
+
 @app.on_event("startup")
 async def startup_event():
+
     print("Starting up server...")
     app.deleted_images = set()
     if os.path.exists("deleted_images.txt"):
@@ -366,6 +381,7 @@ def delete_image(request: DeleteImageRequest):
 def get_deleted_images():
     deleted_list = list(app.deleted_images)
     deleted_list = sorted(deleted_list, reverse=True)
+    print(f"Found {len(deleted_list)} deleted images.")
     timestamps = []
     now = datetime.now().timestamp() * 1000
     threshold = now - 30 * 24 * 60 * 60 # 30 days ago in milliseconds
@@ -375,10 +391,11 @@ def get_deleted_images():
             image_path.split("/")[-1], "%Y%m%d_%H%M%S.jpg"
         ).timestamp()
 
-        if timestamp * 1000 > threshold:
+        if timestamp * 1000 < threshold:
             # Delete image permanently
             full_path = os.path.join(DIR, image_path)
             if os.path.exists(full_path):
+                print("Deleting permanently:", full_path, timestamp - threshold)
                 os.remove(full_path)
             app.deleted_images.remove(image_path)
             continue

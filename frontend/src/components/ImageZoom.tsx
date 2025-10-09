@@ -1,13 +1,13 @@
 import { Box, Button, Stack } from '@mui/material';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import { DeleteRounded, DownloadRounded } from '@mui/icons-material';
-import { deleteImage } from './events';
-import { IMAGE_HOST_URL } from './constants';
+import { deleteImage } from '../apis/browsing';
+import { IMAGE_HOST_URL } from '../constants/urls';
 
 const ImageZoom = ({
     imagePath,
     onClose,
-    onDelete
+    onDelete,
 }: {
     imagePath: string;
     onClose: () => void;
@@ -19,18 +19,18 @@ const ImageZoom = ({
         link.download = imagePath.split('/').pop() || 'image.jpg';
         document.body.appendChild(link);
         link.click();
-    }
+    };
 
     const handleDelete = () => {
-        deleteImage(imagePath).then(() => {
-            onClose();
-            onDelete && onDelete();
-        }
-        ).catch((err) => {
-            console.error('Failed to delete image:', err);
-        });
-    }
-
+        deleteImage(imagePath)
+            .then(() => {
+                onClose();
+                onDelete && onDelete();
+            })
+            .catch((err: any) => {
+                console.error('Failed to delete image:', err);
+            });
+    };
 
     return (
         <ModalWithCloseButton open={true} onClose={onClose}>
@@ -40,7 +40,11 @@ const ImageZoom = ({
                 alignItems="center"
                 marginBottom={2}
             >
-                <Button onClick={handleDownload} variant="outlined" color="primary">
+                <Button
+                    onClick={handleDownload}
+                    variant="outlined"
+                    color="primary"
+                >
                     <DownloadRounded sx={{ marginRight: 1 }} />
                     Download
                 </Button>

@@ -1,6 +1,5 @@
 import { Box, Stack, Typography, useTheme } from '@mui/material';
-import './App.css';
-import { THUMBNAIL_HOST_URL } from './constants';
+import { THUMBNAIL_HOST_URL } from '../constants/urls';
 
 const ImageWithDate = ({
     imagePath,

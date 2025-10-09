@@ -4,15 +4,14 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs, { Dayjs } from 'dayjs';
 import React from 'react';
 import useSWR from 'swr';
-import './App.css';
-import { IMAGE_HOST_URL } from './constants';
-import { deleteImage, getAllDates, getImages, getImagesByHour } from './events';
-import ImageWithDate from './ImageWithDate';
-import { ImageZoom } from './ImageZoom';
-import SearchInterface from './SearchInterface';
-import { ImageObject } from './types';
-import DeletedImages from './DeletedImages';
+import '../App.css';
 import { DeleteRounded } from '@mui/icons-material';
+import SearchInterface from '../components/SearchInterface';
+import DeletedImages from '../components/DeletedImages';
+import { ImageObject } from '../types/types';
+import ImageWithDate from '../components/ImageWithDate';
+import { ImageZoom } from '../components/ImageZoom';
+import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
     if (!allDates.includes(day.format('YYYY-MM-DD'))) {

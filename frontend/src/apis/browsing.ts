@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { BACKEND_URL } from './constants';
-import { ImageObject } from './types';
+import { BACKEND_URL } from '../constants/urls';
+import { ImageObject } from '../types/types';
 
 export const getImages = async (page: number = 1, date?: string) => {
     const response = await axios.get(

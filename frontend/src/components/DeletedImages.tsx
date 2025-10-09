@@ -1,43 +1,32 @@
-import { Button, Stack, TextField } from '@mui/material';
+import { RestoreRounded } from '@mui/icons-material';
+import { Button, Stack } from '@mui/material';
 import React from 'react';
-import './App.css';
-import { searchImages } from './events';
-import ModalWithCloseButton from './ModalWithCloseButton';
-import { ImageObject } from './types';
+import { getDeletedImages, restoreImage } from '../apis/browsing';
+import { ImageObject } from '../types/types';
 import ImageWithDate from './ImageWithDate';
-const SearchInterface = () => {
-    const [query, setQuery] = React.useState('');
+import ModalWithCloseButton from './ModalWithCloseButton';
+
+const DeletedImages = () => {
     const [results, setResults] = React.useState<ImageObject[]>([]);
     const [open, setOpen] = React.useState(false);
-    const onSearch = (query: string) => {
-        searchImages(query).then((data) => {
+
+    const fetchImages = () => {
+        getDeletedImages().then((data) => {
             setResults(data);
         });
     };
 
     return (
         <Stack direction="row" spacing={2} alignItems="center">
-            <TextField
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search images..."
-                sx={{ padding: '8px', width: '80dvw', marginRight: '8px' }}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                        onSearch(query);
-                        setOpen(true);
-                    }
-                }}
-            />
             <Button
                 variant="outlined"
                 onClick={() => {
-                    onSearch(query);
+                    fetchImages();
                     setOpen(true);
                 }}
                 sx={{ padding: '8px' }}
             >
-                Search
+                View Deleted Images
             </Button>
             <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
                 {results.length === 0 && <div>No results found</div>}
@@ -52,6 +41,15 @@ const SearchInterface = () => {
                             key={image.image_path}
                             imagePath={image.image_path}
                             timestamp={image.timestamp}
+                            extra={
+                                <Button
+                                    color="error"
+                                    size="small"
+                                    onClick={() => restoreImage(image.image_path).then(() => fetchImages())}
+                                >
+                                    <RestoreRounded />
+                                </Button>
+                            }
                         />
                     ))}
                 </Stack>
@@ -59,4 +57,4 @@ const SearchInterface = () => {
         </Stack>
     );
 };
-export default SearchInterface;
+export default DeletedImages;
