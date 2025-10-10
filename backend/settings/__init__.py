@@ -35,7 +35,7 @@ async def get_settings():
     )
 
 @control_app.post("/toggle_mode")
-async def toggle_mode(mode: str = "", background_tasks: BackgroundTasks
+async def toggle_mode(mode: str, background_tasks: BackgroundTasks
                       ):
     settings = PiCamControl.find_one({"username": picam_username})
     if settings:

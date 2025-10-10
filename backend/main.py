@@ -366,6 +366,7 @@ class CheckFilesRequest(BaseModel):
 
 @app.post("/check-all-images-uploaded")
 def check_all_files_exist(request: CheckFilesRequest):
+    print(request.date, len(request.all_files), request.all_files[:5])
     date = request.date
     all_files = request.all_files
     print(f"Checking files for date: {date}")
