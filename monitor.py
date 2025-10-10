@@ -1,4 +1,4 @@
-from common import CHECK_ALL_URL, OUTPUT, check_if_connected, send_image
+from common import CHECK_ALL_URL, OUTPUT, check_if_connected, send_image, send_video
 import requests
 from datetime import datetime
 import os
@@ -14,7 +14,7 @@ def check_if_folder_is_synced(date: str):
         return []
 
     files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
-    files = set(f for f in files if f.endswith(".jpg"))
+    files = set(f for f in files if f.endswith(".jpg") or f.endswith(".h264"))
     files.difference_update(uploaded_files)
 
     if not files:
@@ -91,7 +91,10 @@ if __name__ == "__main__":
                     date_str = folder
                     missing = check_if_folder_is_synced(date_str)
                     for file in missing:
-                        send_image(file, uploaded_files, LOG_FILE)
+                        if file.endswith(".h264"):
+                            send_video(file, uploaded_files, LOG_FILE)
+                        elif file.endswith(".jpg"):
+                            send_image(file, uploaded_files, LOG_FILE)
 
                     if not missing and check_if_outdated(date_str):
                         cleanup(folder_path)

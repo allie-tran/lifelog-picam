@@ -9,7 +9,7 @@ from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_vid
 
 def check_capturing_mode():
     mode = "photo"
-    response = requests.get(BACKEND_URL + "/control/settings")
+    response = requests.get(BACKEND_URL + "/controls/settings")
     if response.status_code == 200:
         data = response.json()
         print("Fetched settings:", data)

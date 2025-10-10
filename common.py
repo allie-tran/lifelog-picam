@@ -5,6 +5,7 @@ import requests
 
 BACKEND_URL = "https://dcu.allietran.com/omi/be"
 UPLOAD_URL = "https://dcu.allietran.com/omi/be/upload-image"
+UPLOAD_VIDEO_URL = "https://dcu.allietran.com/omi/be/upload-video"
 CHECK_URL = "https://dcu.allietran.com/omi/be/check-image-uploaded"
 CHECK_ALL_URL = "https://dcu.allietran.com/omi/be/check-all-images-uploaded"
 OUTPUT = "Camera/timelapse"
@@ -48,9 +49,9 @@ def send_video(video_path, uploaded_files, LOG_FILE):
     with open(video_path, "rb") as vid_file:
         files = {
             "file": (os.path.basename(video_path), vid_file, "video/h264"),
-            "timestamp": (None, str(timestamp)),
+            # "timestamp": (None, str(timestamp)),
         }
-        response = requests.put(UPLOAD_URL, files=files)
+        response = requests.put(UPLOAD_VIDEO_URL, files=files)
 
     if response.status_code == 200:
         print(f"Uploaded: {video_path}")

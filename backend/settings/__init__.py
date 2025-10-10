@@ -1,7 +1,7 @@
 import os
 import time
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 
 from settings.types import PiCamControl
 
@@ -34,10 +34,8 @@ async def get_settings():
         else None
     )
 
-
-
 @control_app.post("/toggle_mode")
-async def toggle_mode(mode: str = None, background_tasks: BackgroundTasks = None
+async def toggle_mode(mode: str = "", background_tasks: BackgroundTasks
                       ):
     settings = PiCamControl.find_one({"username": picam_username})
     if settings:

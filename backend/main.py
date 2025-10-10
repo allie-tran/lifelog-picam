@@ -24,7 +24,7 @@ from preprocess import (
     save_features,
 )
 from database import init_db
-from settings import control_app
+from settings import control_app, get_mode
 from settings.types import PiCamControl
 from dotenv import load_dotenv
 
@@ -180,7 +180,14 @@ async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = "")
             f"{date}/{file_name}", app.features, app.image_paths
         )
         compress_image(output_path)
+    return get_mode()
 
+@app.get("/upload-video")
+async def upload_video(file: UploadFile):
+    output_path = f"{DIR}/video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.h264"
+    with open(output_path, "wb") as f:
+        f.write(await file.read())
+    return {"message": "Video uploaded successfully."}
 
 def to_base64(image_data: bytes) -> str:
     """Convert image data to base64 string."""
