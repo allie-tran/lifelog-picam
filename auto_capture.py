@@ -12,6 +12,7 @@ def check_capturing_mode():
     response = requests.get(BACKEND_URL + "/control/settings")
     if response.status_code == 200:
         data = response.json()
+        print("Fetched settings:", data)
         mode = data.get("captureMode", "photo")
     return mode
 
