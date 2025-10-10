@@ -12,6 +12,7 @@ import { ImageObject } from '../types/types';
 import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
 import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
+import Settings from '../components/Settings';
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
     if (!allDates.includes(day.format('YYYY-MM-DD'))) {
@@ -79,6 +80,7 @@ function MainPage() {
                         ),
                     }}
                 />
+                <Settings />
                 <SearchInterface />
                 <DeletedImages />
                 <Stack direction="row" spacing={1}>

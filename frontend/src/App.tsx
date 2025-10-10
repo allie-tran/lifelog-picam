@@ -31,7 +31,7 @@ const App = () => {
             <ThemeProvider theme={theme}>
                 <LocalizationProvider dateAdapter={AdapterDayjs}>
                     <Container>
-                        <BrowserRouter>
+                        <BrowserRouter basename={"/omi"}>
                             <Routes>
                                 <Route
                                     path="/"

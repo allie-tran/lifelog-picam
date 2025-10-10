@@ -24,23 +24,39 @@ from preprocess import (
     save_features,
 )
 from database import init_db
+from settings import control_app
+from settings.types import PiCamControl
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class CustomFastAPI(FastAPI):
     features: Array2D[np.float32]
     image_paths: list[str]
     deleted_images: set[str] = set()
 
+picam_username = os.getenv("PICAM_USERNAME", "default_user")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    if not PiCamControl.find_one({"username": picam_username}):
+        PiCamControl.update_one(
+            {"username": picam_username},
+            {
+                "$setOnInsert": PiCamControl(username=picam_username).model_dump(),
+            },
+            upsert=True,
+        )
+    yield
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
     yield
     await FastAPILimiter.close()
 
+
 app = CustomFastAPI(lifespan=lifespan)
 app.mount("/auth", auth_app)
+app.mount("/controls", control_app)
 
 DIM = 1152
 app.features, app.image_paths = np.empty((0, DIM), dtype=np.float32), []

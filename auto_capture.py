@@ -1,140 +1,140 @@
 import os
-
-# Wait for 5 minutes before checking again
 import time
 from datetime import datetime
+import signal
+import subprocess
 
 import requests
+from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_video
 
-UPLOAD_URL = "https://dcu.allietran.com/omi/be/upload-image"
-CHECK_URL = "https://dcu.allietran.com/omi/be/check-image-uploaded"
-CHECK_ALL_URL = "https://dcu.allietran.com/omi/be/check-all-images-uploaded"
-OUTPUT = "Camera/timelapse"
-
-missing_files = set()
-uploaded_files = set()
-
-
-def send_image(image_path):
-    if image_path in uploaded_files:
-        return True
-
-    timestamp = datetime.strptime(
-        os.path.basename(image_path).replace(".jpg", ""), "%Y%m%d_%H%M%S"
-    )
-    timestamp = int(timestamp.timestamp() * 1000)
-
-    # Send form-data request
-    with open(image_path, "rb") as img_file:
-        files = {
-            "file": (os.path.basename(image_path), img_file, "image/jpeg"),
-            "timestamp": (None, str(timestamp)),
-        }
-        response = requests.put(UPLOAD_URL, files=files)
-
+def check_capturing_mode():
+    mode = "photo"
+    response = requests.get(BACKEND_URL + "/control/settings")
     if response.status_code == 200:
-        print(f"Uploaded: {image_path}")
-        uploaded_files.add(image_path)
-        with open(LOG_FILE, "a") as log:
-            log.write(f"{image_path}\n")
-        return True
+        data = response.json()
+        mode = data.get("captureMode", "photo")
+    return mode
 
+def check_if_camera_connected():
+    status = os.system("rpicam-still --output status.jpg")
+    return status == 0
 
-def check_if_connected():
-    try:
-        response = requests.get("https://www.google.com", timeout=5)
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
+def capture_image():
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
+    DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
-
-def check_if_folder_is_synced(date: str):
-    DATE_DIR = os.path.join(OUTPUT, date)
-    if os.path.exists(os.path.join(DATE_DIR, ".synced")):
-        print(f"Folder {DATE_DIR} is already synced.")
-        return []
-
-    files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
-    files = set(f for f in files if f.endswith(".jpg"))
-    files.difference_update(uploaded_files)
-
-    if not files:
-        print(f"All files in folder {date} are already uploaded.")
-        with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-            f.write("All files are synced.\n")
-        return []
-
-    payload = {"date": date, "all_files": list(files)}
-    try:
-        response = requests.post(CHECK_ALL_URL, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            missing = set(data)
-            synced_files = files - missing
-            missing_files.update(missing)
-            uploaded_files.update(synced_files)
-            print(
-                f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing."
-            )
-            if not missing:
-                with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-                    f.write("All files are synced.\n")
-
-            return list(missing)
-    except requests.RequestException as e:
-        print(f"Error checking folder sync status: {e}")
-
-    print(
-        f"Could not verify sync status for folder {date}. Assuming all files are missing."
-    )
-    return list(files)
-
-def check_if_outdated(date: str, threshold_days: int = 7):
-    DATE_DIR = os.path.join(OUTPUT, date)
     if not os.path.exists(DATE_DIR):
-        return False
+        os.makedirs(DATE_DIR)
 
-    folder_date = datetime.strptime(date, "%Y-%m-%d")
-    age_days = (datetime.now() - folder_date).days
-    return age_days > threshold_days
+    status = os.system(
+        f"rpicam-still --output {os.path.join(DATE_DIR, file_name)} -n"
+    )
+    if status != 0:
+        print("Failed to capture image.")
+        return None
+
+    print("Captured image:", file_name)
+    return os.path.join(DATE_DIR, file_name)
+
+def record_video_until_interrupt(grace_period=5.0):
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
+    DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
+
+    if not os.path.exists(DATE_DIR):
+        os.makedirs(DATE_DIR)
+
+    cmd = [
+        "rpicam-vid",
+        "--output", os.path.join(DATE_DIR, file_name),
+        "-t", "0"
+        "-n",
+    ]
+    print("Starting video recording:", file_name)
+    try:
+        process = subprocess.Popen(cmd)
+    except Exception as e:
+        print("Failed to start video recording:", e)
+        return None
+
+    try:
+        while True:
+            if process.poll() is not None:
+                print("Video recording process ended unexpectedly.")
+                return None
+
+            mode = check_capturing_mode()
+            if mode != "video":
+                print("Capturing mode changed. Stopping video recording.")
+                try:
+                    process.send_signal(signal.SIGINT)
+                except Exception as e:
+                    print("Failed to stop video recording:", e)
+
+                waited = 0.0
+                while process.poll() is None and waited < grace_period:
+                    time.sleep(0.5)
+                    waited += 0.5
+
+                if process.poll() is None:
+                    print("Grace period exceeded. Killing video recording process.")
+                    try:
+                        process.kill()
+                    except Exception as e:
+                        print("Failed to kill video recording process:", e)
+                break
+
+            time.sleep(1)
+    finally:
+        if process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=2)
+            except Exception as e:
+                process.kill()
 
 
-def cleanup(directory: str):
-    # Remove the whole directory and its contents
-    if os.path.exists(directory):
-        print(f"Cleaning up directory: {directory}")
-        os.system(f"rm -rf {directory}")
+    if os.path.exists(os.path.join(DATE_DIR, file_name)):
+        print("Recorded video:", file_name)
+        return os.path.join(DATE_DIR, file_name)
 
+    print("Video file not found after recording.")
+    return None
 
-# Try to sync files every 5 minutes if connected to the internet
-if __name__ == "__main__":
-    # Check all "synced_files.txt" in all subfolders
-    LOG_FILE = "synced_files.txt"
-    for folder in os.listdir(OUTPUT):
-        folder_path = os.path.join(OUTPUT, folder)
-        if os.path.isdir(folder_path):
-            log_path = os.path.join(folder_path, LOG_FILE)
-            if os.path.exists(log_path):
-                with open(log_path, "r") as log:
-                    for line in log:
-                        uploaded_files.add(line.strip())
+def main():
+    while not check_if_camera_connected():
+        print("Camera not connected. Retrying in 10 seconds...")
+        time.sleep(1)
 
-    print(f"Loaded {len(uploaded_files)} uploaded files from logs.")
+    print("Camera connected.")
+
+    CAPTURE_INTERVAL = 10  # seconds
+    CHECK_MODE_INTERVAL = 1 # seconds
+
+    last_mode_check = time.time() - CHECK_MODE_INTERVAL
+    mode = check_capturing_mode()
+    print(f"Initial capturing mode: {mode}")
+    last_capture_time = 0
     while True:
-        print("-" * 40)
-        print("Current time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        if check_if_connected():
-            print("Connected to the internet. Checking for missing files...")
-            for folder in os.listdir(OUTPUT):
-                folder_path = os.path.join(OUTPUT, folder)
-                if os.path.isdir(folder_path):
-                    date_str = folder
-                    missing = check_if_folder_is_synced(date_str)
-                    for file in missing:
-                        send_image(file)
+        new_mode = check_capturing_mode()
+        if new_mode != mode:
+            print(f"Capturing mode changed from {mode} to {new_mode}")
+            mode = new_mode
 
-                    if not missing and check_if_outdated(date_str):
-                        cleanup(folder_path)
-        else:
-            print("No internet connection. Retrying in 5 minutes.")
-        time.sleep(300)
+        current_time = time.time()
+        if mode == "photo":
+            if current_time - last_capture_time >= CAPTURE_INTERVAL:
+                last_capture_time = current_time
+                image_path = capture_image()
+                if image_path and check_if_connected():
+                    send_image(image_path, set(), "upload_log.txt")
+            time.sleep(1)
+
+        elif mode == "video":
+            video_path = record_video_until_interrupt()
+            if video_path and check_if_connected():
+                send_video(video_path, set(), "upload_log.txt")
+
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
