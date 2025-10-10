@@ -32,9 +32,10 @@ def check_if_folder_is_synced(date: str):
         if response.status_code == 200:
             data = response.json()
             missing = set(data)
+            missing = set(os.path.join(DATE_DIR, f) for f in missing)
             synced_files = files - missing
-            missing_files.update(set(os.path.join(DATE_DIR, f) for f in missing))
-            uploaded_files.update(set(os.path.join(DATE_DIR, f) for f in synced_files)
+            missing_files.update(missing)
+            uploaded_files.update(synced_files)
             print(
                 f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing."
             )
@@ -45,6 +46,7 @@ def check_if_folder_is_synced(date: str):
             return list(missing)
     except requests.RequestException as e:
         print(f"Error checking folder sync status: {e}")
+
 
     print(
         f"Could not verify sync status for folder {date}. Assuming all files are missing."
