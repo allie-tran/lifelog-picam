@@ -187,13 +187,8 @@ async def upload_video(file: UploadFile):
     with open(output_path, "wb") as f:
         f.write(await file.read())
 
-    # convert to .mp4 using ffmpeg
-    mp4_path = output_path.rsplit(".", 1)[0] + ".mp4"
-    os.system(f"ffmpeg -i {output_path} -c copy {mp4_path}")
-    os.remove(output_path)
-
     # make a webp thumbnail
-    make_video_thumbnail(mp4_path)
+    make_video_thumbnail(output_path)
     return {"message": "Video uploaded successfully."}
 
 def to_base64(image_data: bytes) -> str:

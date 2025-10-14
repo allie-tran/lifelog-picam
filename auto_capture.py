@@ -51,6 +51,8 @@ def record_video_until_interrupt(grace_period=5.0):
         "--output", video_path,
         "-t", "0"
         "-n",
+        "-framerate", "24",
+        "--codec", "libav",
     ]
     print("Starting video recording:", video_path)
     try:

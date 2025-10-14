@@ -7,7 +7,7 @@ class VideoSettings(CamelCaseModel):
     max_duration: int = 60  # in seconds
 
 class TimelapseSettings(CamelCaseModel):
-    interval: int = 10  # in seconds
+    interval: int = 60  # in seconds
 
 class PiCamControl(Document, CamelCaseModel):
     username: str

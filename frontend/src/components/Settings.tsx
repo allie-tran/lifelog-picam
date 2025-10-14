@@ -40,6 +40,12 @@ const Settings = () => {
                     onChange={(e) => {
                         const newMode = e.target.checked ? 'video' : 'photo';
                         setIsVideoMode(e.target.checked);
+                        if (newMode === 'video') {
+                            // switch back to photo mode after 5 minutes
+                            setTimeout(() => {
+                                setIsVideoMode(false);
+                            }, 1000 * (data.videoSettings.maxDuration || 30));
+                        }
                     }}
                 />
                 <VideocamOutlined color={!isVideoMode ? 'action' : 'primary'} />
