@@ -5,7 +5,7 @@ def segment_images(features, image_paths, deleted_images: set[str]):
     if len(features) == 0:
         return []
     # Sort the features and image paths based on the image_pahts
-    sorted_indices = np.argsort(image_paths)
+    sorted_indices = np.argsort(image_paths)[::-1]
     features = features[sorted_indices]
 
     # Compare each feature vector with the previous one

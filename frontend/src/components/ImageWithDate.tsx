@@ -12,10 +12,10 @@ const ImageWithDate = ({
     onClick?: () => void;
     extra?: React.ReactNode;
 }) => {
-    const theme = useTheme();
     const imageUrl = `${THUMBNAIL_HOST_URL}/${imagePath}.webp`;
     const date = new Date(timestamp);
     const formattedDate = date.toLocaleString();
+
     return (
         <Box
             sx={{

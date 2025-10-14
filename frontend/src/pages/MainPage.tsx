@@ -43,6 +43,7 @@ function MainPage() {
     const [selectedImage, setSelectedImage] = React.useState<string | null>(
         null
     );
+    const [isSelectedVideo, setIsSelectedVideo] = React.useState<boolean>(false);
     const { data, error, mutate } = useSWR(
         [page, date, hour],
         () =>
@@ -143,9 +144,10 @@ function MainPage() {
                                         key={image.image_path}
                                         imagePath={image.image_path}
                                         timestamp={image.timestamp}
-                                        onClick={() =>
+                                        onClick={() => {
                                             setSelectedImage(image.image_path)
-                                        }
+                                            setIsSelectedVideo(image.is_video)
+                                        }}
                                         extra={
                                             <Button
                                                 color="error"
@@ -181,6 +183,7 @@ function MainPage() {
                     imagePath={selectedImage}
                     onClose={() => setSelectedImage(null)}
                     onDelete={() => mutate()}
+                    isVideo={isSelectedVideo}
                 />
             )}
         </>

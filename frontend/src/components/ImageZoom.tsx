@@ -8,10 +8,12 @@ const ImageZoom = ({
     imagePath,
     onClose,
     onDelete,
+    isVideo,
 }: {
     imagePath: string;
     onClose: () => void;
     onDelete?: () => void;
+    isVideo?: boolean;
 }) => {
     const handleDownload = () => {
         const link = document.createElement('a');
@@ -53,16 +55,32 @@ const ImageZoom = ({
                     Delete
                 </Button>
             </Stack>
-            <Box
-                component="img"
-                src={`${IMAGE_HOST_URL}/${imagePath}.jpg`}
-                alt="Zoomed"
-                sx={{
-                    maxWidth: '100%',
-                    maxHeight: 'calc(80vh - 64px)',
-                    borderRadius: '8px',
-                }}
-            />
+            {isVideo ? (
+                <video
+                    controls
+                    style={{
+                        maxWidth: '100%',
+                        maxHeight: 'calc(80vh - 64px)',
+                        borderRadius: '8px',
+                    }}
+                >
+                    <source
+                        src={`${IMAGE_HOST_URL}/${imagePath}.mp4`}
+                        type="video/mp4"
+                    />
+                </video>
+            ) : (
+                <Box
+                    component="img"
+                    src={`${IMAGE_HOST_URL}/${imagePath}.jpg`}
+                    alt="Zoomed"
+                    sx={{
+                        maxWidth: '100%',
+                        maxHeight: 'calc(80vh - 64px)',
+                        borderRadius: '8px',
+                    }}
+                />
+            )}
         </ModalWithCloseButton>
     );
 };

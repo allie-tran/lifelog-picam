@@ -70,6 +70,10 @@ async def lifespan(app: CustomFastAPI):
                 compress_image(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     to_process.add(relative_path)
+            if file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
+                relative_path = os.path.relpath(os.path.join(root, file), DIR)
+                make_video_thumbnail(os.path.join(root, file))
+                to_process.add(relative_path)
 
     if to_process:
         print(f"Processing {len(to_process)} new images...")
@@ -188,15 +192,20 @@ async def upload_video(file: UploadFile):
         f.write(await file.read())
 
 
-    # convert h264 to mp4 if needed
+    # convert h264 to mp4 if needed and rotate 90 degrees
     if file_name.lower().endswith(".h264"):
         mp4_path = output_path[:-5] + ".mp4"
-        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y")
+        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -vf 'transpose=1'")
         os.remove(output_path)
         output_path = mp4_path
 
     # make a webp thumbnail
-    make_video_thumbnail(output_path)
+    thumbnail_path = make_video_thumbnail(output_path)
+
+    # Add to database as well
+    _, app.features, app.image_paths = encode_image(
+        output_path, app.features, app.image_paths
+    )
     return {"message": "Video uploaded successfully."}
 
 def to_base64(image_data: bytes) -> str:
