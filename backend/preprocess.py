@@ -21,6 +21,26 @@ def compress_image(image_path, quality=85):
     img.thumbnail((800, 800))
     img.save(output_path, "WEBP", quality=quality)
 
+def make_video_thumbnail(video_path, quality=85):
+    rel_path = video_path.replace(DIR + "/", "")
+    output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
+    if os.path.exists(output_path):
+        return
+
+    try:
+        import cv2
+    except ImportError:
+        print("OpenCV is not installed. Cannot create video thumbnails.")
+        return
+
+    vidcap = cv2.VideoCapture(video_path)
+    success, image = vidcap.read()
+    if success:
+        img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        img.thumbnail((800, 800))
+        img.save(output_path, "WEBP", quality=quality)
+    vidcap.release()
 
 
 feature_path = "siglip_features.npz"

@@ -14,14 +14,15 @@ export const getImages = async (page: number = 1, date?: string) => {
 };
 
 
-export const getImagesByHour = async (date: string, hour: number) => {
+export const getImagesByHour = async (date: string, hour: number, page: number = 1) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-images-by-hour?date=${date}&hour=${hour}`
+        `${BACKEND_URL}/get-images-by-hour?date=${date}&hour=${hour}&page=${page}`
     );
     return response.data as {
         date: string;
         hour: number;
         images: ImageObject[];
+        segments: ImageObject[][];
         available_hours: number[];
         total_pages: number;
     };

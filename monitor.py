@@ -14,7 +14,7 @@ def check_if_folder_is_synced(date: str):
         return []
 
     files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
-    files = set(f for f in files if f.endswith(".jpg") or f.endswith(".h264"))
+    files = set(f for f in files if f.endswith(".jpg") or f.endswith(".mp4"))
     files.difference_update(uploaded_files)
 
     if not files:
@@ -96,7 +96,7 @@ if __name__ == "__main__":
                     date_str = folder
                     missing = check_if_folder_is_synced(date_str)
                     for file in missing:
-                        if file.endswith(".h264"):
+                        if file.endswith(".mp4"):
                             send_video(file, uploaded_files, LOG_FILE)
                         elif file.endswith(".jpg"):
                             send_image(file, uploaded_files, LOG_FILE)

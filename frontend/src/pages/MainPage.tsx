@@ -45,7 +45,12 @@ function MainPage() {
     );
     const { data, error, mutate } = useSWR(
         [page, date, hour],
-        () => getImagesByHour(date ? date.format('YYYY-MM-DD') : "", hour || 0),
+        () =>
+            getImagesByHour(
+                date ? date.format('YYYY-MM-DD') : '',
+                hour || 0,
+                page
+            ),
         {
             revalidateOnFocus: false,
         }
@@ -56,7 +61,14 @@ function MainPage() {
     });
 
     const images = data?.images;
+    const segments = data?.segments || [];
     const availableHours = data?.available_hours || [];
+
+    const deleteRow = (imagePaths: string[]) => {
+        Promise.all(imagePaths.map((path) => deleteImage(path))).then(() =>
+            mutate()
+        );
+    };
 
     return (
         <>
@@ -99,34 +111,62 @@ function MainPage() {
                 </Stack>
                 {error && <div>Failed to load images</div>}
                 {!images && !error && <div>Loading...</div>}
-                {images && (
-                    <div className="image-grid">
-                        {images.map((image: ImageObject) => (
-                            <ImageWithDate
-                                key={image.image_path}
-                                imagePath={image.image_path}
-                                timestamp={image.timestamp}
-                                onClick={() =>
-                                    setSelectedImage(image.image_path)
-                                }
-                                extra={
-                                    <Button
-                                        color="error"
-                                        size="small"
-                                        onClick={() =>
-                                            deleteImage(image.image_path).then(
-                                                () => mutate()
-                                            )
-                                        }
-                                    >
-                                        <DeleteRounded />
-                                    </Button>
-                                }
-                            />
-                        ))}
-                    </div>
+                {segments.length === 0 && images && images.length === 0 && (
+                    <div>No images found for this date/hour.</div>
                 )}
+                <Stack>
+                    {segments.map((segment, index) => (
+                        <React.Fragment key={index}>
+                            <Button
+                                color="error"
+                                onClick={() => {
+                                    const imagePaths = segment.map(
+                                        (img) => img.image_path
+                                    );
+                                    deleteRow(imagePaths);
+                                }}
+                            >
+                                Delete All {segment.length} Images in this Row
+                            </Button>
+                            <Stack
+                                direction="row"
+                                spacing={2}
+                                key={index}
+                                sx={{
+                                    maxWidth: '100vw',
+                                    overflowY: 'auto',
+                                    height: '400px',
+                                }}
+                            >
+                                {segment.map((image: ImageObject) => (
+                                    <ImageWithDate
+                                        key={image.image_path}
+                                        imagePath={image.image_path}
+                                        timestamp={image.timestamp}
+                                        onClick={() =>
+                                            setSelectedImage(image.image_path)
+                                        }
+                                        extra={
+                                            <Button
+                                                color="error"
+                                                size="small"
+                                                onClick={() =>
+                                                    deleteImage(
+                                                        image.image_path
+                                                    ).then(() => mutate())
+                                                }
+                                            >
+                                                <DeleteRounded />
+                                            </Button>
+                                        }
+                                    />
+                                ))}
+                            </Stack>
+                        </React.Fragment>
+                    ))}
+                </Stack>
                 <Pagination
+                    page={page}
                     count={data?.total_pages || 1}
                     color="primary"
                     onChange={(_, page) => {

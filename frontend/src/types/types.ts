@@ -15,6 +15,7 @@ declare module "@mui/material/styles" {
 type ImageObject = {
   image_path: string;
   timestamp: string;
+  is_video: boolean;
 };
 
 export type { ImageObject};

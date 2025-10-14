@@ -38,7 +38,7 @@ def capture_image():
     return os.path.join(DATE_DIR, file_name)
 
 def record_video_until_interrupt(grace_period=5.0):
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".mp4"
     DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
@@ -111,7 +111,6 @@ def main():
     CAPTURE_INTERVAL = 10  # seconds
     CHECK_MODE_INTERVAL = 1 # seconds
 
-    last_mode_check = time.time() - CHECK_MODE_INTERVAL
     mode = check_capturing_mode()
     print(f"Initial capturing mode: {mode}")
     last_capture_time = 0

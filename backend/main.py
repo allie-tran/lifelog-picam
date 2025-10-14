@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
+from tqdm.auto import tqdm
 
 import numpy as np
 import redis
@@ -15,11 +16,13 @@ from pydantic import BaseModel
 
 from app_types import Array2D
 from auth import auth_app
+from scripts.segmentation import segment_images
 from constants import DIR
 from preprocess import (
     compress_image,
     encode_image,
     load_features,
+    make_video_thumbnail,
     retrieve_image,
     save_features,
 )
@@ -35,9 +38,11 @@ class CustomFastAPI(FastAPI):
     image_paths: list[str]
     deleted_images: set[str] = set()
 
+
 picam_username = os.getenv("PICAM_USERNAME", "default_user")
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: CustomFastAPI):
+    print("Starting up server...")
     init_db()
     if not PiCamControl.find_one({"username": picam_username}):
         PiCamControl.update_one(
@@ -47,12 +52,40 @@ async def lifespan(_: FastAPI):
             },
             upsert=True,
         )
-    yield
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
+    app.deleted_images = set()
+    if os.path.exists("deleted_images.txt"):
+        with open("deleted_images.txt", "r") as f:
+            app.deleted_images = set(line.strip() for line in f.readlines())
+    app.features, app.image_paths = load_features()
+
+    i = 0
+    # Create features from DIR first
+    to_process = set()
+    for root, dirs, files in os.walk(DIR):
+        for file in files:
+            if file.endswith(".jpg"):
+                relative_path = os.path.relpath(os.path.join(root, file), DIR)
+                compress_image(os.path.join(root, file))
+                if relative_path not in app.image_paths:
+                    to_process.add(relative_path)
+
+    if to_process:
+        print(f"Processing {len(to_process)} new images...")
+        for relative_path in tqdm(sorted(to_process)):
+            _, app.features, app.image_paths = encode_image(
+                relative_path, app.features, app.image_paths
+            )
+            i += 1
+            assert len(app.features) == len(
+                app.image_paths
+            ), f"{len(app.features)} != {len(app.image_paths)}"
+                    # if i > 100:
+                    #     break
     yield
     await FastAPILimiter.close()
-
+    save_features(app.features, app.image_paths)
 
 app = CustomFastAPI(lifespan=lifespan)
 app.mount("/auth", auth_app)
@@ -79,43 +112,6 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Hello, World!"}
-
-
-
-@app.on_event("startup")
-async def startup_event():
-
-    print("Starting up server...")
-    app.deleted_images = set()
-    if os.path.exists("deleted_images.txt"):
-        with open("deleted_images.txt", "r") as f:
-            app.deleted_images = set(line.strip() for line in f.readlines())
-    app.features, app.image_paths = load_features()
-
-    i = 0
-    # Create features from DIR first
-    for root, dirs, files in os.walk(DIR):
-        for file in files:
-            if file.endswith(".jpg"):
-                relative_path = os.path.relpath(os.path.join(root, file), DIR)
-                compress_image(os.path.join(root, file))
-                if relative_path not in app.image_paths:
-                    print(f"Processing {relative_path}")
-                    _, app.features, app.image_paths = encode_image(
-                        relative_path, app.features, app.image_paths
-                    )
-                    i += 1
-                    assert len(app.features) == len(
-                        app.image_paths
-                    ), f"{len(app.features)} != {len(app.image_paths)}"
-            # if i > 100:
-            #     break
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("Shutting down server...")
-    save_features(app.features, app.image_paths)
 
 
 @app.get("/save-features")
@@ -145,20 +141,14 @@ async def check_image_uploaded(timestamp: int):
 
 
 @app.put("/upload-image")
-async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = ""):
-    if timestamp:
-        now = datetime.fromtimestamp(
-            int(timestamp) / 1000
-        )  # Convert milliseconds to seconds
-    else:
-        print("No timestamp provided, using current time.")
-        now = datetime.now()
+async def upload_image(file: UploadFile):
+    file_name = file.filename
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
 
-    date = now.strftime("%Y-%m-%d")
+    date = timestamp.strftime("%Y-%m-%d")
     if not os.path.exists(f"{DIR}/{date}"):
         os.makedirs(f"{DIR}/{date}")
 
-    file_name = f"{now.strftime('%Y%m%d_%H%M%S')}.jpg"
     if os.path.exists(f"{DIR}/{date}/{file_name}"):
         print(f"File {file_name} already exists for date {date}.")
     else:
@@ -182,11 +172,28 @@ async def upload_image(file: UploadFile, timestamp: Annotated[str, Form()] = "")
         compress_image(output_path)
     return get_mode()
 
-@app.get("/upload-video")
+@app.put("/upload-video")
 async def upload_video(file: UploadFile):
-    output_path = f"{DIR}/video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.h264"
+    file_name = file.filename
+    if file_name is None:
+        raise HTTPException(status_code=400, detail="Filename is required.")
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    date = timestamp.strftime("%Y-%m-%d")
+
+    if not os.path.exists(f"{DIR}/{date}"):
+        os.makedirs(f"{DIR}/{date}")
+
+    output_path = f"{DIR}/{date}/{file_name}"
     with open(output_path, "wb") as f:
         f.write(await file.read())
+
+    # convert to .mp4 using ffmpeg
+    mp4_path = output_path.rsplit(".", 1)[0] + ".mp4"
+    os.system(f"ffmpeg -i {output_path} -c copy {mp4_path}")
+    os.remove(output_path)
+
+    # make a webp thumbnail
+    make_video_thumbnail(mp4_path)
     return {"message": "Video uploaded successfully."}
 
 def to_base64(image_data: bytes) -> str:
@@ -282,7 +289,8 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     all_files = [
         f
         for f in all_files
-        if f.endswith(".jpg") and f"{date}/{f}" not in app.deleted_images
+        if (f.endswith(".jpg") or f.endswith(".mp4"))
+        and f"{date}/{f}" not in app.deleted_images
     ]
     all_hours = set(int(f[9:11]) for f in all_files)
     if not hour:
@@ -303,23 +311,41 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     ]
     total_page = (len(all_files) + items_per_page - 1) // items_per_page
     all_files = all_files[start_index:end_index]
-    images = []
 
-    for file_name in all_files:
-        timestamp = datetime.strptime(
-            file_name.split(".")[0], "%Y%m%d_%H%M%S"
-        ).timestamp()
-        images.append(
-            {
-                "image_path": f"{date}/{file_name.split('.')[0]}",
-                "timestamp": timestamp * 1000,  # Convert to milliseconds
-            }
-        )
+    # Get the features and image paths for the filtered files
+    indices = [
+        app.image_paths.index(f"{date}/{f}")
+        for f in all_files
+        if f"{date}/{f}" in app.image_paths
+    ]
+    features = app.features[indices]
+    image_paths = [app.image_paths[i] for i in indices]
+
+    segments = segment_images(features, image_paths, app.deleted_images)
+    all_images = []
+    flat_images = []
+
+    for segment in segments:
+        images = []
+        for image_path in segment:
+            timestamp = datetime.strptime(
+                image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
+            ).timestamp()
+            images.append(
+                {
+                    "image_path": image_path.split(".")[0],
+                    "is_video": image_path.lower().endswith(('.h264', '.mp4', '.mov', '.avi')),
+                    "timestamp": timestamp * 1000,  # Convert to milliseconds
+                }
+            )
+        all_images.append(images)
+        flat_images.extend(images)
 
     return {
         "date": date,
         "hour": hour,
-        "images": images,
+        "images": flat_images,
+        "segments": all_images,
         "available_hours": sorted(all_hours, reverse=True),
         "total_pages": total_page,
     }
@@ -408,7 +434,7 @@ def get_deleted_images():
     print(f"Found {len(deleted_list)} deleted images.")
     timestamps = []
     now = datetime.now().timestamp() * 1000
-    threshold = now - 30 * 24 * 60 * 60 # 30 days ago in milliseconds
+    threshold = now - 30 * 24 * 60 * 60 * 1000  # 30 days ago
 
     for image_path in deleted_list:
         timestamp = datetime.strptime(
@@ -419,7 +445,7 @@ def get_deleted_images():
             # Delete image permanently
             full_path = os.path.join(DIR, image_path)
             if os.path.exists(full_path):
-                print("Deleting permanently:", full_path, timestamp - threshold)
+                print("Deleting permanently:", full_path, timestamp * 1000, "<", threshold)
                 os.remove(full_path)
             app.deleted_images.remove(image_path)
             continue

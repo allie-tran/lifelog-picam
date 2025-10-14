@@ -20,17 +20,9 @@ const ImageWithDate = ({
         <Box
             sx={{
                 marginBottom: '20px',
-                height: 'auto',
+                height: '300px',
                 position: 'relative',
-                [theme.breakpoints.down('xs')]: {
-                    width: 'calc(45% - 4px)',
-                },
-                [theme.breakpoints.up('xs')]: {
-                    width: 'calc(33% - 4px)',
-                },
-                [theme.breakpoints.up('md')]: {
-                    width: 'calc(23% - 4px)',
-                },
+                width: 'auto',
             }}
         >
             <Box
@@ -38,8 +30,8 @@ const ImageWithDate = ({
                 sx={{
                     position: 'relative',
                     cursor: onClick ? 'pointer' : 'default',
-                    height: 'auto',
-                    width: '100%',
+                    height: '100%',
+                    width: 'auto',
                     borderRadius: '8px',
                 }}
                 onClick={onClick}
