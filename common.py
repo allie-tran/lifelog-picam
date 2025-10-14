@@ -41,14 +41,14 @@ def send_video(video_path, uploaded_files, LOG_FILE):
         return "video"
 
     timestamp = datetime.strptime(
-        os.path.basename(video_path).replace(".mp4", ""), "%Y%m%d_%H%M%S"
+        os.path.basename(video_path).replace(".h264", ""), "%Y%m%d_%H%M%S"
     )
     timestamp = int(timestamp.timestamp() * 1000)
 
     # Send form-data request
     with open(video_path, "rb") as vid_file:
         files = {
-            "file": (os.path.basename(video_path), vid_file, "video/mp4"),
+            "file": (os.path.basename(video_path), vid_file, "video/h264"),
             # "timestamp": (None, str(timestamp)),
         }
         response = requests.put(UPLOAD_VIDEO_URL, files=files)

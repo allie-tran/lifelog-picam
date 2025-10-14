@@ -187,6 +187,14 @@ async def upload_video(file: UploadFile):
     with open(output_path, "wb") as f:
         f.write(await file.read())
 
+
+    # convert h264 to mp4 if needed
+    if file_name.lower().endswith(".h264"):
+        mp4_path = output_path[:-5] + ".mp4"
+        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y")
+        os.remove(output_path)
+        output_path = mp4_path
+
     # make a webp thumbnail
     make_video_thumbnail(output_path)
     return {"message": "Video uploaded successfully."}

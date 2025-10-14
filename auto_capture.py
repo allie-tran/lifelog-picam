@@ -38,7 +38,7 @@ def capture_image():
     return os.path.join(DATE_DIR, file_name)
 
 def record_video_until_interrupt(grace_period=5.0):
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".mp4"
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
     DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
@@ -51,7 +51,6 @@ def record_video_until_interrupt(grace_period=5.0):
         "--output", video_path,
         "-t", "0"
         "-n",
-        "--codec", "libav",
     ]
     print("Starting video recording:", video_path)
     try:
