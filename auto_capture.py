@@ -44,13 +44,15 @@ def record_video_until_interrupt(grace_period=5.0):
     if not os.path.exists(DATE_DIR):
         os.makedirs(DATE_DIR)
 
+    video_path = os.path.join(DATE_DIR, file_name)
+
     cmd = [
         "rpicam-vid",
-        "--output", os.path.join(DATE_DIR, file_name),
+        "--output", video_path,
         "-t", "0"
         "-n",
     ]
-    print("Starting video recording:", file_name)
+    print("Starting video recording:", video_path)
     try:
         process = subprocess.Popen(cmd)
     except Exception as e:
@@ -93,9 +95,8 @@ def record_video_until_interrupt(grace_period=5.0):
             except Exception as e:
                 process.kill()
 
-
-    if os.path.exists(os.path.join(DATE_DIR, file_name)):
-        print("Recorded video:", file_name)
+    print("Recorded video:", file_name)
+    if os.path.exists(video_path):
         return os.path.join(DATE_DIR, file_name)
 
     print("Video file not found after recording.")
@@ -127,14 +128,13 @@ def main():
                 image_path = capture_image()
                 if image_path and check_if_connected():
                     send_image(image_path, set(), "upload_log.txt")
-            time.sleep(1)
 
         elif mode == "video":
             video_path = record_video_until_interrupt()
             if video_path and check_if_connected():
                 send_video(video_path, set(), "upload_log.txt")
 
-        time.sleep(1)
+        time.sleep(CHECK_MODE_INTERVAL)
 
 if __name__ == "__main__":
     main()
