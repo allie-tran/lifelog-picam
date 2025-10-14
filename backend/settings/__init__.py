@@ -46,7 +46,7 @@ async def toggle_mode(mode: str, background_tasks: BackgroundTasks
                 "video" if settings.capture_mode == "photo" else "photo"
             )
         if settings.capture_mode == "video":
-            background_tasks.add_task(switch_to_image_mode, picam_username, 10)
+            background_tasks.add_task(switch_to_image_mode, picam_username, settings.video_settings.max_duration)
         settings.update({"$set": {"capture_mode": settings.capture_mode}})
         return settings.model_dump(
             exclude={"_id", "id"},

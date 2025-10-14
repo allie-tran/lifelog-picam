@@ -51,7 +51,6 @@ def record_video_until_interrupt(grace_period=5.0):
         "--output", video_path,
         "-t", "0"
         "-n",
-        "-framerate", "24",
         "--codec", "libav",
     ]
     print("Starting video recording:", video_path)
@@ -97,7 +96,7 @@ def record_video_until_interrupt(grace_period=5.0):
             except Exception as e:
                 process.kill()
 
-    print("Recorded video:", file_name)
+    print("Recorded video:", video_path)
     if os.path.exists(video_path):
         return os.path.join(DATE_DIR, file_name)
 
