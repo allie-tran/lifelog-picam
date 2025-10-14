@@ -6,6 +6,8 @@ import subprocess
 
 import requests
 from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_video
+import threading
+import queue
 
 
 # ---------- ASYNC UPLOADER ----------
