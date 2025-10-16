@@ -63,7 +63,6 @@ class UploadManager:
             for t in self.workers:
                 t.join(timeout=2)
 
-uploader = UploadManager(worker_count=1)
 
 def check_capturing_mode():
     mode = "photo"
@@ -161,42 +160,43 @@ def record_video_until_interrupt(grace_period=5.0):
     return None
 
 def main():
-    try:
-        while not check_if_camera_connected():
-            print("Camera not connected. Retrying in 10 seconds...")
-            time.sleep(1)
+    uploader = UploadManager(worker_count=1)
+    while not check_if_camera_connected():
+        print("Camera not connected. Retrying in 10 seconds...")
+        time.sleep(1)
 
-        print("Camera connected.")
+    print("Camera connected.")
 
-        CAPTURE_INTERVAL = 10  # seconds
-        CHECK_MODE_INTERVAL = 1 # seconds
+    CAPTURE_INTERVAL = 10  # seconds
+    CHECK_MODE_INTERVAL = 1 # seconds
 
-        mode = check_capturing_mode()
-        print(f"Initial capturing mode: {mode}")
-        last_capture_time = 0
-        while True:
-            new_mode = check_capturing_mode()
-            if new_mode != mode:
-                print(f"Capturing mode changed from {mode} to {new_mode}")
-                mode = new_mode
+    mode = check_capturing_mode()
+    print(f"Initial capturing mode: {mode}")
+    last_capture_time = 0
+    while True:
+        print("sleeping...")
+        new_mode = check_capturing_mode()
+        if new_mode != mode:
+            print(f"Capturing mode changed from {mode} to {new_mode}")
+            mode = new_mode
 
-            current_time = time.time()
-            if mode == "photo":
-                if current_time - last_capture_time >= CAPTURE_INTERVAL:
-                    last_capture_time = current_time
-                    image_path = capture_image()
-                    if image_path and check_if_connected():
-                        uploader.enqueue(image_path, "image", "upload_log.txt")
+        current_time = time.time()
+        if mode == "photo":
+            if current_time - last_capture_time >= CAPTURE_INTERVAL:
+                last_capture_time = current_time
+                image_path = capture_image()
+                if image_path and check_if_connected():
+                    uploader.enqueue(image_path, "image", "upload_log.txt")
 
-            elif mode == "video":
-                video_path = record_video_until_interrupt()
-                if video_path and check_if_connected():
-                    uploader.enqueue(video_path, "video", "upload_log.txt")
+        elif mode == "video":
+            video_path = record_video_until_interrupt()
+            if video_path and check_if_connected():
+                uploader.enqueue(video_path, "video", "upload_log.txt")
 
-            time.sleep(CHECK_MODE_INTERVAL)
-    finally:
-        uploader.stop()
+        print("waiting...")
+        time.sleep(CHECK_MODE_INTERVAL)
 
+    uploader.stop()
 
 if __name__ == "__main__":
     main()
