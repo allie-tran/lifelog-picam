@@ -52,8 +52,8 @@ class UploadManager:
             except Exception as e:
                 print(f"[uploader] upload failed for {path}: {e}")
                 # backoff and retry by re-queuing
-                time.sleep(self.backoff_secs)
-                self.q.put((path, kind, log_file))
+                # time.sleep(self.backoff_secs)
+                # self.q.put((path, kind, log_file))
             finally:
                 self.q.task_done()
 
@@ -195,8 +195,6 @@ def main():
 
         print("waiting...")
         time.sleep(CHECK_MODE_INTERVAL)
-
-    uploader.stop()
 
 if __name__ == "__main__":
     main()
