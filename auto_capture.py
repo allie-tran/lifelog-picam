@@ -174,7 +174,6 @@ def main():
     print(f"Initial capturing mode: {mode}")
     last_capture_time = 0
     while True:
-        print("sleeping...")
         new_mode = check_capturing_mode()
         if new_mode != mode:
             print(f"Capturing mode changed from {mode} to {new_mode}")
@@ -182,7 +181,7 @@ def main():
 
         current_time = time.time()
         if mode == "photo":
-            if current_time - last_capture_time >= CAPTURE_INTERVAL:
+            if current_time - last_capture_time >= 10:
                 last_capture_time = current_time
                 image_path = capture_image()
                 if image_path and check_if_connected():
@@ -190,11 +189,9 @@ def main():
 
         elif mode == "video":
             video_path = record_video_until_interrupt()
-            if video_path and check_if_connected():
-                uploader.enqueue(video_path, "video", "upload_log.txt")
 
         print("waiting...")
-        time.sleep(CHECK_MODE_INTERVAL)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
