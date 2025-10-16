@@ -11,7 +11,7 @@ def segment_images(features, image_paths, deleted_images: set[str]):
     # Compare each feature vector with the previous one
     segments = []
     current_segment = [image_paths[sorted_indices[0]]]
-    k = 0.8  # Threshold for segmentation, can be adjusted
+    k = 0.6  # Threshold for segmentation, can be adjusted
     for i in range(1, len(features)):
         if image_paths[sorted_indices[i]] in deleted_images:
             continue
@@ -24,5 +24,14 @@ def segment_images(features, image_paths, deleted_images: set[str]):
     if current_segment:
         segments.append(current_segment)
     return segments
+
+def load_all_segments(features, image_paths, deleted_images: set[str]):
+    segments = segment_images(features, image_paths, deleted_images)
+
+    image_to_segment = {}
+    for segment in segments:
+        for image in segment:
+            image_to_segment[image] = segment
+    return image_to_segment, segments
 
 

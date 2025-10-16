@@ -2,13 +2,12 @@ import base64
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Annotated
 from tqdm.auto import tqdm
 
 import numpy as np
 import redis
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
@@ -16,7 +15,10 @@ from pydantic import BaseModel
 
 from app_types import Array2D
 from auth import auth_app
-from scripts.segmentation import segment_images
+from scripts.low_visual_semantic import get_low_visual_density_indices
+from scripts.low_texture import get_pocket_indices
+from scripts.querybank_norm import load_qb_norm_features
+from scripts.segmentation import segment_images, load_all_segments
 from constants import DIR
 from preprocess import (
     compress_image,
@@ -36,7 +38,16 @@ load_dotenv()
 class CustomFastAPI(FastAPI):
     features: Array2D[np.float32]
     image_paths: list[str]
+
+    retrieved_videos: np.ndarray  # Indices of retrieved videos for QB norm
+    normalizing_sum: np.ndarray  # Normalizing sum for QB norm
+    low_visual_indices: np.ndarray  # Indices of low visual density images
+    images_with_low_density: set[str] = set()
+
     deleted_images: set[str] = set()
+
+    segments: list[list[str]] = []
+    image_to_segment: dict[str, int] = {}
 
 
 picam_username = os.getenv("PICAM_USERNAME", "default_user")
@@ -60,10 +71,8 @@ async def lifespan(app: CustomFastAPI):
             app.deleted_images = set(line.strip() for line in f.readlines())
     app.features, app.image_paths = load_features()
 
-    i = 0
-    # Create features from DIR first
     to_process = set()
-    for root, dirs, files in os.walk(DIR):
+    for root, _, files in os.walk(DIR):
         for file in files:
             if file.endswith(".jpg"):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
@@ -73,8 +82,12 @@ async def lifespan(app: CustomFastAPI):
             if file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
                 make_video_thumbnail(os.path.join(root, file))
-                to_process.add(relative_path)
+                if relative_path not in app.image_paths:
+                    print(relative_path, "is a video, adding to process list.")
+                    to_process.add(relative_path)
 
+    # Create features from DIR first
+    i = 0
     if to_process:
         print(f"Processing {len(to_process)} new images...")
         for relative_path in tqdm(sorted(to_process)):
@@ -82,11 +95,21 @@ async def lifespan(app: CustomFastAPI):
                 relative_path, app.features, app.image_paths
             )
             i += 1
+            assert relative_path in app.image_paths, f"{relative_path} not in image_paths: {app.image_paths[-1]}"
             assert len(app.features) == len(
                 app.image_paths
             ), f"{len(app.features)} != {len(app.image_paths)}"
-                    # if i > 100:
-                    #     break
+
+        save_features(app.features, app.image_paths)
+
+    app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
+    app.low_visual_indices, app.images_with_low_density = get_low_visual_density_indices(app.image_paths)
+    low_pocket_indices, images_with_pocket = get_pocket_indices(app.image_paths)
+    app.low_visual_indices = np.unique(np.concatenate([app.low_visual_indices, low_pocket_indices]))
+    app.images_with_low_density = app.images_with_low_density.union(images_with_pocket)
+
+    app.image_to_segment, app.segments = load_all_segments(app.features, app.image_paths, app.deleted_images.union(app.images_with_low_density))
+
     yield
     await FastAPILimiter.close()
     save_features(app.features, app.image_paths)
@@ -147,6 +170,8 @@ async def check_image_uploaded(timestamp: int):
 @app.put("/upload-image")
 async def upload_image(file: UploadFile):
     file_name = file.filename
+    if file_name is None:
+        raise HTTPException(status_code=400, detail="Filename is required.")
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
 
     date = timestamp.strftime("%Y-%m-%d")
@@ -191,21 +216,18 @@ async def upload_video(file: UploadFile):
     with open(output_path, "wb") as f:
         f.write(await file.read())
 
-
     # convert h264 to mp4 if needed and rotate 90 degrees
     if file_name.lower().endswith(".h264"):
         mp4_path = output_path[:-5] + ".mp4"
-        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -vf 'transpose=1'")
+        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -metadata:s:v rotate=90")
         os.remove(output_path)
         output_path = mp4_path
-
-    # make a webp thumbnail
-    thumbnail_path = make_video_thumbnail(output_path)
 
     # Add to database as well
     _, app.features, app.image_paths = encode_image(
         output_path, app.features, app.image_paths
     )
+
     return {"message": "Video uploaded successfully."}
 
 def to_base64(image_data: bytes) -> str:
@@ -314,7 +336,7 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
         print(f"No hour specified, using latest hour: {hour}")
 
     # Pagination
-    items_per_page = 3 * 10
+    items_per_page = 120
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
 
@@ -381,7 +403,10 @@ def search(query: str):
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
     results = retrieve_image(
-        query, app.features, app.image_paths, app.deleted_images, k=20
+        query, app.features, app.image_paths, app.deleted_images, k=100,
+        retrieved_videos=app.retrieved_videos,
+        normalizing_sum=app.normalizing_sum,
+        remove=app.low_visual_indices
     )
     return results
 

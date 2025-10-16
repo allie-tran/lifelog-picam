@@ -58,10 +58,13 @@ const ImageZoom = ({
             {isVideo ? (
                 <video
                     controls
+                    autoPlay
                     style={{
                         maxWidth: '100%',
                         maxHeight: 'calc(80vh - 64px)',
                         borderRadius: '8px',
+                        transform:  'rotate(90deg)',
+                        transformOrigin: 'top left',
                     }}
                 >
                     <source

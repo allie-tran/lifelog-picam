@@ -1,4 +1,5 @@
-import { Box, Stack, Typography, useTheme } from '@mui/material';
+import { VideocamRounded } from '@mui/icons-material';
+import { Box, Stack, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
 
 const ImageWithDate = ({
@@ -6,11 +7,13 @@ const ImageWithDate = ({
     timestamp,
     onClick,
     extra,
+    isVideo,
 }: {
     imagePath: string;
     timestamp: string;
     onClick?: () => void;
     extra?: React.ReactNode;
+    isVideo?: boolean;
 }) => {
     const imageUrl = `${THUMBNAIL_HOST_URL}/${imagePath}.webp`;
     const date = new Date(timestamp);
@@ -37,6 +40,20 @@ const ImageWithDate = ({
                 onClick={onClick}
                 src={imageUrl}
                 alt={imagePath}
+            />
+            <VideocamRounded
+                sx={{
+                    position: 'absolute',
+                    top: 8,
+                    left: 8,
+                    color: 'white',
+                    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                    borderRadius: '50%',
+                    padding: '4px',
+                    display: isVideo ? 'block' : 'none',
+                }}
+                fontSize="medium"
+                titleAccess="Video"
             />
             <Stack
                 direction="row"

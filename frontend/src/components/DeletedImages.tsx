@@ -2,7 +2,7 @@ import { RestoreRounded } from '@mui/icons-material';
 import { Button, Stack } from '@mui/material';
 import React from 'react';
 import { getDeletedImages, restoreImage } from '../apis/browsing';
-import { ImageObject } from '../types/types';
+import { ImageObject } from '@utils/types'
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
 

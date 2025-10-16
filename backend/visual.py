@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import webp
 from PIL import Image as PILImage
 from transformers.models.auto.modeling_auto import AutoModel
 from transformers.models.auto.processing_auto import AutoProcessor

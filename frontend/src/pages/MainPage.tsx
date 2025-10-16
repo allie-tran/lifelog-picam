@@ -1,18 +1,18 @@
+import { DeleteRounded } from '@mui/icons-material';
 import { Badge, Button, Pagination, Stack, Typography } from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs, { Dayjs } from 'dayjs';
 import React from 'react';
 import useSWR from 'swr';
+import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
-import { DeleteRounded } from '@mui/icons-material';
-import SearchInterface from '../components/SearchInterface';
 import DeletedImages from '../components/DeletedImages';
-import { ImageObject } from '../types/types';
 import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
-import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
+import SearchBar from '../components/SearchBar';
 import Settings from '../components/Settings';
+import { ImageObject } from '@utils/types'
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
     if (!allDates.includes(day.format('YYYY-MM-DD'))) {
@@ -94,7 +94,7 @@ function MainPage() {
                     }}
                 />
                 <Settings />
-                <SearchInterface />
+                <SearchBar />
                 <DeletedImages />
                 <Stack direction="row" spacing={1}>
                     {availableHours.map((h) => (
@@ -148,6 +148,7 @@ function MainPage() {
                                             setSelectedImage(image.image_path)
                                             setIsSelectedVideo(image.is_video)
                                         }}
+                                        isVideo={image.is_video}
                                         extra={
                                             <Button
                                                 color="error"

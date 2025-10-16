@@ -2,7 +2,7 @@ import { Button, Stack, TextField } from '@mui/material';
 import React from 'react';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import ImageWithDate from './ImageWithDate';
-import { ImageObject } from '../types/types';
+import { ImageObject } from '@utils/types'
 import { searchImages } from '../apis/browsing';
 
 const SearchInterface = () => {
