@@ -3,7 +3,7 @@ import os
 import numpy as np
 from PIL import Image
 
-from app_types import ImageObject
+from database.types import ImageRecord
 from constants import DIR
 from scripts.querybank_norm import BETA, apply_qb_norm_to_query
 from visual import siglip_model
@@ -130,8 +130,9 @@ def retrieve_image(
 
     results = []
     for idx in top_indices:
-        results.append(ImageObject(
+        results.append(ImageRecord(
             image_path=image_paths[idx],
+            date=image_paths[idx].split("/")[0],
             thumbnail=image_paths[idx]
             .replace(".jpg", ".webp")
             .replace(".png", ".webp"),
@@ -188,8 +189,9 @@ def get_similar_images(
     results = []
     for idx in top_indices:
         results.append(
-            ImageObject(
+            ImageRecord(
                 image_path=image_paths[idx],
+                date=image_paths[idx].split("/")[0],
                 thumbnail=image_paths[idx]
                 .replace(".jpg", ".webp")
                 .replace(".png", ".webp"),

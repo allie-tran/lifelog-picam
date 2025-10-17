@@ -13,20 +13,15 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 from tqdm.auto import tqdm
 
-from app_types import Array2D, ImageObject
+from app_types import Array2D
 from auth import auth_app
-from dependencies import CamelCaseModel
 from constants import DIR
 from database import init_db
-from preprocess import (
-    compress_image,
-    encode_image,
-    get_similar_images,
-    load_features,
-    make_video_thumbnail,
-    retrieve_image,
-    save_features,
-)
+from database.types import ImageRecord
+from dependencies import CamelCaseModel
+from preprocess import (compress_image, encode_image, get_similar_images,
+                        load_features, make_video_thumbnail, retrieve_image,
+                        save_features)
 from scripts.low_texture import get_pocket_indices
 from scripts.low_visual_semantic import get_low_visual_density_indices
 from scripts.querybank_norm import load_qb_norm_features
@@ -45,8 +40,6 @@ class CustomFastAPI(FastAPI):
     normalizing_sum: np.ndarray  # Normalizing sum for QB norm
     low_visual_indices: np.ndarray  # Indices of low visual density images
     images_with_low_density: set[str] = set()
-
-    deleted_images: set[str] = set()
 
     segments: list[list[str]] = []
     image_to_segment: dict[str, int] = {}
@@ -71,26 +64,32 @@ async def lifespan(app: CustomFastAPI):
         )
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
-    app.deleted_images = set()
-    if os.path.exists("deleted_images.txt"):
-        with open("deleted_images.txt", "r") as f:
-            app.deleted_images = set(line.strip() for line in f.readlines())
     app.features, app.image_paths = load_features()
 
     to_process = set()
     for root, _, files in os.walk(DIR):
         for file in files:
+            relative_path = ""
             if file.endswith(".jpg"):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
                 compress_image(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     to_process.add(relative_path)
-            if file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
+            elif file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
                 make_video_thumbnail(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     print(relative_path, "is a video, adding to process list.")
                     to_process.add(relative_path)
+            else:
+                continue
+            # ImageRecord(
+            #     image_path=relative_path,
+            #     thumbnail=relative_path.replace(".jpg", ".webp").replace(".mp4", ".webp").replace(".h264", ".webp"),
+            #     date=relative_path.split("/")[0],
+            #     timestamp=datetime.strptime(file.split(".")[0], "%Y%m%d_%H%M%S").timestamp() * 1000,  # Convert to milliseconds
+            #     is_video=file.lower().endswith((".h264", ".mp4", ".mov", ".avi"))
+            # ).create()
 
     # Create features from DIR first
     i = 0
@@ -107,6 +106,15 @@ async def lifespan(app: CustomFastAPI):
             assert len(app.features) == len(
                 app.image_paths
             ), f"{len(app.features)} != {len(app.image_paths)}"
+            ImageRecord(
+                image_path=relative_path,
+                thumbnail=relative_path.replace(".jpg", ".webp").replace(".mp4", ".webp").replace(".h264", ".webp"),
+                date=relative_path.split("/")[0],
+                timestamp=datetime.strptime(
+                    relative_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
+                ).timestamp() * 1000,  # Convert to milliseconds
+                is_video=relative_path.lower().endswith((".h264", ".mp4", ".mov", ".avi"))
+            ).create()
 
         save_features(app.features, app.image_paths)
 
@@ -123,7 +131,10 @@ async def lifespan(app: CustomFastAPI):
     app.image_to_segment, app.segments = load_all_segments(
         app.features,
         app.image_paths,
-        app.deleted_images.union(app.images_with_low_density),
+        set(ImageRecord.find(
+            filter={"deleted": True},
+            distinct="image_path"
+        )).union(app.images_with_low_density),
     )
 
     yield
@@ -216,15 +227,26 @@ async def upload_image(file: UploadFile):
             f"{date}/{file_name}", app.features, app.image_paths
         )
         compress_image(output_path)
+        ImageRecord(
+            image_path=f"{date}/{file_name}",
+            thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
+            date=date,
+            timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+            is_video=False,
+        ).create()
 
     now = datetime.now()
     if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
         save_features(app.features, app.image_paths)
         app.last_saved = now
+        deleted_set = set(ImageRecord.find(
+            filter={"deleted": True},
+            distinct="image_path"
+        ))
         app.segments = segment_images(
             app.features,
             app.image_paths,
-            app.deleted_images.union(app.images_with_low_density),
+            deleted_set.union(app.images_with_low_density),
         )
         app.image_to_segment = {
             img: idx for idx, segment in enumerate(app.segments) for img in segment
@@ -259,6 +281,15 @@ async def upload_video(file: UploadFile):
         )
         os.remove(output_path)
         output_path = mp4_path
+
+    make_video_thumbnail(output_path)
+    ImageRecord(
+        image_path=f"{date}/{file_name}",
+        thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
+        date=date,
+        timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+        is_video=True,
+    ).create()
 
     # Add to database as well
     _, app.features, app.image_paths = encode_image(
@@ -306,20 +337,11 @@ async def get_images(date: str = "", page: int = 1):
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
-    all_files = sorted(os.listdir(dir_path), reverse=True)
-    print(app.deleted_images)
-    all_files = [
-        f
-        for f in all_files
-        if f.endswith(".jpg") and f"{date}/{f}" not in app.deleted_images
-    ]
-    print(
-        [
-            (f, f"{date}/{f}", f"{date}/{f}" in app.deleted_images)
-            for f in all_files[:10]
-        ]
+    all_files = ImageRecord.find(
+        filter={"date": date, "deleted": False},
+        sort=[("image_path", -1)],
     )
-
+    all_files = [f.image_path.split("/")[-1] for f in all_files]
     # Pagination
     items_per_page = 3 * 10
     start_index = (page - 1) * items_per_page
@@ -332,9 +354,10 @@ async def get_images(date: str = "", page: int = 1):
             file_name.split(".")[0], "%Y%m%d_%H%M%S"
         ).timestamp()
         images.append(
-            ImageObject(
+            ImageRecord(
                 image_path=f"{date}/{file_name}",
                 thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
+                date=date,
                 timestamp=timestamp * 1000,  # Convert to milliseconds
                 is_video=file_name.lower().endswith(
                     (".h264", ".mp4", ".mov", ".avi")
@@ -360,14 +383,13 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
-    all_files = sorted(os.listdir(dir_path), reverse=True)
-    all_files = [
-        f
-        for f in all_files
-        if (f.endswith(".jpg") or f.endswith(".mp4"))
-        and f"{date}/{f}" not in app.deleted_images
-    ]
-    all_hours = set(int(f[9:11]) for f in all_files)
+    all_files = ImageRecord.find(
+        filter={"date": date, "deleted": False},
+        sort=[("image_path", -1)],
+    )
+    all_files = [f.image_path for f in all_files]
+    print(all_files[:10])
+    all_hours = set(int(f.split("_")[1][0:2]) for f in all_files)
     if not hour:
         # Get the latest hour
         if not all_files:
@@ -381,7 +403,11 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
 
-    all_files = [f for f in all_files if int(f[9:11]) == hour]
+    all_files = [
+        f.split("/")[-1]
+        for f in all_files
+        if f.split("/")[-1].startswith(f"{date.replace('-', '')}_{hour:02d}")
+    ]
     total_page = (len(all_files) + items_per_page - 1) // items_per_page
     all_files = all_files[start_index:end_index]
 
@@ -394,7 +420,12 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     features = app.features[indices]
     image_paths = [app.image_paths[i] for i in indices]
 
-    segments = segment_images(features, image_paths, app.deleted_images)
+    deleted_set = set(ImageRecord.find(
+        filter={"deleted": True},
+        distinct="image_path"
+    ))
+
+    segments = segment_images(features, image_paths, deleted_set.union(app.images_with_low_density))
     all_images = []
     flat_images = []
 
@@ -405,15 +436,19 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
                 image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
             ).timestamp()
             images.append(
-                ImageObject(
+                ImageRecord(
                     image_path=image_path,
                     is_video=image_path.lower().endswith(
                         (".h264", ".mp4", ".mov", ".avi")
                     ),
+                    date=date,
                     thumbnail=image_path.replace(".jpg", ".webp")
                     .replace(".mp4", ".webp")
                     .replace(".h264", ".webp"),
                     timestamp=timestamp * 1000,  # Convert to milliseconds
+                ).model_dump(
+                    exclude={"_id", "id"},
+                    by_alias=True,
                 )
             )
         all_images.append(images)
@@ -447,11 +482,17 @@ def get_all_dates():
 def search(query: str):
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
+
+    deleted_set = set(ImageRecord.find(
+        filter={"deleted": True},
+        distinct="image_path"
+    ))
+
     results = retrieve_image(
         query,
         app.features,
         app.image_paths,
-        app.deleted_images,
+        deleted_set,
         k=100,
         retrieved_videos=app.retrieved_videos,
         normalizing_sum=app.normalizing_sum,
@@ -462,11 +503,15 @@ def search(query: str):
 
 @app.get("/similar-images")
 def similar_images(image: str):
+    delete_set = set(ImageRecord.find(
+        filter={"deleted": True},
+        distinct="image_path"
+    ))
     results = get_similar_images(
         image,
         app.features,
         app.image_paths,
-        app.deleted_images,
+        delete_set,
         k=100,
         retrieved_videos=app.retrieved_videos,
         normalizing_sum=app.normalizing_sum,
@@ -531,16 +576,20 @@ def delete_image(request: DeleteImageRequest):
         original = image_path
 
     print(f"Deleting image: {original}")
-    if image_path not in app.deleted_images:
-        app.deleted_images.add(image_path)
-        with open("deleted_images.txt", "a") as f:
-            f.write(f"{image_path}\n")
+    ImageRecord.update_one(
+        {"image_path": original},
+        {"$set": {"deleted": True}},
+    )
 
 
 @app.get("/get-deleted-images")
 def get_deleted_images():
-    deleted_list = list(app.deleted_images)
-    deleted_list = sorted(deleted_list, reverse=True)
+    deleted_list = ImageRecord.find(
+        filter={"deleted": True},
+        sort=[("image_path", -1)],
+        distinct="image_path"
+    )
+    deleted_list = list(deleted_list)
     print(f"Found {len(deleted_list)} deleted images.")
     timestamps = []
     now = datetime.now().timestamp() * 1000
@@ -567,25 +616,20 @@ def get_deleted_images():
                 os.remove(full_path)
             if thumbnail and os.path.exists(thumbnail):
                 os.remove(thumbnail)
-            app.deleted_images.remove(image_path)
             continue
 
         timestamps.append(timestamp * 1000)
 
-    # Update the deleted_images.txt file
-    with open("deleted_images.txt", "w") as f:
-        for img in app.deleted_images:
-            f.write(f"{img}\n")
-
     return [
-        ImageObject(
+        ImageRecord(
             image_path=img,
             thumbnail=img.replace(".jpg", ".webp")
             .replace(".mp4", ".webp")
             .replace(".h264", ".webp"),
+            date=img.split("/")[0],
             timestamp=ts,
             is_video=img.lower().endswith((".h264", ".mp4", ".mov", ".avi")),
-        )
+        ).model_dump(exclude={"_id", "id"}, by_alias=True)
         for img, ts in zip(deleted_list, timestamps)
     ]
 
@@ -593,10 +637,7 @@ def get_deleted_images():
 @app.post("/restore-image")
 def restore_image(request: DeleteImageRequest):
     image_path = request.image_path
-    if image_path in app.deleted_images:
-        app.deleted_images.remove(image_path)
-        with open("deleted_images.txt", "w") as f:
-            for img in app.deleted_images:
-                f.write(f"{img}\n")
-    else:
-        raise HTTPException(status_code=404, detail="Image not found in deleted list")
+    ImageRecord.update_one(
+        {"image_path": image_path},
+        {"$set": {"deleted": False}},
+    )

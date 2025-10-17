@@ -1,7 +1,6 @@
 from typing import Annotated, Literal, TypeVar
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel
 
 from dependencies import CamelCaseModel
 
