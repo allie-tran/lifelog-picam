@@ -12,7 +12,9 @@ import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
 import SearchBar from '../components/SearchBar';
 import Settings from '../components/Settings';
-import { ImageObject } from '@utils/types'
+import { ImageObject } from '@utils/types';
+import { useAppDispatch } from 'reducers/hooks';
+import { setZoomedImage } from 'reducers/zoomedImage';
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
     if (!allDates.includes(day.format('YYYY-MM-DD'))) {
@@ -40,10 +42,7 @@ function MainPage() {
     const [page, setPage] = React.useState(1);
     const [date, setDate] = React.useState<Dayjs | null>(dayjs());
     const [hour, setHour] = React.useState<number | null>(null);
-    const [selectedImage, setSelectedImage] = React.useState<string | null>(
-        null
-    );
-    const [isSelectedVideo, setIsSelectedVideo] = React.useState<boolean>(false);
+    const dispatch = useAppDispatch();
     const { data, error, mutate } = useSWR(
         [page, date, hour],
         () =>
@@ -122,7 +121,7 @@ function MainPage() {
                                 color="error"
                                 onClick={() => {
                                     const imagePaths = segment.map(
-                                        (img) => img.image_path
+                                        (img) => img.imagePath
                                     );
                                     deleteRow(imagePaths);
                                 }}
@@ -141,27 +140,20 @@ function MainPage() {
                             >
                                 {segment.map((image: ImageObject) => (
                                     <ImageWithDate
-                                        key={image.image_path}
-                                        imagePath={image.image_path}
-                                        timestamp={image.timestamp}
+                                        image={image}
                                         onClick={() => {
-                                            setSelectedImage(image.image_path)
-                                            setIsSelectedVideo(image.is_video)
+                                            console.log(
+                                                'Setting zoomed image:',
+                                                image.imagePath
+                                            );
+                                            dispatch(
+                                                setZoomedImage({
+                                                    image: image.imagePath,
+                                                    isVideo: image.isVideo,
+                                                })
+                                            );
                                         }}
-                                        isVideo={image.is_video}
-                                        extra={
-                                            <Button
-                                                color="error"
-                                                size="small"
-                                                onClick={() =>
-                                                    deleteImage(
-                                                        image.image_path
-                                                    ).then(() => mutate())
-                                                }
-                                            >
-                                                <DeleteRounded />
-                                            </Button>
-                                        }
+                                        onDelete={() => mutate()}
                                     />
                                 ))}
                             </Stack>
@@ -179,14 +171,7 @@ function MainPage() {
                     }}
                 />
             </Stack>
-            {selectedImage && (
-                <ImageZoom
-                    imagePath={selectedImage}
-                    onClose={() => setSelectedImage(null)}
-                    onDelete={() => mutate()}
-                    isVideo={isSelectedVideo}
-                />
-            )}
+            <ImageZoom onDelete={() => mutate()} />
         </>
     );
 }

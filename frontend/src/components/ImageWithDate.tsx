@@ -1,29 +1,29 @@
-import { VideocamRounded } from '@mui/icons-material';
-import { Box, Stack, Typography } from '@mui/material';
+import { DeleteRounded, VideocamRounded } from '@mui/icons-material';
+import { Box, Button, Stack, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
+import dayjs from 'dayjs';
+import { deleteImage } from 'apis/browsing';
+import { ImageObject } from '@utils/types';
 
 const ImageWithDate = ({
-    imagePath,
-    timestamp,
+    image,
     onClick,
     extra,
-    isVideo,
+    onDelete,
 }: {
-    imagePath: string;
-    timestamp: string;
+    image: ImageObject;
     onClick?: () => void;
     extra?: React.ReactNode;
-    isVideo?: boolean;
+    onDelete?: (image: string) => void;
 }) => {
-    const imageUrl = `${THUMBNAIL_HOST_URL}/${imagePath}.webp`;
-    const date = new Date(timestamp);
-    const formattedDate = date.toLocaleString();
+    const imageUrl = `${THUMBNAIL_HOST_URL}/${image.thumbnail}`;
+    const formattedDate = dayjs(image.timestamp).format('lll');
 
     return (
         <Box
             sx={{
                 marginBottom: '20px',
-                height: '300px',
+                height: '350px',
                 position: 'relative',
                 width: 'auto',
             }}
@@ -33,13 +33,13 @@ const ImageWithDate = ({
                 sx={{
                     position: 'relative',
                     cursor: onClick ? 'pointer' : 'default',
-                    height: '100%',
+                    height: 'calc(100% - 24px)',
                     width: 'auto',
                     borderRadius: '8px',
                 }}
                 onClick={onClick}
                 src={imageUrl}
-                alt={imagePath}
+                alt={image.imagePath}
             />
             <VideocamRounded
                 sx={{
@@ -50,7 +50,7 @@ const ImageWithDate = ({
                     backgroundColor: 'rgba(0, 0, 0, 0.6)',
                     borderRadius: '50%',
                     padding: '4px',
-                    display: isVideo ? 'block' : 'none',
+                    display: image.isVideo ? 'block' : 'none',
                 }}
                 fontSize="medium"
                 titleAccess="Video"
@@ -63,6 +63,16 @@ const ImageWithDate = ({
                 sx={{ marginTop: '4px' }}
             >
                 <Typography>{formattedDate}</Typography>
+                <Button
+                    color="error"
+                    size="small"
+                    onClick={() => {
+                        onDelete && onDelete(image.imagePath);
+                        deleteImage(image.imagePath)
+                    }}
+                >
+                    <DeleteRounded />
+                </Button>
                 {extra}
             </Stack>
         </Box>

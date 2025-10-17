@@ -38,14 +38,12 @@ const DeletedImages = () => {
                 >
                     {results.map((image) => (
                         <ImageWithDate
-                            key={image.image_path}
-                            imagePath={image.image_path}
-                            timestamp={image.timestamp}
+                            image={image}
                             extra={
                                 <Button
                                     color="error"
                                     size="small"
-                                    onClick={() => restoreImage(image.image_path).then(() => fetchImages())}
+                                    onClick={() => restoreImage(image.imagePath).then(() => fetchImages())}
                                 >
                                     <RestoreRounded />
                                 </Button>

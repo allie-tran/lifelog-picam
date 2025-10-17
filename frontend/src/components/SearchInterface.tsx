@@ -49,9 +49,8 @@ const SearchInterface = () => {
                 >
                     {results.map((image) => (
                         <ImageWithDate
-                            key={image.image_path}
-                            imagePath={image.image_path}
-                            timestamp={image.timestamp}
+                            key={image.imagePath}
+                            image={image}
                         />
                     ))}
                 </Stack>

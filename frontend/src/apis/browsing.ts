@@ -42,9 +42,16 @@ export const searchImages = async (query: string) => {
     return response.data as ImageObject[];
 };
 
+export const similarImages = async (imagePath: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/similar-images?image=${encodeURIComponent(imagePath)}`
+    );
+    return response.data as ImageObject[];
+}
+
 export const deleteImage = async (imagePath: string) => {
     const response = await axios.delete(`${BACKEND_URL}/delete-image`, {
-        data: { image_path: imagePath },
+        data: { imagePath }
     });
     return response.data;
 };
@@ -56,7 +63,7 @@ export const getDeletedImages = async () => {
 
 export const restoreImage = async (imagePath: string) => {
     const response = await axios.post(`${BACKEND_URL}/restore-image`, {
-        image_path: imagePath,
+        imagePath
     });
     return response.data;
 };

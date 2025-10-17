@@ -1,27 +1,42 @@
-import { searchImages } from 'apis/browsing';
-import ImageWithDate from 'components/ImageWithDate';
 import { Divider, Stack, Typography } from '@mui/material';
 import { ImageObject } from '@utils/types';
-import { useSearchParams } from 'react-router';
-import useSWR from 'swr';
-import SearchBar from 'components/SearchBar';
+import { similarImages } from 'apis/browsing';
+import ImageWithDate from 'components/ImageWithDate';
 import { ImageZoom } from 'components/ImageZoom';
-import { setZoomedImage } from 'reducers/zoomedImage';
+import dayjs from 'dayjs';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAppDispatch } from 'reducers/hooks';
+import { setZoomedImage } from 'reducers/zoomedImage';
+import useSWR from 'swr';
 
-const SearchPage = () => {
-    const dispatch = useAppDispatch();
+const toTimestamp = (imagePath: string): number => {
+    const str = imagePath.split('/').pop()?.split('.')[0] || '';
+    const date = dayjs(str, 'YYYYMMDD_HHmmss');
+    // to timestamp (number of milliseconds since epoch)
+    return date.unix() * 1000;
+};
+
+const SimilarImages = () => {
     const [searchParams, _] = useSearchParams();
+    const dispatch = useAppDispatch();
+
+    const image: ImageObject = {
+        imagePath: searchParams.get('image') || '',
+        thumbnail: (searchParams.get('image') || '').split('.')[0] + '.webp',
+        timestamp: toTimestamp(searchParams.get('image') || ''),
+        isVideo: searchParams.get('image')?.endsWith('.mp4') || false,
+    };
+
     const { data, isLoading } = useSWR(
-        ['search', searchParams.get('query')],
-        () => searchImages(searchParams.get('query') || ''),
+        ['similar-images', searchParams.get('image')],
+        () => similarImages(searchParams.get('image') || ''),
         {
             revalidateOnFocus: false,
         }
     );
-    const results: ImageObject[] = data || [];
     const [deleted, setDeleted] = useState<string[]>([]);
+    const results: ImageObject[] = data || [];
     if (isLoading) {
         return <div>Loading...</div>;
     }
@@ -31,24 +46,26 @@ const SearchPage = () => {
             <Typography
                 variant="h4"
                 align="center"
-                marginTop={4}
                 color="primary"
                 fontWeight="bold"
             >
-                Search
+                Similar Images
             </Typography>
-            <SearchBar />
-            <Divider sx={{ marginY: 2 }} />
-            <Typography variant="h6">
-                Showing results for: "{searchParams.get('query')}"
-            </Typography>
-            <Stack spacing={2} alignItems="center">
+            <Stack spacing={2} alignItems="center" marginTop={2}>
+                <ImageWithDate
+                    image={image}
+                />
+                <Divider flexItem />
+                <Typography variant="h6">
+                    Showing results for: "{searchParams.get('image')}"
+                </Typography>
                 {results.length === 0 && <div>No results found</div>}
                 <Stack
                     spacing={2}
-                    sx={{ width: '100%', flexWrap: 'wrap' }}
+                    sx={{ flexWrap: 'wrap' }}
                     direction="row"
                     useFlexGap
+                    justifyContent="center"
                 >
                     {results.map((image) =>
                         deleted.includes(image.imagePath) ? null : (
@@ -80,4 +97,4 @@ const SearchPage = () => {
         </>
     );
 };
-export default SearchPage;
+export default SimilarImages;

@@ -2,7 +2,6 @@ import base64
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from tqdm.auto import tqdm
 
 import numpy as np
 import redis
@@ -12,28 +11,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
+from tqdm.auto import tqdm
 
-from app_types import Array2D
+from app_types import Array2D, ImageObject
 from auth import auth_app
-from scripts.low_visual_semantic import get_low_visual_density_indices
-from scripts.low_texture import get_pocket_indices
-from scripts.querybank_norm import load_qb_norm_features
-from scripts.segmentation import segment_images, load_all_segments
+from dependencies import CamelCaseModel
 from constants import DIR
+from database import init_db
 from preprocess import (
     compress_image,
     encode_image,
+    get_similar_images,
     load_features,
     make_video_thumbnail,
     retrieve_image,
     save_features,
 )
-from database import init_db
+from scripts.low_texture import get_pocket_indices
+from scripts.low_visual_semantic import get_low_visual_density_indices
+from scripts.querybank_norm import load_qb_norm_features
+from scripts.segmentation import load_all_segments, segment_images
 from settings import control_app, get_mode
 from settings.types import PiCamControl
-from dotenv import load_dotenv
 
 load_dotenv()
+
 
 class CustomFastAPI(FastAPI):
     features: Array2D[np.float32]
@@ -49,8 +51,12 @@ class CustomFastAPI(FastAPI):
     segments: list[list[str]] = []
     image_to_segment: dict[str, int] = {}
 
+    last_saved: datetime = datetime.now()
+
 
 picam_username = os.getenv("PICAM_USERNAME", "default_user")
+
+
 @asynccontextmanager
 async def lifespan(app: CustomFastAPI):
     print("Starting up server...")
@@ -95,7 +101,9 @@ async def lifespan(app: CustomFastAPI):
                 relative_path, app.features, app.image_paths
             )
             i += 1
-            assert relative_path in app.image_paths, f"{relative_path} not in image_paths: {app.image_paths[-1]}"
+            assert (
+                relative_path in app.image_paths
+            ), f"{relative_path} not in image_paths: {app.image_paths[-1]}"
             assert len(app.features) == len(
                 app.image_paths
             ), f"{len(app.features)} != {len(app.image_paths)}"
@@ -103,16 +111,25 @@ async def lifespan(app: CustomFastAPI):
         save_features(app.features, app.image_paths)
 
     app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
-    app.low_visual_indices, app.images_with_low_density = get_low_visual_density_indices(app.image_paths)
+    app.low_visual_indices, app.images_with_low_density = (
+        get_low_visual_density_indices(app.image_paths)
+    )
     low_pocket_indices, images_with_pocket = get_pocket_indices(app.image_paths)
-    app.low_visual_indices = np.unique(np.concatenate([app.low_visual_indices, low_pocket_indices]))
+    app.low_visual_indices = np.unique(
+        np.concatenate([app.low_visual_indices, low_pocket_indices])
+    )
     app.images_with_low_density = app.images_with_low_density.union(images_with_pocket)
 
-    app.image_to_segment, app.segments = load_all_segments(app.features, app.image_paths, app.deleted_images.union(app.images_with_low_density))
+    app.image_to_segment, app.segments = load_all_segments(
+        app.features,
+        app.image_paths,
+        app.deleted_images.union(app.images_with_low_density),
+    )
 
     yield
     await FastAPILimiter.close()
     save_features(app.features, app.image_paths)
+
 
 app = CustomFastAPI(lifespan=lifespan)
 app.mount("/auth", auth_app)
@@ -199,7 +216,25 @@ async def upload_image(file: UploadFile):
             f"{date}/{file_name}", app.features, app.image_paths
         )
         compress_image(output_path)
+
+    now = datetime.now()
+    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+        save_features(app.features, app.image_paths)
+        app.last_saved = now
+        app.segments = segment_images(
+            app.features,
+            app.image_paths,
+            app.deleted_images.union(app.images_with_low_density),
+        )
+        app.image_to_segment = {
+            img: idx for idx, segment in enumerate(app.segments) for img in segment
+        }
+        app.low_visual_indices, app.images_with_low_density = (
+            get_low_visual_density_indices(app.image_paths)
+        )
+        app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
     return get_mode()
+
 
 @app.put("/upload-video")
 async def upload_video(file: UploadFile):
@@ -219,7 +254,9 @@ async def upload_video(file: UploadFile):
     # convert h264 to mp4 if needed and rotate 90 degrees
     if file_name.lower().endswith(".h264"):
         mp4_path = output_path[:-5] + ".mp4"
-        os.system(f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -metadata:s:v rotate=90")
+        os.system(
+            f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -metadata:s:v rotate=90"
+        )
         os.remove(output_path)
         output_path = mp4_path
 
@@ -229,6 +266,7 @@ async def upload_video(file: UploadFile):
     )
 
     return {"message": "Video uploaded successfully."}
+
 
 def to_base64(image_data: bytes) -> str:
     """Convert image data to base64 string."""
@@ -294,10 +332,14 @@ async def get_images(date: str = "", page: int = 1):
             file_name.split(".")[0], "%Y%m%d_%H%M%S"
         ).timestamp()
         images.append(
-            {
-                "image_path": f"{date}/{file_name.split('.')[0]}",
-                "timestamp": timestamp * 1000,  # Convert to milliseconds
-            }
+            ImageObject(
+                image_path=f"{date}/{file_name}",
+                thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
+                timestamp=timestamp * 1000,  # Convert to milliseconds
+                is_video=file_name.lower().endswith(
+                    (".h264", ".mp4", ".mov", ".avi")
+                ),
+            )
         )
 
     return {
@@ -313,7 +355,6 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     print(f"Fetching images for date: {date} and hour: {hour}")
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
-
 
     dir_path = f"{DIR}/{date}"
     if not os.path.exists(dir_path):
@@ -340,9 +381,7 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
 
-    all_files = [
-        f for f in all_files if int(f[9:11]) == hour
-    ]
+    all_files = [f for f in all_files if int(f[9:11]) == hour]
     total_page = (len(all_files) + items_per_page - 1) // items_per_page
     all_files = all_files[start_index:end_index]
 
@@ -366,11 +405,16 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
                 image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
             ).timestamp()
             images.append(
-                {
-                    "image_path": image_path.split(".")[0],
-                    "is_video": image_path.lower().endswith(('.h264', '.mp4', '.mov', '.avi')),
-                    "timestamp": timestamp * 1000,  # Convert to milliseconds
-                }
+                ImageObject(
+                    image_path=image_path,
+                    is_video=image_path.lower().endswith(
+                        (".h264", ".mp4", ".mov", ".avi")
+                    ),
+                    thumbnail=image_path.replace(".jpg", ".webp")
+                    .replace(".mp4", ".webp")
+                    .replace(".h264", ".webp"),
+                    timestamp=timestamp * 1000,  # Convert to milliseconds
+                )
             )
         all_images.append(images)
         flat_images.extend(images)
@@ -383,6 +427,7 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
         "available_hours": sorted(all_hours, reverse=True),
         "total_pages": total_page,
     }
+
 
 @app.get("/get-all-dates")
 def get_all_dates():
@@ -403,10 +448,29 @@ def search(query: str):
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
     results = retrieve_image(
-        query, app.features, app.image_paths, app.deleted_images, k=100,
+        query,
+        app.features,
+        app.image_paths,
+        app.deleted_images,
+        k=100,
         retrieved_videos=app.retrieved_videos,
         normalizing_sum=app.normalizing_sum,
-        remove=app.low_visual_indices
+        remove=app.low_visual_indices,
+    )
+    return results
+
+
+@app.get("/similar-images")
+def similar_images(image: str):
+    results = get_similar_images(
+        image,
+        app.features,
+        app.image_paths,
+        app.deleted_images,
+        k=100,
+        retrieved_videos=app.retrieved_videos,
+        normalizing_sum=app.normalizing_sum,
+        remove=app.low_visual_indices,
     )
     return results
 
@@ -449,15 +513,24 @@ def check_all_files_exist(request: CheckFilesRequest):
         return []
 
 
-class DeleteImageRequest(BaseModel):
+class DeleteImageRequest(CamelCaseModel):
     image_path: str
 
 
 @app.delete("/delete-image")
 def delete_image(request: DeleteImageRequest):
     image_path = request.image_path
-    image_path = f"{image_path}.jpg" if not image_path.endswith(".jpg") else image_path
-    print(f"Deleting image: {image_path}")
+    if not (image_path.endswith(".jpg") or image_path.endswith(".mp4")):
+        if os.path.exists(f"{DIR}/{image_path}.jpg"):
+            original = f"{image_path}.jpg"
+        elif os.path.exists(f"{DIR}/{image_path}.mp4"):
+            original = f"{image_path}.mp4"
+        else:
+            raise HTTPException(status_code=404, detail="Image not found")
+    else:
+        original = image_path
+
+    print(f"Deleting image: {original}")
     if image_path not in app.deleted_images:
         app.deleted_images.add(image_path)
         with open("deleted_images.txt", "a") as f:
@@ -475,15 +548,25 @@ def get_deleted_images():
 
     for image_path in deleted_list:
         timestamp = datetime.strptime(
-            image_path.split("/")[-1], "%Y%m%d_%H%M%S.jpg"
+            image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
         ).timestamp()
 
         if timestamp * 1000 < threshold:
             # Delete image permanently
             full_path = os.path.join(DIR, image_path)
+            thumbnail = None
+            if full_path.endswith(".mp4"):
+                thumbnail = make_video_thumbnail(full_path)
+            else:
+                thumbnail = compress_image(full_path)
+
             if os.path.exists(full_path):
-                print("Deleting permanently:", full_path, timestamp * 1000, "<", threshold)
+                print(
+                    "Deleting permanently:", full_path, timestamp * 1000, "<", threshold
+                )
                 os.remove(full_path)
+            if thumbnail and os.path.exists(thumbnail):
+                os.remove(thumbnail)
             app.deleted_images.remove(image_path)
             continue
 
@@ -495,7 +578,14 @@ def get_deleted_images():
             f.write(f"{img}\n")
 
     return [
-        {"image_path": img.split(".")[0], "timestamp": ts}
+        ImageObject(
+            image_path=img,
+            thumbnail=img.replace(".jpg", ".webp")
+            .replace(".mp4", ".webp")
+            .replace(".h264", ".webp"),
+            timestamp=ts,
+            is_video=img.lower().endswith((".h264", ".mp4", ".mov", ".avi")),
+        )
         for img, ts in zip(deleted_list, timestamps)
     ]
 
@@ -503,7 +593,6 @@ def get_deleted_images():
 @app.post("/restore-image")
 def restore_image(request: DeleteImageRequest):
     image_path = request.image_path
-    image_path = f"{image_path}.jpg" if not image_path.endswith(".jpg") else image_path
     if image_path in app.deleted_images:
         app.deleted_images.remove(image_path)
         with open("deleted_images.txt", "w") as f:

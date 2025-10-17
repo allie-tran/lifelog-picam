@@ -1,20 +1,21 @@
+import { DeleteRounded, DownloadRounded, ImageRounded } from '@mui/icons-material';
 import { Box, Button, Stack } from '@mui/material';
-import ModalWithCloseButton from './ModalWithCloseButton';
-import { DeleteRounded, DownloadRounded } from '@mui/icons-material';
+import { useNavigate } from 'react-router';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { clearZoomedImage } from 'reducers/zoomedImage';
 import { deleteImage } from '../apis/browsing';
 import { IMAGE_HOST_URL } from '../constants/urls';
+import ModalWithCloseButton from './ModalWithCloseButton';
 
 const ImageZoom = ({
-    imagePath,
-    onClose,
     onDelete,
-    isVideo,
 }: {
-    imagePath: string;
-    onClose: () => void;
-    onDelete?: () => void;
-    isVideo?: boolean;
+    onDelete?: (imgPath?: string) => void;
 }) => {
+    const dispatch = useAppDispatch();
+    const navigate = useNavigate();
+    const { image: imagePath, isVideo } = useAppSelector((state: any) => state.zoomedImage);
+
     const handleDownload = () => {
         const link = document.createElement('a');
         link.href = imagePath;
@@ -26,22 +27,34 @@ const ImageZoom = ({
     const handleDelete = () => {
         deleteImage(imagePath)
             .then(() => {
-                onClose();
-                onDelete && onDelete();
+                dispatch(clearZoomedImage());
+                onDelete && onDelete(imagePath);
             })
             .catch((err: any) => {
                 console.error('Failed to delete image:', err);
             });
     };
 
+    const handleSimilarImages = () => {
+        dispatch(clearZoomedImage());
+        navigate("/similar?image=" + encodeURIComponent(imagePath || ''));
+    }
+    if (!imagePath) {
+        return null;
+    }
+
     return (
-        <ModalWithCloseButton open={true} onClose={onClose}>
+        <ModalWithCloseButton open={true} onClose={() => dispatch(clearZoomedImage())}>
             <Stack
                 direction="row"
                 spacing={2}
                 alignItems="center"
                 marginBottom={2}
             >
+                <Button variant="outlined"  onClick={handleSimilarImages}>
+                    <ImageRounded sx={{ marginRight: 1 }} />
+                    Similar Images
+                </Button>
                 <Button
                     onClick={handleDownload}
                     variant="outlined"
@@ -68,14 +81,14 @@ const ImageZoom = ({
                     }}
                 >
                     <source
-                        src={`${IMAGE_HOST_URL}/${imagePath}.mp4`}
+                        src={`${IMAGE_HOST_URL}/${imagePath}`}
                         type="video/mp4"
                     />
                 </video>
             ) : (
                 <Box
                     component="img"
-                    src={`${IMAGE_HOST_URL}/${imagePath}.jpg`}
+                    src={`${IMAGE_HOST_URL}/${imagePath}`}
                     alt="Zoomed"
                     sx={{
                         maxWidth: '100%',

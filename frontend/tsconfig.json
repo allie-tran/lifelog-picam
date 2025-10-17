@@ -18,7 +18,6 @@
         "baseUrl": "src",
         "paths": {
             "@utils/*": ["utils/*"],
-            "@types/*": ["types/*"],
             "@apis/*": ["apis/*"]
         },
 

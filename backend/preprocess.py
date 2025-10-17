@@ -3,6 +3,7 @@ import os
 import numpy as np
 from PIL import Image
 
+from app_types import ImageObject
 from constants import DIR
 from scripts.querybank_norm import BETA, apply_qb_norm_to_query
 from visual import siglip_model
@@ -14,7 +15,7 @@ def compress_image(image_path, quality=85):
     rel_path = image_path.replace(DIR + "/", "")
     output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
     if os.path.exists(output_path):
-        return
+        return output_path
 
     img = Image.open(image_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -96,7 +97,7 @@ def retrieve_image(
     k=100,
     retrieved_videos=None,
     normalizing_sum=None,
-    remove=np.array([])
+    remove=np.array([]),
 ):
     if len(features) == 0:
         print("No features available.")
@@ -129,11 +130,72 @@ def retrieve_image(
 
     results = []
     for idx in top_indices:
+        results.append(ImageObject(
+            image_path=image_paths[idx],
+            thumbnail=image_paths[idx]
+            .replace(".jpg", ".webp")
+            .replace(".png", ".webp"),
+            timestamp=os.path.getmtime(f"{DIR}/{image_paths[idx]}") * 1000,
+            is_video=image_paths[idx].endswith(".mp4")
+            or image_paths[idx].endswith(".h264"),
+        ))
+    return results
+
+
+def get_similar_images(
+    image: str,
+    features,
+    image_paths,
+    deleted_images: set[str],
+    k=100,
+    retrieved_videos=None,
+    normalizing_sum=None,
+    remove=np.array([]),
+):
+    if len(features) == 0:
+        print("No features available.")
+        return []
+
+    features = features / np.linalg.norm(features, axis=1, keepdims=True)
+    if image in image_paths:
+        query_vector = features[image_paths.index(image)]
+    else:
+        query_vector, _, _ = encode_image(image, np.empty((0, DIM)), [])
+        query_vector = query_vector / np.linalg.norm(query_vector)
+
+    # Apply query bank normalization
+    if retrieved_videos is not None and normalizing_sum is not None:
+        similarities = apply_qb_norm_to_query(
+            query_vector,
+            features,
+            retrieved_videos,
+            normalizing_sum,
+            BETA,
+        )
+    else:
+        similarities = features @ query_vector
+
+    # Exclude deleted images
+    for i, path in enumerate(image_paths):
+        if path in deleted_images:
+            similarities[i] = -1.0  # Set similarity to -1 to exclude
+
+    # Exclude specific indices
+    similarities[remove] = -1.0
+
+    top_indices = np.argsort(similarities)[-k:][::-1]
+
+    results = []
+    for idx in top_indices:
         results.append(
-            {
-                "image_path": image_paths[idx].split(".")[0],
-                "timestamp": os.path.getmtime(f"{DIR}/{image_paths[idx]}") * 1000,
-                "similarity": float(similarities[idx]),
-            }
+            ImageObject(
+                image_path=image_paths[idx],
+                thumbnail=image_paths[idx]
+                .replace(".jpg", ".webp")
+                .replace(".png", ".webp"),
+                timestamp=os.path.getmtime(f"{DIR}/{image_paths[idx]}") * 1000,
+                is_video=image_paths[idx].endswith(".mp4")
+                or image_paths[idx].endswith(".h264"),
+            )
         )
     return results

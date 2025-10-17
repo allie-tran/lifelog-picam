@@ -13,9 +13,10 @@ declare module "@mui/material/styles" {
 }
 
 type ImageObject = {
-  image_path: string;
-  timestamp: string;
-  is_video: boolean;
+  imagePath: string;
+  thumbnail: string;
+  timestamp: number;
+  isVideo: boolean;
 };
 
 export type { ImageObject};
