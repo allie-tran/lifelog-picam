@@ -174,24 +174,32 @@ def main():
     print(f"Initial capturing mode: {mode}")
     last_capture_time = 0
     while True:
-        new_mode = check_capturing_mode()
-        if new_mode != mode:
-            print(f"Capturing mode changed from {mode} to {new_mode}")
-            mode = new_mode
+        try:
+            new_mode = check_capturing_mode()
+            if new_mode != mode:
+                print(f"Capturing mode changed from {mode} to {new_mode}")
+                mode = new_mode
 
-        current_time = time.time()
-        if mode == "photo":
-            if current_time - last_capture_time >= 10:
-                last_capture_time = current_time
-                image_path = capture_image()
-                if image_path and check_if_connected():
-                    uploader.enqueue(image_path, "image", "upload_log.txt")
+            current_time = time.time()
+            if mode == "photo":
+                if current_time - last_capture_time >= 10:
+                    last_capture_time = current_time
+                    image_path = capture_image()
+                    if image_path and check_if_connected():
+                        uploader.enqueue(image_path, "image", "upload_log.txt")
 
-        elif mode == "video":
-            video_path = record_video_until_interrupt()
+            elif mode == "video":
+                video_path = record_video_until_interrupt()
 
-        print("waiting...")
-        time.sleep(1)
+            print("waiting...")
+            time.sleep(1)
+        except KeyboardInterrupt:
+            print("Exiting...")
+            uploader.stop()
+            break
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+            time.sleep(1)
 
 if __name__ == "__main__":
     main()

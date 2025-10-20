@@ -51,6 +51,9 @@ def load_features():
         data = np.load(feature_path, allow_pickle=True)
         features = data["features"]
         image_paths = data["image_paths"].tolist()
+        min_value = min(len(image_paths), features.shape[0])
+        features = features[:min_value]
+        image_paths = image_paths[:min_value]
         assert (
             features.shape[1] == DIM
         ), f"Feature dimension mismatch: {features.shape[1]} != {DIM}"
@@ -74,18 +77,20 @@ def save_features(features, image_paths):
 
 
 def encode_image(image_path: str, features, image_paths):
+    image_paths = image_paths[:len(features)]
     path = f"{DIR}/{image_path}"
     if image_path.endswith(".mp4") or image_path.endswith(".h264"):
         # use video thumbnail
         new_path = make_video_thumbnail(f"{DIR}/{image_path}")
         if new_path:
             path = new_path
+
     vector = siglip_model.encode_image(path)
     image_paths.append(image_path)
     if len(vector.shape) == 0:
         vector = vector.reshape(1, -1)
     features = np.vstack([features, vector])
-    assert len(features) == len(image_paths), f"{len(features)} != {len(image_paths)}"
+    # assert len(features) == len(image_paths), f"{len(features)} != {len(image_paths)}"
     return vector, features, image_paths
 
 

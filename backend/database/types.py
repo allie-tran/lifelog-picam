@@ -1,12 +1,10 @@
 from mongodb_odm import Document, IndexModel
 from typing import (
-    Annotated,
     Any,
     Dict,
     Iterator,
     Mapping,
     Optional,
-    Self,
     Sequence,
     Tuple,
     TypeVar,
@@ -14,13 +12,9 @@ from typing import (
 )
 
 from bson import ObjectId as _ObjectId
-from joblib import Memory
 from mongodb_odm.models import INHERITANCE_FIELD_NAME, Document
-from pydantic import AfterValidator, BaseModel, Field, field_serializer
-from pydantic.alias_generators import to_camel
-from mongodb_odm import ODMObjectId
-from pydantic import BaseModel, computed_field, field_serializer, model_serializer
-
+from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, computed_field, field_serializer
 from dependencies import CamelCaseModel
 
 
@@ -28,6 +22,7 @@ class ObjectDetection(BaseModel):
     label: str
     confidence: float
     bbox: list[int]  # [x_min, y_min, x_max, y_max]
+    embedding: Optional[list[float]] = None
 
 
 DICT_TYPE = Dict[str, Any]
@@ -35,6 +30,11 @@ SORT_TYPE = Union[str, Sequence[Tuple[str, Union[int, str, Mapping[str, Any]]]]]
 
 DocumentType = TypeVar("DocumentType", bound=Mapping[str, Any])
 
+
+class ProcessedInfo(BaseModel):
+    yolo: bool = False
+    face_recognition: bool = False
+    encoded: bool = False
 
 class ImageRecord(Document, CamelCaseModel):
     image_path: str # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
@@ -45,10 +45,14 @@ class ImageRecord(Document, CamelCaseModel):
     objects: list[ObjectDetection] = []
     people: list[ObjectDetection] = []
 
-    activity: list[str] = []
     deleted: bool = False
 
     date: str
+
+    segment_id: Optional[int] = None
+    activity: str = ""
+
+    processed: ProcessedInfo = ProcessedInfo()
 
     @computed_field
     @property
@@ -67,6 +71,7 @@ class ImageRecord(Document, CamelCaseModel):
             IndexModel([("image_path", 1)], unique=True),
             IndexModel([("timestamp", -1)]),
             IndexModel([("deleted", 1)]),
+            IndexModel([("segment_id", 1)]),
         ]
 
     @field_serializer("id", "_id", mode="plain", check_fields=False)

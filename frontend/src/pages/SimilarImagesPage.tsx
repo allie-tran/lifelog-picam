@@ -1,4 +1,4 @@
-import { Divider, Stack, Typography } from '@mui/material';
+import { Divider, LinearProgress, Stack, Typography } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import { similarImages } from 'apis/browsing';
 import ImageWithDate from 'components/ImageWithDate';
@@ -37,9 +37,7 @@ const SimilarImages = () => {
     );
     const [deleted, setDeleted] = useState<string[]>([]);
     const results: ImageObject[] = data || [];
-    if (isLoading) {
-        return <div>Loading...</div>;
-    }
+    if (isLoading) return <LinearProgress />;
 
     return (
         <>

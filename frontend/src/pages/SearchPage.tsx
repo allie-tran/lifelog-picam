@@ -1,6 +1,6 @@
 import { searchImages } from 'apis/browsing';
 import ImageWithDate from 'components/ImageWithDate';
-import { Divider, Stack, Typography } from '@mui/material';
+import { Divider, LinearProgress, Stack, Typography } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
@@ -13,18 +13,18 @@ import { useAppDispatch } from 'reducers/hooks';
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, _] = useSearchParams();
+    const query = searchParams.get('query') || '';
     const { data, isLoading } = useSWR(
-        ['search', searchParams.get('query')],
-        () => searchImages(searchParams.get('query') || ''),
+        ['search', query],
+        () => searchImages(query),
         {
             revalidateOnFocus: false,
         }
     );
     const results: ImageObject[] = data || [];
     const [deleted, setDeleted] = useState<string[]>([]);
-    if (isLoading) {
-        return <div>Loading...</div>;
-    }
+
+    if (isLoading) return <LinearProgress />;
 
     return (
         <>
@@ -39,37 +39,44 @@ const SearchPage = () => {
             </Typography>
             <SearchBar />
             <Divider sx={{ marginY: 2 }} />
-            <Typography variant="h6">
-                Showing results for: "{searchParams.get('query')}"
-            </Typography>
-            <Stack spacing={2} alignItems="center">
-                {results.length === 0 && <div>No results found</div>}
-                <Stack
-                    spacing={2}
-                    sx={{ width: '100%', flexWrap: 'wrap' }}
-                    direction="row"
-                    useFlexGap
-                >
-                    {results.map((image) =>
-                        deleted.includes(image.imagePath) ? null : (
-                            <ImageWithDate
-                                image={image}
-                                onClick={() => {
-                                    dispatch(
-                                        setZoomedImage({
-                                            image: image.imagePath,
-                                            isVideo: image.isVideo,
-                                        })
-                                    );
-                                }}
-                                onDelete={() =>
-                                    setDeleted([...deleted, image.imagePath])
-                                }
-                            />
-                        )
-                    )}
-                </Stack>
-            </Stack>
+            {query && (
+                <>
+                    <Typography variant="h6">
+                        Showing results for: "{searchParams.get('query')}"
+                    </Typography>
+                    <Stack spacing={2} alignItems="center">
+                        {results.length === 0 && <div>No results found</div>}
+                        <Stack
+                            spacing={2}
+                            sx={{ width: '100%', flexWrap: 'wrap' }}
+                            direction="row"
+                            useFlexGap
+                        >
+                            {results.map((image) =>
+                                deleted.includes(image.imagePath) ? null : (
+                                    <ImageWithDate
+                                        image={image}
+                                        onClick={() => {
+                                            dispatch(
+                                                setZoomedImage({
+                                                    image: image.imagePath,
+                                                    isVideo: image.isVideo,
+                                                })
+                                            );
+                                        }}
+                                        onDelete={() =>
+                                            setDeleted([
+                                                ...deleted,
+                                                image.imagePath,
+                                            ])
+                                        }
+                                    />
+                                )
+                            )}
+                        </Stack>
+                    </Stack>
+                </>
+            )}
             <ImageZoom
                 onDelete={(imgPath?: string) => {
                     if (imgPath) {

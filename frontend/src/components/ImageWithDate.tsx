@@ -67,8 +67,8 @@ const ImageWithDate = ({
                     color="error"
                     size="small"
                     onClick={() => {
+                        deleteImage(image.imagePath);
                         onDelete && onDelete(image.imagePath);
-                        deleteImage(image.imagePath)
                     }}
                 >
                     <DeleteRounded />

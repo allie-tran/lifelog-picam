@@ -49,21 +49,16 @@ def load_qb_norm_features(features):
     # Precompute once for all test queries
     beta = BETA
 
-    print("Precomputing QB-Norm features...")
     query_features = load_query_features()
     query_features = query_features / np.linalg.norm(
         query_features, axis=1, keepdims=True
     )
-    print("Loaded query features with shape:", query_features.shape)
-    print("Features shape:", features.shape)
 
     # Step 1: Precompute with training queries and dataset features
     train_test = query_features @ features.T
     train_test_exp = np.exp(train_test * beta)
-    print("Computing retrieved videos...")
     retrieved_videos = get_retrieved_images(train_test_exp, k)
     normalizing_sum = np.sum(a=train_test_exp, axis=0)
-    print("Computed normalizing sum with shape:", normalizing_sum.shape)
 
     print(f"Loaded QB-Norm features with {len(retrieved_videos)} retrieved videos.")
     return retrieved_videos, normalizing_sum

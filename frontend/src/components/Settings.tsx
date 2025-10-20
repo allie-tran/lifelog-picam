@@ -31,8 +31,6 @@ const Settings = () => {
     }
 
     return (
-        <Stack spacing={2} alignItems="center" marginTop={4}>
-            <Typography>Capturing Mode:</Typography>
             <Stack direction="row" spacing={1} alignItems="center">
                 <PhotoOutlined color={isVideoMode ? 'action' : 'primary'} />
                 <Switch
@@ -50,7 +48,6 @@ const Settings = () => {
                 />
                 <VideocamOutlined color={!isVideoMode ? 'action' : 'primary'} />
             </Stack>
-        </Stack>
     );
 };
 

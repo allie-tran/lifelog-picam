@@ -1,4 +1,5 @@
 import base64
+import time
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -6,46 +7,34 @@ from datetime import datetime
 import numpy as np
 import redis
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 from tqdm.auto import tqdm
 
-from app_types import Array2D
+from app_types import CustomFastAPI, DaySummary, SummarySegment
 from auth import auth_app
 from constants import DIR
 from database import init_db
 from database.types import ImageRecord
 from dependencies import CamelCaseModel
-from preprocess import (compress_image, encode_image, get_similar_images,
-                        load_features, make_video_thumbnail, retrieve_image,
-                        save_features)
-from scripts.low_texture import get_pocket_indices
-from scripts.low_visual_semantic import get_low_visual_density_indices
-from scripts.querybank_norm import load_qb_norm_features
-from scripts.segmentation import load_all_segments, segment_images
+from pipelines.all import process_image, process_video
+from pipelines.hourly import update_app
+from preprocess import (
+    compress_image,
+    get_similar_images,
+    load_features,
+    make_video_thumbnail,
+    retrieve_image,
+    save_features,
+)
+from scripts.describe_segments import describe_segment
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 
 load_dotenv()
-
-
-class CustomFastAPI(FastAPI):
-    features: Array2D[np.float32]
-    image_paths: list[str]
-
-    retrieved_videos: np.ndarray  # Indices of retrieved videos for QB norm
-    normalizing_sum: np.ndarray  # Normalizing sum for QB norm
-    low_visual_indices: np.ndarray  # Indices of low visual density images
-    images_with_low_density: set[str] = set()
-
-    segments: list[list[str]] = []
-    image_to_segment: dict[str, int] = {}
-
-    last_saved: datetime = datetime.now()
-
 
 picam_username = os.getenv("PICAM_USERNAME", "default_user")
 
@@ -72,71 +61,36 @@ async def lifespan(app: CustomFastAPI):
             relative_path = ""
             if file.endswith(".jpg"):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
-                compress_image(os.path.join(root, file))
+                # compress_image(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     to_process.add(relative_path)
             elif file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
                 relative_path = os.path.relpath(os.path.join(root, file), DIR)
-                make_video_thumbnail(os.path.join(root, file))
+                # make_video_thumbnail(os.path.join(root, file))
                 if relative_path not in app.image_paths:
                     print(relative_path, "is a video, adding to process list.")
                     to_process.add(relative_path)
             else:
                 continue
+            # timestamp = datetime.strptime(file.split(".")[0], "%Y%m%d_%H%M%S")
             # ImageRecord(
+            #     date=relative_path.split("/", 1)[0],
             #     image_path=relative_path,
-            #     thumbnail=relative_path.replace(".jpg", ".webp").replace(".mp4", ".webp").replace(".h264", ".webp"),
-            #     date=relative_path.split("/")[0],
-            #     timestamp=datetime.strptime(file.split(".")[0], "%Y%m%d_%H%M%S").timestamp() * 1000,  # Convert to milliseconds
-            #     is_video=file.lower().endswith((".h264", ".mp4", ".mov", ".avi"))
+            #     thumbnail=relative_path.replace(".jpg", ".webp"),
+            #     timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+            #     is_video=relative_path.lower().endswith(
+            #         (".h264", ".mp4", ".mov", ".avi")
+            #     ),
             # ).create()
 
     # Create features from DIR first
-    i = 0
     if to_process:
         print(f"Processing {len(to_process)} new images...")
         for relative_path in tqdm(sorted(to_process)):
-            _, app.features, app.image_paths = encode_image(
-                relative_path, app.features, app.image_paths
-            )
-            i += 1
-            assert (
-                relative_path in app.image_paths
-            ), f"{relative_path} not in image_paths: {app.image_paths[-1]}"
-            assert len(app.features) == len(
-                app.image_paths
-            ), f"{len(app.features)} != {len(app.image_paths)}"
-            ImageRecord(
-                image_path=relative_path,
-                thumbnail=relative_path.replace(".jpg", ".webp").replace(".mp4", ".webp").replace(".h264", ".webp"),
-                date=relative_path.split("/")[0],
-                timestamp=datetime.strptime(
-                    relative_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
-                ).timestamp() * 1000,  # Convert to milliseconds
-                is_video=relative_path.lower().endswith((".h264", ".mp4", ".mov", ".avi"))
-            ).create()
-
+            process_image(app, *relative_path.split("/", 1))
         save_features(app.features, app.image_paths)
 
-    app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
-    app.low_visual_indices, app.images_with_low_density = (
-        get_low_visual_density_indices(app.image_paths)
-    )
-    low_pocket_indices, images_with_pocket = get_pocket_indices(app.image_paths)
-    app.low_visual_indices = np.unique(
-        np.concatenate([app.low_visual_indices, low_pocket_indices])
-    )
-    app.images_with_low_density = app.images_with_low_density.union(images_with_pocket)
-
-    app.image_to_segment, app.segments = load_all_segments(
-        app.features,
-        app.image_paths,
-        set(ImageRecord.find(
-            filter={"deleted": True},
-            distinct="image_path"
-        )).union(app.images_with_low_density),
-    )
-
+    update_app(app)
     yield
     await FastAPILimiter.close()
     save_features(app.features, app.image_paths)
@@ -196,7 +150,7 @@ async def check_image_uploaded(timestamp: int):
 
 
 @app.put("/upload-image")
-async def upload_image(file: UploadFile):
+async def upload_image(file: UploadFile, background_tasks: BackgroundTasks):
     file_name = file.filename
     if file_name is None:
         raise HTTPException(status_code=400, detail="Filename is required.")
@@ -215,6 +169,7 @@ async def upload_image(file: UploadFile):
             image = Image.open(file.file)
         except UnidentifiedImageError:
             raise HTTPException(status_code=400, detail="Invalid image file.")
+
         exif = image.getexif()
         if image.width > image.height:
             image = image.rotate(-90, expand=True)
@@ -223,43 +178,16 @@ async def upload_image(file: UploadFile):
         # Save image with EXIF data
         output_path = f"{DIR}/{date}/{file_name}"
         image.save(output_path, exif=exif)
-        _, app.features, app.image_paths = encode_image(
-            f"{date}/{file_name}", app.features, app.image_paths
-        )
-        compress_image(output_path)
-        ImageRecord(
-            image_path=f"{date}/{file_name}",
-            thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
-            date=date,
-            timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-            is_video=False,
-        ).create()
+        background_tasks.add_task(process_image, app, date, file_name)
 
     now = datetime.now()
     if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-        save_features(app.features, app.image_paths)
-        app.last_saved = now
-        deleted_set = set(ImageRecord.find(
-            filter={"deleted": True},
-            distinct="image_path"
-        ))
-        app.segments = segment_images(
-            app.features,
-            app.image_paths,
-            deleted_set.union(app.images_with_low_density),
-        )
-        app.image_to_segment = {
-            img: idx for idx, segment in enumerate(app.segments) for img in segment
-        }
-        app.low_visual_indices, app.images_with_low_density = (
-            get_low_visual_density_indices(app.image_paths)
-        )
-        app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
+        background_tasks.add_task(update_app, app)
     return get_mode()
 
 
 @app.put("/upload-video")
-async def upload_video(file: UploadFile):
+async def upload_video(file: UploadFile, background_tasks: BackgroundTasks):
     file_name = file.filename
     if file_name is None:
         raise HTTPException(status_code=400, detail="Filename is required.")
@@ -282,20 +210,7 @@ async def upload_video(file: UploadFile):
         os.remove(output_path)
         output_path = mp4_path
 
-    make_video_thumbnail(output_path)
-    ImageRecord(
-        image_path=f"{date}/{file_name}",
-        thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
-        date=date,
-        timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-        is_video=True,
-    ).create()
-
-    # Add to database as well
-    _, app.features, app.image_paths = encode_image(
-        output_path, app.features, app.image_paths
-    )
-
+    background_tasks.add_task(process_video, app, date, file_name)
     return {"message": "Video uploaded successfully."}
 
 
@@ -359,17 +274,14 @@ async def get_images(date: str = "", page: int = 1):
                 thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
                 date=date,
                 timestamp=timestamp * 1000,  # Convert to milliseconds
-                is_video=file_name.lower().endswith(
-                    (".h264", ".mp4", ".mov", ".avi")
-                ),
+                is_video=file_name.lower().endswith((".h264", ".mp4", ".mov", ".avi")),
             )
         )
 
     return {
         "date": date,
         "images": images,
-        "total_pages": (len(os.listdir(dir_path)) + items_per_page - 1)
-        // items_per_page,
+        "total_pages": (len(os.listdir(dir_path)) + items_per_page - 1),
     }
 
 
@@ -383,84 +295,57 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
-    all_files = ImageRecord.find(
+    all_hours = ImageRecord.find(
         filter={"date": date, "deleted": False},
         sort=[("image_path", -1)],
+        distinct="hour",
     )
-    all_files = [f.image_path for f in all_files]
-    print(all_files[:10])
-    all_hours = set(int(f.split("_")[1][0:2]) for f in all_files)
+    all_hours = list(all_hours)
+
     if not hour:
         # Get the latest hour
-        if not all_files:
+        if not all_hours:
             return {"date": date, "hour": hour, "images": []}
-
         hour = max(all_hours)
         print(f"No hour specified, using latest hour: {hour}")
 
-    # Pagination
-    items_per_page = 120
+    # group by segment_id
+    # Take maximum 20 segments per page
+    group_pipeline = [
+        {"$match": {"date": date, "deleted": False, "hour": str(hour).zfill(2)}},
+        {
+            "$group": {
+                "_id": "$segment_id",
+                "images": {"$push": "$$ROOT"},
+            }
+        },
+        {"$sort": {"_id": -1}},
+    ]
+
+    segments = ImageRecord.aggregate(group_pipeline)
+
+    # pagination
+    segments = list(segments)
+    items_per_page = 20
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
-
-    all_files = [
-        f.split("/")[-1]
-        for f in all_files
-        if f.split("/")[-1].startswith(f"{date.replace('-', '')}_{hour:02d}")
-    ]
-    total_page = (len(all_files) + items_per_page - 1) // items_per_page
-    all_files = all_files[start_index:end_index]
-
-    # Get the features and image paths for the filtered files
-    indices = [
-        app.image_paths.index(f"{date}/{f}")
-        for f in all_files
-        if f"{date}/{f}" in app.image_paths
-    ]
-    features = app.features[indices]
-    image_paths = [app.image_paths[i] for i in indices]
-
-    deleted_set = set(ImageRecord.find(
-        filter={"deleted": True},
-        distinct="image_path"
-    ))
-
-    segments = segment_images(features, image_paths, deleted_set.union(app.images_with_low_density))
-    all_images = []
-    flat_images = []
-
-    for segment in segments:
-        images = []
-        for image_path in segment:
-            timestamp = datetime.strptime(
-                image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
-            ).timestamp()
-            images.append(
-                ImageRecord(
-                    image_path=image_path,
-                    is_video=image_path.lower().endswith(
-                        (".h264", ".mp4", ".mov", ".avi")
-                    ),
-                    date=date,
-                    thumbnail=image_path.replace(".jpg", ".webp")
-                    .replace(".mp4", ".webp")
-                    .replace(".h264", ".webp"),
-                    timestamp=timestamp * 1000,  # Convert to milliseconds
-                ).model_dump(
-                    exclude={"_id", "id"},
-                    by_alias=True,
-                )
-            )
-        all_images.append(images)
-        flat_images.extend(images)
+    segments = segments[start_index:end_index]
+    print(f"Found {len(segments)} segments for date {date} and hour {hour}.")
 
     return {
         "date": date,
         "hour": hour,
-        "images": flat_images,
-        "segments": all_images,
+        "segments": [
+            [
+                ImageRecord(**image.dict()).model_dump(
+                    exclude={"_id", "id"}, by_alias=True
+                )
+                for image in segment.images
+            ]
+            for segment in segments
+        ],
         "available_hours": sorted(all_hours, reverse=True),
-        "total_pages": total_page,
+        "total_pages": (len(segments) + items_per_page - 1) // items_per_page,
     }
 
 
@@ -483,10 +368,10 @@ def search(query: str):
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
 
-    deleted_set = set(ImageRecord.find(
-        filter={"deleted": True},
-        distinct="image_path"
-    ))
+    if not query:
+        return []
+
+    deleted_set = set(ImageRecord.find(filter={"deleted": True}, distinct="image_path"))
 
     results = retrieve_image(
         query,
@@ -503,10 +388,7 @@ def search(query: str):
 
 @app.get("/similar-images")
 def similar_images(image: str):
-    delete_set = set(ImageRecord.find(
-        filter={"deleted": True},
-        distinct="image_path"
-    ))
+    delete_set = set(ImageRecord.find(filter={"deleted": True}, distinct="image_path"))
     results = get_similar_images(
         image,
         app.features,
@@ -576,7 +458,7 @@ def delete_image(request: DeleteImageRequest):
         original = image_path
 
     print(f"Deleting image: {original}")
-    ImageRecord.update_one(
+    ImageRecord.update_many(
         {"image_path": original},
         {"$set": {"deleted": True}},
     )
@@ -585,9 +467,7 @@ def delete_image(request: DeleteImageRequest):
 @app.get("/get-deleted-images")
 def get_deleted_images():
     deleted_list = ImageRecord.find(
-        filter={"deleted": True},
-        sort=[("image_path", -1)],
-        distinct="image_path"
+        filter={"deleted": True}, sort=[("image_path", -1)], distinct="image_path"
     )
     deleted_list = list(deleted_list)
     print(f"Found {len(deleted_list)} deleted images.")
@@ -637,7 +517,83 @@ def get_deleted_images():
 @app.post("/restore-image")
 def restore_image(request: DeleteImageRequest):
     image_path = request.image_path
-    ImageRecord.update_one(
+    ImageRecord.update_many(
         {"image_path": image_path},
         {"$set": {"deleted": False}},
+    )
+
+
+def process_segments(date: str):
+    segments = ImageRecord.find(
+        filter={
+            "date": date,
+            "deleted": False,
+            "activity": {"$ne": ""}
+        },
+        distinct="segment_id",
+    )
+    segments = list(segments)
+    print(f"Processing {len(segments)} segments for date {date}.")
+    for segment_id in tqdm(segments):
+        if segment_id is None:
+            continue
+
+        describe_segment(
+            [
+                img.image_path
+                for img in ImageRecord.find(
+                    filter={"segment_id": segment_id, "deleted": False},
+                    sort=[("image_path", 1)],
+                )
+            ],
+            segment_id,
+        )
+
+
+
+@app.get("/process-date")
+def process_date(date: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(process_segments, date)
+    return {"message": f"Processing segments for date {date} in background."}
+
+
+@app.get("/day-summary")
+def get_day_summary(date: str):
+    activities = ImageRecord.aggregate(
+        [
+            {"$match": {"date": date, "deleted": False, "segment_id": {"$ne": None}}},
+            {
+                "$group": {
+                    "_id": "$segment_id",
+                    "activity": {"$first": "$activity"},
+                    "start_time": {"$min": "$timestamp"},
+                    "end_time": {"$max": "$timestamp"},
+                }
+            },
+            {"$sort": {"start_time": 1}},
+        ]
+    )
+
+    summary = []
+    for segment in activities:
+        segment = segment.dict()
+        start_time = datetime.fromtimestamp(segment["start_time"] / 1000).strftime(
+            "%H:%M:%S"
+        )
+        end_time = datetime.fromtimestamp(segment["end_time"] / 1000).strftime(
+            "%H:%M:%S"
+        )
+        summary.append(
+            SummarySegment(
+                segment_index=segment["_id"],
+                activity=segment["activity"] or "Unclear",
+                start_time=start_time,
+                end_time=end_time,
+                duration=int((segment["end_time"] - segment["start_time"]) / 1000),
+            )
+        )
+
+    return DaySummary(
+        date=date,
+        segments=summary,
     )

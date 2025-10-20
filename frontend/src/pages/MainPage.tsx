@@ -1,9 +1,24 @@
-import { DeleteRounded } from '@mui/icons-material';
-import { Badge, Button, Pagination, Stack, Typography } from '@mui/material';
+import {
+    Badge,
+    Box,
+    Button,
+    Drawer,
+    IconButton,
+    Pagination,
+    Paper,
+    Stack,
+    Toolbar,
+    Typography,
+} from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import dayjs, { Dayjs } from 'dayjs';
+import { ImageObject } from '@utils/types';
+import DaySummary from 'components/DaySummary';
+import dayjs from 'dayjs';
 import React from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
+import { useAppDispatch } from 'reducers/hooks';
+import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
@@ -12,9 +27,8 @@ import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
 import SearchBar from '../components/SearchBar';
 import Settings from '../components/Settings';
-import { ImageObject } from '@utils/types';
-import { useAppDispatch } from 'reducers/hooks';
-import { setZoomedImage } from 'reducers/zoomedImage';
+import { SearchRounded } from '@mui/icons-material';
+
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
     if (!allDates.includes(day.format('YYYY-MM-DD'))) {
@@ -39,18 +53,16 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
 };
 
 function MainPage() {
+    const navigate = useNavigate();
+    const [searchParams, _] = useSearchParams();
+    const date = searchParams.get('date');
+
     const [page, setPage] = React.useState(1);
-    const [date, setDate] = React.useState<Dayjs | null>(dayjs());
     const [hour, setHour] = React.useState<number | null>(null);
     const dispatch = useAppDispatch();
     const { data, error, mutate } = useSWR(
         [page, date, hour],
-        () =>
-            getImagesByHour(
-                date ? date.format('YYYY-MM-DD') : '',
-                hour || 0,
-                page
-            ),
+        () => getImagesByHour(date || '', hour || 0, page),
         {
             revalidateOnFocus: false,
         }
@@ -73,15 +85,33 @@ function MainPage() {
     return (
         <>
             <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
+                <Drawer
+                    variant="permanent"
+                    open
+                    sx={{ zIndex: (theme) => theme.zIndex.appBar - 1 }}
+                >
+                    <Box sx={{ height: '48px' }} />
+                    <DeletedImages />
+                    <IconButton
+                        color="secondary"
+                        onClick={() => navigate('/search')}
+                        sx={{ marginTop: '16px', marginLeft: '8px' }}
+                    >
+                        <SearchRounded />
+                    </IconButton>
+                </Drawer>
                 <Typography variant="h4" color="primary" fontWeight="bold">
                     {data?.date || 'All Dates'}
                 </Typography>
                 <DatePicker
                     label="Select Date"
-                    value={date}
+                    value={date ? dayjs(date) : null}
                     onChange={(newValue) => {
-                        setDate(newValue);
                         setPage(1);
+                        setHour(null);
+                        navigate(
+                            `/?date=${newValue?.format('YYYY-MM-DD') || ''}`
+                        );
                     }}
                     slots={{
                         day: (props) => (
@@ -93,9 +123,14 @@ function MainPage() {
                     }}
                 />
                 <Settings />
-                <SearchBar />
-                <DeletedImages />
-                <Stack direction="row" spacing={1}>
+                <DaySummary />
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{ width: '100%', flexWrap: 'wrap' }}
+                    useFlexGap
+                    justifyContent="center"
+                >
                     {availableHours.map((h) => (
                         <Button
                             key={h}
@@ -110,11 +145,10 @@ function MainPage() {
                     ))}
                 </Stack>
                 {error && <div>Failed to load images</div>}
-                {!images && !error && <div>Loading...</div>}
                 {segments.length === 0 && images && images.length === 0 && (
                     <div>No images found for this date/hour.</div>
                 )}
-                <Stack>
+                <Stack spacing={2} sx={{ width: '100%' }}>
                     {segments.map((segment, index) => (
                         <React.Fragment key={index}>
                             <Button

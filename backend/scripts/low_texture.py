@@ -134,9 +134,6 @@ def check_all_files_for_pocket(image_paths: List[str]) -> None:
 
 def get_pocket_indices(
     image_paths: List[str],
-    *,
-    min_streak_len: int = 3,
-    keep_one_per_streak: bool = True,
     score_threshold: float = 3.0,
 ) -> Tuple[np.ndarray, Set[str]]:
     """
@@ -165,26 +162,3 @@ def get_pocket_indices(
 
     indices_to_delete = np.where(flags)[0].tolist()
     return np.array(indices_to_delete, dtype=int), {image_paths[i] for i in indices_to_delete}
-
-    # # collapse consecutive detections into streaks
-    # indices_to_delete: List[int] = []
-    # n = len(flags)
-    # i = 0
-    # while i < n:
-    #     if not flags[i]:
-    #         i += 1
-    #         continue
-    #     j = i
-    #     while j < n and flags[j]:
-    #         j += 1
-    #     streak_len = j - i
-    #     if streak_len >= min_streak_len:
-    #         # delete whole streak or keep the first, per preference
-    #         start = i + (1 if keep_one_per_streak else 0)
-    #         indices_to_delete.extend(range(start, j))
-    #     i = j
-
-    images_set = {image_paths[k] for k in indices_to_delete}
-    return np.array(indices_to_delete, dtype=int), images_set
-
-

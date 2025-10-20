@@ -1,0 +1,29 @@
+.scroll-box {
+    white-space: nowrap;
+    font-size: 1.1em;
+    overflow: hidden;
+    padding: 20px 0;
+    maxWidth: 100%;
+}
+
+.scroll-element {
+    will-change: transform;
+    animation: scrolling 30s linear infinite;
+}
+
+.scroll-container {
+    display: inline-block;
+    &:hover .scroll-element {
+        animation-play-state: paused;
+    }
+}
+
+
+@keyframes scrolling {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-100%);
+    }
+  }

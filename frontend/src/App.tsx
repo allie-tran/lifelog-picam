@@ -4,6 +4,7 @@ import {
     AppBar,
     Container,
     createTheme,
+    CssBaseline,
     responsiveFontSizes,
     Typography,
 } from '@mui/material';
@@ -30,7 +31,23 @@ let theme = createTheme({
             main: '#BD93F9',
         },
         secondary: {
-            main: '#dc004e',
+            main: '#FF79C6',
+        },
+        error: {
+            main: '#FF5555',
+        },
+        success: {
+            main: '#50FA7B',
+        },
+        mode: 'dark',
+        background: {
+            default: '#282A36',
+            paper: '#343746',
+        },
+        divider: '#6272A4',
+        text: {
+            primary: '#F8F8F2',
+            secondary: '#BFBFC4',
         },
     },
     typography: {
@@ -45,6 +62,7 @@ const App = () => {
         <Provider store={store}>
             <CookiesProvider>
                 <ThemeProvider theme={theme}>
+                    <CssBaseline />
                     <LocalizationProvider dateAdapter={AdapterDayjs}>
                         <AppBar
                             sx={{
@@ -60,7 +78,7 @@ const App = () => {
                                 onClick={() => {
                                     window.location.href = '/omi/';
                                 }}
-                                sx={{ cursor: 'pointer' }}
+                                sx={{ cursor: 'pointer', color: 'primary.contrastText' }}
                             >
                                 <ArrowLeftRounded
                                     sx={{ verticalAlign: 'middle', mt: '-4px' }}

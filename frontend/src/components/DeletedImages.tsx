@@ -1,5 +1,5 @@
-import { RestoreRounded } from '@mui/icons-material';
-import { Button, Stack } from '@mui/material';
+import { ArchiveRounded, RestoreRounded } from '@mui/icons-material';
+import { Button, IconButton, Stack } from '@mui/material';
 import React from 'react';
 import { getDeletedImages, restoreImage } from '../apis/browsing';
 import { ImageObject } from '@utils/types'
@@ -18,16 +18,16 @@ const DeletedImages = () => {
 
     return (
         <Stack direction="row" spacing={2} alignItems="center">
-            <Button
-                variant="outlined"
+            <IconButton
+                size="large"
+                color="secondary"
                 onClick={() => {
                     fetchImages();
                     setOpen(true);
                 }}
-                sx={{ padding: '8px' }}
             >
-                View Deleted Images
-            </Button>
+                <ArchiveRounded />
+            </IconButton>
             <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
                 {results.length === 0 && <div>No results found</div>}
                 <Stack
@@ -35,6 +35,7 @@ const DeletedImages = () => {
                     sx={{ width: '100%', flexWrap: 'wrap' }}
                     direction="row"
                     useFlexGap
+                    justifyContent="center"
                 >
                     {results.map((image) => (
                         <ImageWithDate

@@ -37,7 +37,8 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     if (isAuthenticated) {
         return (
             <>
-                <AppBar sx={{ position: 'fixed' }} elevation={0}>
+                <AppBar sx={{ position: 'fixed', backgroundColor: "primary.main"
+                    }} elevation={0}>
                     <Stack
                         direction="row"
                         justifyContent="flex-end"

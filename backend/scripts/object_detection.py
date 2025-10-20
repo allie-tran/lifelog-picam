@@ -9,7 +9,9 @@ from tqdm import tqdm
 
 
 import cv2
+from database.types import ObjectDetection
 from ultralytics import YOLO
+from deepface import DeepFace
 
 detect_model = YOLO('yolo11x.pt', task='detect', verbose=False)
 classify_model = YOLO('yolo11x-cls.pt', task='classify', verbose=False)
@@ -46,16 +48,68 @@ def extract_object_from_image(
 
             if x2 > x1 and y2 > y1:
                 objects.append(
-                    {
-                        "class": class_name,
-                        "confidence": float(conf),
-                        "bbox": [x1, y1, x2, y2],
-                    }
+                    ObjectDetection(
+                        label=class_name,
+                        confidence=float(conf),
+                        bbox=[x1, y1, x2, y2],
+                    )
                 )
-                people.append(
-                    {
-                        "confidence": float(conf),
-                        "bbox": [x1, y1, x2, y2],
-                    }
-                )
+                if class_name == "person":
+                    face_data = get_face_data_from_person_crop(
+                        frame[y1:y2, x1:x2]
+                    )
+                    people.extend(face_data)
     return objects, people
+
+PERSON_CONF_THRESHOLD = 0.5
+
+def get_face_data_from_person_crop(person_crop):
+    """
+    Detects faces in the person_crop, extracts aligned faces and their embeddings.
+    Returns a list of dictionaries: [{'embedding': [], 'bbox': (x1,y1,x2,y2)}]
+    """
+    face_data = []
+    try:
+        faces = DeepFace.represent(
+            img_path=person_crop,
+            model_name="Facenet512",
+            enforce_detection=False,
+            detector_backend="yolov8",
+            normalization="Facenet2018",
+        )
+
+        for face_info in faces:
+            confidence = face_info["face_confidence"]
+            if confidence < PERSON_CONF_THRESHOLD:
+                continue
+
+            face = face_info["facial_area"]
+            x, y, w, h = (
+                face["x"],
+                face["y"],
+                face["w"],
+                face["h"],
+            )
+            # Remove box that are the same size (or similar) as the person crop
+            size_diff = abs(w - person_crop.shape[1]) + abs(h - person_crop.shape[0])
+            if size_diff < 10:  # Adjust threshold as needed
+                print(
+                    f"Skipping face with size {w}x{h} in person crop of size {person_crop.shape[1]}x{person_crop.shape[0]}"
+                )
+                continue
+
+            embedding = face_info["embedding"]
+            bbox_xyxy = (x, y, x + w, y + h)  # Convert to xyxy format
+
+            face_data.append(
+                ObjectDetection(
+                    label="face",
+                    confidence=float(confidence),
+                    bbox=[bbox_xyxy[0], bbox_xyxy[1], bbox_xyxy[2], bbox_xyxy[3]],
+                    embedding=embedding,
+                )
+            )
+
+    except Exception as e:
+        print(f"DeepFace error in get_face_data_from_person_crop: {e}")
+    return face_data

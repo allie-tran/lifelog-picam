@@ -19,4 +19,12 @@ type ImageObject = {
   isVideo: boolean;
 };
 
-export type { ImageObject};
+type SummarySegment = {
+    segmentIndex: number;
+    activity: string;
+    startTime: string;
+    endTime: string;
+    duration: number;
+}
+
+export type { ImageObject, SummarySegment };
