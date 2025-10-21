@@ -90,7 +90,7 @@ if __name__ == "__main__":
         print("Current time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         if check_if_connected():
             print("Connected to the internet. Checking for missing files...")
-            for folder in os.listdir(OUTPUT):
+            for folder in sorted(os.listdir(OUTPUT), reverse=True):
                 folder_path = os.path.join(OUTPUT, folder)
                 if os.path.isdir(folder_path):
                     date_str = folder
@@ -105,4 +105,4 @@ if __name__ == "__main__":
                         cleanup(folder_path)
         else:
             print("No internet connection. Retrying in 5 minutes.")
-        time.sleep(300)
+        time.sleep(60)
