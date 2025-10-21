@@ -105,7 +105,6 @@ def record_video_until_interrupt(grace_period=5.0):
     return None
 
 def main():
-    uploader = UploadManager(worker_count=1)
     while not check_if_camera_connected():
         print("Camera not connected. Retrying in 10 seconds...")
         time.sleep(1)
@@ -130,8 +129,6 @@ def main():
                 if current_time - last_capture_time >= 10:
                     last_capture_time = current_time
                     image_path = capture_image()
-                    # if image_path and check_if_connected():
-                        # uploader.enqueue(image_path, "image", "upload_log.txt")
 
             elif mode == "video":
                 video_path = record_video_until_interrupt()
@@ -140,7 +137,6 @@ def main():
             time.sleep(1)
         except KeyboardInterrupt:
             print("Exiting...")
-            uploader.stop()
             break
         except Exception as e:
             print(f"Error in main loop: {e}")
