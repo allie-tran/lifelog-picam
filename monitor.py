@@ -73,24 +73,16 @@ def cleanup(directory: str):
 
 # Try to sync files every 5 minutes if connected to the internet
 if __name__ == "__main__":
-    # Check all "synced_files.txt" in all subfolders
-    LOG_FILE = "synced_files.txt"
-    for folder in os.listdir(OUTPUT):
-        folder_path = os.path.join(OUTPUT, folder)
-        if os.path.isdir(folder_path):
-            log_path = os.path.join(folder_path, LOG_FILE)
-            if os.path.exists(log_path):
-                with open(log_path, "r") as log:
-                    for line in log:
-                        uploaded_files.add(line.strip())
-
     print(f"Loaded {len(uploaded_files)} uploaded files from logs.")
+    LOG_FILE = 'synced.txt'
     while True:
         print("-" * 40)
         print("Current time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         if check_if_connected():
             print("Connected to the internet. Checking for missing files...")
-            for folder in sorted(os.listdir(OUTPUT), reverse=True):
+            all_folders = sorted(os.listdir(OUTPUT), reverse=True)
+            print(all_folders)
+            for folder in all_folders:
                 folder_path = os.path.join(OUTPUT, folder)
                 if os.path.isdir(folder_path):
                     date_str = folder
@@ -101,8 +93,8 @@ if __name__ == "__main__":
                         elif file.endswith(".jpg"):
                             send_image(file, uploaded_files, LOG_FILE)
 
-                    if not missing and check_if_outdated(date_str):
+                    if check_if_outdated(date_str):
                         cleanup(folder_path)
         else:
-            print("No internet connection. Retrying in 5 minutes.")
+            print("No internet connection. Retrying in 1 minute.")
         time.sleep(60)
