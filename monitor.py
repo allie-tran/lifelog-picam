@@ -9,10 +9,6 @@ uploaded_files = set()
 
 def check_if_folder_is_synced(date: str):
     DATE_DIR = os.path.join(OUTPUT, date)
-    if os.path.exists(os.path.join(DATE_DIR, ".synced")):
-        print(f"Folder {DATE_DIR} is already synced.")
-        return []
-
     files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
     files = set(f for f in files if f.endswith(".jpg") or f.endswith(".mp4"))
     files.difference_update(uploaded_files)
@@ -43,7 +39,7 @@ def check_if_folder_is_synced(date: str):
                 with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
                     f.write("All files are synced.\n")
 
-            return list(missing)
+            return sorted(missing)
     except requests.RequestException as e:
         print(f"Error checking folder sync status: {e}")
 

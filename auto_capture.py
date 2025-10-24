@@ -11,11 +11,14 @@ import queue
 
 def check_capturing_mode():
     mode = "photo"
-    response = requests.get(BACKEND_URL + "/controls/settings")
-    if response.status_code == 200:
-        data = response.json()
-        print("Fetched settings:", data)
-        mode = data.get("captureMode", "photo")
+    try:
+        response = requests.get(BACKEND_URL + "/controls/settings")
+        if response.status_code == 200:
+            data = response.json()
+            print("Fetched settings:", data)
+            mode = data.get("captureMode", "photo")
+    except:
+        pass
     return mode
 
 def check_if_camera_connected():
