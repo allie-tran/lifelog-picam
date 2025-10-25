@@ -7,16 +7,24 @@ import subprocess
 import requests
 from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_video
 import threading
-import queue
 
+import queue
+import stopit
+from stopit import threading_timeoutable as timeoutable
+
+
+@timeoutable(default='photo')
 def check_capturing_mode():
     mode = "photo"
     try:
-        response = requests.get(BACKEND_URL + "/controls/settings")
-        if response.status_code == 200:
-            data = response.json()
-            print("Fetched settings:", data)
-            mode = data.get("captureMode", "photo")
+        with stopit.ThreadingTimeout(5) as to_ctx_mgr:
+            assert to_ctx_mgr.state == to_ctx_mgr.EXECUTING
+            response = requests.get(BACKEND_URL + "/controls/settings")
+            if response.status_code == 200:
+                data = response.json()
+                print("Fetched settings:", data)
+                mode = data.get("captureMode", "photo")
+                return mode
     except:
         pass
     return mode
@@ -70,7 +78,7 @@ def record_video_until_interrupt(grace_period=5.0):
                 print("Video recording process ended unexpectedly.")
                 return None
 
-            mode = check_capturing_mode()
+            mode = check_capturing_mode(timeout=5)
             if mode != "video":
                 print("Capturing mode changed. Stopping video recording.")
                 try:
@@ -117,12 +125,14 @@ def main():
     CAPTURE_INTERVAL = 10  # seconds
     CHECK_MODE_INTERVAL = 1 # seconds
 
-    mode = check_capturing_mode()
+    mode = check_capturing_mode(timeout=5)
     print(f"Initial capturing mode: {mode}")
     last_capture_time = 0
     while True:
         try:
-            new_mode = check_capturing_mode()
+            print(datetime.now())
+            new_mode = check_capturing_mode(timeout=5)
+            print("Checked")
             if new_mode != mode:
                 print(f"Capturing mode changed from {mode} to {new_mode}")
                 mode = new_mode
