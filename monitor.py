@@ -45,9 +45,9 @@ def check_if_folder_is_synced(date: str):
 
 
     print(
-        f"Could not verify sync status for folder {date}. Assuming all files are missing."
+        f"Could not verify sync status for folder {date}. Try again later."
     )
-    return list(files)
+    return []
 
 
 def check_if_outdated(date: str, threshold_days: int = 7):
