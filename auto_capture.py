@@ -30,8 +30,10 @@ def check_capturing_mode(timeout=5):
         future = executor.submit(_check_capturing_mode)
     try:
         result = future.result(timeout=timeout)
+        return result
     except TimeoutError:
         print("Timeout while checking capturing mode. Defaulting to 'photo'.")
+    return "photo"
 
 
 def check_if_camera_connected():
@@ -132,17 +134,17 @@ def main():
 
     mode = check_capturing_mode(timeout=5)
     print(f"Initial capturing mode: {mode}")
-    last_capture_time = 0
+    last_capture_time = time.time()
     while True:
         try:
+            current_time = time.time()
             print(datetime.now())
+            print(int(current_time - last_capture_time), "seconds.")
             new_mode = check_capturing_mode(timeout=5)
-            print("Checked")
+            print("Checked. Mode:", mode)
             if new_mode != mode:
                 print(f"Capturing mode changed from {mode} to {new_mode}")
                 mode = new_mode
-
-            current_time = time.time()
             if mode == "photo":
                 if current_time - last_capture_time >= 10:
                     last_capture_time = current_time
