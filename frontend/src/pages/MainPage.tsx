@@ -2,6 +2,7 @@ import {
     Badge,
     Box,
     Button,
+    Divider,
     Drawer,
     IconButton,
     Pagination,
@@ -50,6 +51,12 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
             />
         </Badge>
     );
+};
+
+const CONFIDENCE_COLOURS: { [key: string]: string } = {
+    High: "success",
+    Medium: 'warning',
+    Low: 'error',
 };
 
 function MainPage() {
@@ -149,50 +156,65 @@ function MainPage() {
                     <div>No images found for this date/hour.</div>
                 )}
                 <Stack spacing={2} sx={{ width: '100%' }}>
-                    {segments.map((segment, index) => (
-                        <React.Fragment key={index}>
-                            <Button
-                                color="error"
-                                onClick={() => {
-                                    const imagePaths = segment.map(
-                                        (img) => img.imagePath
-                                    );
-                                    deleteRow(imagePaths);
-                                }}
-                            >
-                                Delete All {segment.length} Images in this Row
-                            </Button>
-                            <Stack
-                                direction="row"
-                                spacing={2}
-                                key={index}
-                                sx={{
-                                    maxWidth: '100vw',
-                                    overflowY: 'auto',
-                                    height: '400px',
-                                }}
-                            >
-                                {segment.map((image: ImageObject) => (
-                                    <ImageWithDate
-                                        image={image}
-                                        onClick={() => {
-                                            console.log(
-                                                'Setting zoomed image:',
-                                                image.imagePath
-                                            );
-                                            dispatch(
-                                                setZoomedImage({
-                                                    image: image.imagePath,
-                                                    isVideo: image.isVideo,
-                                                })
-                                            );
-                                        }}
-                                        onDelete={() => mutate()}
-                                    />
-                                ))}
-                            </Stack>
-                        </React.Fragment>
-                    ))}
+                    {segments.map((segment, index) => {
+                        const firstImage = segment[0];
+
+
+                        return (
+                            <React.Fragment key={index}>
+                                <Typography variant="h6" fontWeight="bold" color={CONFIDENCE_COLOURS[firstImage.activityConfidence || 'Low']}>
+                                    {firstImage.activity
+                                        ? `${firstImage.activity} (Confidence: ${firstImage.activityConfidence})`
+                                        : 'No Activity Detected'}
+                                </Typography>
+                                <Typography>
+                                    {firstImage.activityDescription}
+                                </Typography>
+                                <Stack
+                                    direction="row"
+                                    spacing={2}
+                                    key={index}
+                                    sx={{
+                                        maxWidth: '100vw',
+                                        overflowY: 'auto',
+                                        height: '400px',
+                                    }}
+                                >
+                                    {segment.map((image: ImageObject) => (
+                                        <ImageWithDate
+                                            image={image}
+                                            onClick={() => {
+                                                console.log(
+                                                    'Setting zoomed image:',
+                                                    image.imagePath
+                                                );
+                                                dispatch(
+                                                    setZoomedImage({
+                                                        image: image.imagePath,
+                                                        isVideo: image.isVideo,
+                                                    })
+                                                );
+                                            }}
+                                            onDelete={() => mutate()}
+                                        />
+                                    ))}
+                                </Stack>
+                                <Button
+                                    color="error"
+                                    onClick={() => {
+                                        const imagePaths = segment.map(
+                                            (img) => img.imagePath
+                                        );
+                                        deleteRow(imagePaths);
+                                    }}
+                                >
+                                    Delete All {segment.length} Images in this
+                                    Row
+                                </Button>
+                                <Divider flexItem  />
+                            </React.Fragment>
+                        );
+                    })}
                 </Stack>
                 <Pagination
                     page={page}

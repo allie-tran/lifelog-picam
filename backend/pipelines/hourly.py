@@ -10,7 +10,7 @@ from datetime import datetime
 from app_types import CustomFastAPI
 
 def update_app(app: CustomFastAPI):
-    save_features(app.features, app.image_paths)
+    app.features, app.image_paths = save_features(app.features, app.image_paths)
     app.last_saved = datetime.now()
 
     # Load query bank normalization features

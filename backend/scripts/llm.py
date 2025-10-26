@@ -24,8 +24,10 @@ rate = Rate(3, Duration.SECOND)
 limiter = Limiter(rate)
 
 # Set up ChatGPT generation model
-GEMINI = os.environ.get("GEMINI_API", "")
+GEMINI_API = os.environ.get("GEMINI_API", "")
+print("Using Gemini API Key:", GEMINI_API[:4] + "..." + GEMINI_API[-4:] if GEMINI_API else "Not Set")
 MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "")
+print("Using Gemini Model Name:", MODEL_NAME)
 
 
 class MixedContent(BaseModel):
@@ -38,7 +40,7 @@ class LLM:
     system_instruction: str = "You are a helpful assistant."
 
     def __init__(self):
-        self.client = genai.Client(api_key=GEMINI)
+        self.client = genai.Client(api_key=GEMINI_API)
         self.model_name = MODEL_NAME
 
     def generate(self, contents: Content, parse_json=False):

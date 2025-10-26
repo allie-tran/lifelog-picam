@@ -1,8 +1,7 @@
 import base64
-import time
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 import redis
@@ -18,7 +17,7 @@ from app_types import CustomFastAPI, DaySummary, SummarySegment
 from auth import auth_app
 from constants import DIR
 from database import init_db
-from database.types import ImageRecord
+from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from pipelines.all import process_image, process_video
 from pipelines.hourly import update_app
@@ -31,6 +30,7 @@ from preprocess import (
     save_features,
 )
 from scripts.describe_segments import describe_segment
+from scripts.openai import openai_llm
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 
@@ -88,7 +88,7 @@ async def lifespan(app: CustomFastAPI):
         print(f"Processing {len(to_process)} new images...")
         for relative_path in tqdm(sorted(to_process)):
             process_image(app, *relative_path.split("/", 1))
-        save_features(app.features, app.image_paths)
+        app.features, app_image_paths = save_features(app.features, app.image_paths)
 
     update_app(app)
     yield
@@ -168,6 +168,11 @@ async def upload_image(file: UploadFile, background_tasks: BackgroundTasks):
         try:
             image = Image.open(file.file)
         except UnidentifiedImageError:
+            print("Invalid image file uploaded.")
+            # Just save the file without processing
+            output_path = f"{DIR}/{date}/{file_name}"
+            with open(output_path, "wb") as f:
+                f.write(await file.read())
             raise HTTPException(status_code=400, detail="Invalid image file.")
 
         exif = image.getexif()
@@ -326,6 +331,12 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
 
     # pagination
     segments = list(segments)
+
+    # Put the null segment_id at the start
+    null_segment = [s for s in segments if s.id is None]
+    non_null_segments = [s for s in segments if s.id is not None]
+    segments = null_segment + non_null_segments
+
     items_per_page = 20
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
@@ -340,7 +351,7 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
                 ImageRecord(**image.dict()).model_dump(
                     exclude={"_id", "id"}, by_alias=True
                 )
-                for image in segment.images
+                for image in segment.images[::-1]
             ]
             for segment in segments
         ],
@@ -421,17 +432,23 @@ class CheckFilesRequest(BaseModel):
 @app.post("/check-all-images-uploaded")
 def check_all_files_exist(request: CheckFilesRequest):
     print(request.date, len(request.all_files), request.all_files[:5])
-    date = request.date
     all_files = request.all_files
-    print(f"Checking files for date: {date}")
-    if not date:
+    all_dates = [f.split("/")[-1].split("_")[0] for f in all_files]
+    all_dates = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in all_dates]
+    all_dates = set(all_dates)
+
+    date = request.date
+    all_dates.add(date)
+    if not all_dates:
         return {"message": "Date is required."}
 
-    dir_path = f"{DIR}/{date}"
-    if not os.path.exists(dir_path):
-        return {"message": f"No images found for date {date}"}
+    existing_files = set()
+    for d in all_dates:
+        dir_path = f"{DIR}/{d}"
+        if os.path.exists(dir_path):
+            files = os.listdir(dir_path)
+            existing_files = existing_files.union(set(files))
 
-    existing_files = set(os.listdir(dir_path))
     missing_files = [f for f in all_files if f not in existing_files]
 
     if missing_files:
@@ -525,11 +542,7 @@ def restore_image(request: DeleteImageRequest):
 
 def process_segments(date: str):
     segments = ImageRecord.find(
-        filter={
-            "date": date,
-            "deleted": False,
-            "activity": {"$ne": ""}
-        },
+        filter={"date": date, "deleted": False, "activity": ""},
         distinct="segment_id",
     )
     segments = list(segments)
@@ -549,6 +562,11 @@ def process_segments(date: str):
             segment_id,
         )
 
+        DaySummaryRecord.update_one(
+            {"date": date},
+            {"$set": {"updated": True}},
+            upsert=True,
+        )
 
 
 @app.get("/process-date")
@@ -559,6 +577,31 @@ def process_date(date: str, background_tasks: BackgroundTasks):
 
 @app.get("/day-summary")
 def get_day_summary(date: str):
+
+    # summary = []
+    # for segment in activities:
+    #     segment = segment.dict()
+    #     start_time = datetime.fromtimestamp(segment["start_time"] / 1000).strftime(
+    #         "%H:%M:%S"
+    #     )
+    #     end_time = datetime.fromtimestamp(segment["end_time"] / 1000).strftime(
+    #         "%H:%M:%S"
+    #     )
+    #     summary.append(
+    #         SummarySegment(
+    #             segment_index=segment["_id"],
+    #             activity=segment["activity"] or "Unclear",
+    #             start_time=start_time,
+    #             end_time=end_time,
+    #             duration=int((segment["end_time"] - segment["start_time"]) / 1000),
+    #         )
+    #     )
+
+    # return DaySummary(
+    #     date=date,
+    #     segments=summary,
+    # )
+
     activities = ImageRecord.aggregate(
         [
             {"$match": {"date": date, "deleted": False, "segment_id": {"$ne": None}}},
@@ -574,26 +617,113 @@ def get_day_summary(date: str):
         ]
     )
 
+    print("Aggregated activities for day summary.")
+    activities = list(activities)
+
+    # Predefine a grid of time slots (e.g., every 30 minutes)
+    earliest_hour = 0
+    latest_hour = 24
+    if activities:
+        earliest_hour = datetime.fromtimestamp(activities[0].start_time / 1000).hour
+        latest_hour = datetime.fromtimestamp(activities[-1].end_time / 1000).hour + 1
+
+    print("Creating time slots from", earliest_hour, "to", latest_hour)
+
+    time_slots = []
+    slot_duration = 15 * 60 * 1000
+    for slot_start in range(
+        earliest_hour * 60 * 60 * 1000, latest_hour * 60 * 60 * 1000, slot_duration
+    ):
+        slot_end = slot_start + slot_duration
+        time_slots.append((slot_start, slot_end))
+
     summary = []
-    for segment in activities:
-        segment = segment.dict()
-        start_time = datetime.fromtimestamp(segment["start_time"] / 1000).strftime(
-            "%H:%M:%S"
-        )
-        end_time = datetime.fromtimestamp(segment["end_time"] / 1000).strftime(
-            "%H:%M:%S"
-        )
+    for slot_start, slot_end in time_slots:
+        slot_activities = []
+        for segment in activities:
+            segment = segment.dict()
+            if (
+                segment["end_time"]
+                >= slot_start + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
+                and segment["start_time"]
+                < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
+            ):
+                slot_activities.append(segment["activity"] or "Unclear")
+
+        if slot_activities:
+            # Choose the most frequent activity in the slot
+            activity = max(set(slot_activities), key=slot_activities.count)
+        else:
+            activity = "No Activity"
+
+        start_time_str = (
+            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_start)
+        ).strftime("%H:%M:%S")
+        end_time_str = (
+            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_end)
+        ).strftime("%H:%M:%S")
+
         summary.append(
             SummarySegment(
-                segment_index=segment["_id"],
-                activity=segment["activity"] or "Unclear",
-                start_time=start_time,
-                end_time=end_time,
-                duration=int((segment["end_time"] - segment["start_time"]) / 1000),
+                segment_index=None,
+                activity=activity,
+                start_time=start_time_str,
+                end_time=end_time_str,
+                duration=int(slot_duration / 1000),
             )
         )
 
-    return DaySummary(
-        date=date,
-        segments=summary,
+    updated = True
+    day_summary_record = DaySummaryRecord.find_one({"date": date})
+    if day_summary_record and not day_summary_record.updated and day_summary_record.summary_text:
+        day_summary = day_summary_record.summary_text
+        updated = False
+    else:
+        try:
+            raw_activities = ImageRecord.aggregate(
+                [
+                    {"$match": {"date": date, "deleted": False, "segment_id": {"$ne": None}}},
+                    {
+                        "$group": {
+                            "_id": "$segment_id",
+                            "activity": {"$first": "$activity"},
+                            "activity_description": {"$first": "$activity_description"},
+                            "start_time": {"$min": "$timestamp"},
+                            "end_time": {"$max": "$timestamp"},
+                        }
+                    },
+                    {"$sort": {"start_time": 1}},
+                ]
+            )
+
+            day_summary = openai_llm.generate_from_text(
+                "Create a summary of the activities performed during the day based on the following segments. Make it concise and informative. Such as: you spent the morning working, had lunch at 1 PM, spent the afternoon relaxing, and in the evening you went for a walk.\n"
+                "Ignore unclear activities.\n"
+                + "\n".join(
+                    [
+                        f"{seg.start_time} to {seg.end_time}: {seg.activity_description}"
+                        for seg in raw_activities
+                        if seg.activity != "No Activity"
+                    ]
+                )
+            )
+            print("Day Summary LLM Response:")
+            print(day_summary)
+            day_summary = str(day_summary).strip()
+            updated = False
+
+        except Exception as e:
+            trace = str(e)
+            print("Failed to generate day summary:", trace)
+            day_summary = "No summary available."
+
+    summary = DaySummary(
+        date=date, segments=summary, summary_text=day_summary, updated=updated
     )
+    DaySummaryRecord.update_one(
+        {"date": date},
+        {"$set": summary.model_dump(by_alias=True)},
+        upsert=True,
+    )
+
+    return summary

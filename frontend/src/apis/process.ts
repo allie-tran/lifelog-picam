@@ -16,5 +16,6 @@ export const getDaySummary = async (dateString: string) => {
     return response.data as {
         date: string;
         segments: SummarySegment[];
+        summaryText: string;
     };
 }

@@ -1,6 +1,9 @@
 import numpy as np
-from database.types import ImageRecord
+from pipelines.all import find_segment
+from database.types import DaySummaryRecord, ImageRecord
 from tqdm.auto import tqdm
+
+from scripts.describe_segments import describe_segment
 
 
 def segment_images(features, image_paths, deleted_images: set[str], reverse=True):
@@ -34,8 +37,8 @@ def segment_images(features, image_paths, deleted_images: set[str], reverse=True
 def reset_all_segments():
     print("Resetting all segments...")
     ImageRecord.update_many(
-        filter={"segment_id": {"$exists": True}},
-        data={"$unset": {"segment_id": ""}},
+        filter={},
+        data={"$unset": {"segment_id": None}},
     )
 
 
@@ -59,15 +62,28 @@ def load_all_segments(features, image_paths, deleted_images: set[str]):
             "$or": [
                 {"segment_id": {"$exists": False}},
                 {"segment_id": None},
-            ]
+            ],
+            "deleted": {"$ne": True},
         },
         sort=[("image_path", -1)],
     )
 
+    # Try to find index that belong to already segmented images
+    actual_new_records = []
+    for record in new_records:
+        segment_id = find_segment(record.timestamp)
+        if segment_id is not None:
+            ImageRecord.update_one(
+                filter={"image_path": record.image_path},
+                data={"$set": {"segment_id": segment_id}},
+            )
+        else:
+            actual_new_records.append(record)
+
     image_to_index = {image_path: idx for idx, image_path in enumerate(image_paths)}
     image_paths = [
         record.image_path
-        for record in new_records
+        for record in actual_new_records
         if record.image_path in image_to_index
     ]
 
@@ -84,8 +100,21 @@ def load_all_segments(features, image_paths, deleted_images: set[str]):
     segments = segment_images(features, image_paths, deleted_images, reverse=False)
     print(f"Total segments created: {len(segments)}")
 
-    for i, segment in tqdm(enumerate(segments), desc="Updating segments", total=len(segments)):
+    for i, segment in tqdm(
+        enumerate(segments), desc="Updating segments", total=len(segments)
+    ):
         ImageRecord.update_many(
             filter={"image_path": {"$in": segment}},
             data={"$set": {"segment_id": max_id + i}},
+        )
+        describe_segment(
+            segment,
+            segment_idx=max_id + i,
+        )
+        date = segment[0].split("_")[0]
+        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        DaySummaryRecord.update_one(
+            {"date": date},
+            {"$set": {"updated": True}},
+            upsert=True,
         )

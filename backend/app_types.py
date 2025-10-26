@@ -31,7 +31,7 @@ class CustomFastAPI(FastAPI):
 
 
 class SummarySegment(CamelCaseModel):
-    segment_index: int
+    segment_index: int | None = None
     activity: str
     start_time: str
     end_time: str
@@ -40,3 +40,5 @@ class SummarySegment(CamelCaseModel):
 class DaySummary(CamelCaseModel):
     date: str
     segments: list[SummarySegment] = []
+    summary_text: str = ""
+    updated: bool = False

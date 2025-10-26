@@ -2,5 +2,6 @@ timelapse/
 IMAGES/
 Lifelog/
 *.log
+*.log.bak
 
 backend/siglip_features.npz

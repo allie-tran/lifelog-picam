@@ -15,6 +15,7 @@ from bson import ObjectId as _ObjectId
 from mongodb_odm.models import INHERITANCE_FIELD_NAME, Document
 from pydantic import BaseModel, field_serializer
 from pydantic import BaseModel, computed_field, field_serializer
+from app_types import DaySummary
 from dependencies import CamelCaseModel
 
 
@@ -51,6 +52,8 @@ class ImageRecord(Document, CamelCaseModel):
 
     segment_id: Optional[int] = None
     activity: str = ""
+    activity_description: str = ""
+    activity_confidence: str = ""
 
     processed: ProcessedInfo = ProcessedInfo()
 
@@ -121,3 +124,6 @@ class ImageRecord(Document, CamelCaseModel):
         for data in qs:
             yield cls(**data)
 
+class DaySummaryRecord(Document, DaySummary):
+    class ODMConfig(Document.ODMConfig):
+        collection_name = "day_summaries"

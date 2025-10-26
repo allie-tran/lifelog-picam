@@ -67,7 +67,7 @@ const CATEGORIES: Record<string, string> = {
     'Transit / Waiting': '#95a5a6',
     'Taking Notes': '#95a5a6',
     'Unclear Activity': '#95a5a6',
-    'No Activity': '#000',
+    'No Activity': 'transparent',
 }
 
 export default CATEGORIES;

@@ -33,13 +33,28 @@ const DaySummary = () => {
                     })
                 }
             >
-                Add Activity Labels for This Day
+                Process Activities for This Day
             </Button>
+            {daySummary && (
+                <Typography
+                    variant="body1"
+                    textAlign="center"
+                    sx={{ maxWidth: 600 }}
+                >
+                    {daySummary.summaryText ||
+                        'No summary available for this day.'}
+                </Typography>
+            )}
             {daySummary && (
                 <Stack
                     direction="row"
                     spacing={0}
-                    sx={{ overflowX: 'auto', width: '100%' }}
+                    sx={{
+                        overflowX: 'auto',
+                        width: '100%',
+                        border: '1px solid #ccc',
+                        padding: 1,
+                    }}
                     flexWrap="wrap"
                 >
                     {daySummary.segments.map(
@@ -50,9 +65,8 @@ const DaySummary = () => {
                             >
                                 <Box
                                     sx={{
-                                        height: '8px',
-                                        width: segment.duration,
-                                        padding: '5px',
+                                        height: 48,
+                                        width: 10,
                                         backgroundColor:
                                             CATEGORIES[segment.activity] ||
                                             '#bdc3c7',

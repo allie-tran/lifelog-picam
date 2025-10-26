@@ -17,6 +17,9 @@ type ImageObject = {
   thumbnail: string;
   timestamp: number;
   isVideo: boolean;
+  activity?: string;
+  activityConfidence?: number;
+  activityDescription?: string;
 };
 
 type SummarySegment = {
