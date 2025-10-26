@@ -1,9 +1,11 @@
 import { configureStore } from '@reduxjs/toolkit';
 import zoomedImageSlice from './zoomedImage';
+import feedbackSlice from './feedback';
 
 export const store = configureStore({
     reducer: {
         zoomedImage: zoomedImageSlice,
+        feedback: feedbackSlice,
     },
 });
 

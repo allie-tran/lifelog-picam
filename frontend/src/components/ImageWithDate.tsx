@@ -63,17 +63,20 @@ const ImageWithDate = ({
                 sx={{ marginTop: '4px' }}
             >
                 <Typography>{formattedDate}</Typography>
-                <Button
-                    color="error"
-                    size="small"
-                    onClick={() => {
-                        deleteImage(image.imagePath);
-                        onDelete && onDelete(image.imagePath);
-                    }}
-                >
-                    <DeleteRounded />
-                </Button>
-                {extra}
+                <Stack direction="row" spacing={1} alignItems="center">
+                    <Button
+                        color="error"
+                        size="small"
+                        sx={{ minWidth: 32 }}
+                        onClick={() => {
+                            deleteImage(image.imagePath);
+                            onDelete && onDelete(image.imagePath);
+                        }}
+                    >
+                        <DeleteRounded />
+                    </Button>
+                    {extra}
+                </Stack>
             </Stack>
         </Box>
     );

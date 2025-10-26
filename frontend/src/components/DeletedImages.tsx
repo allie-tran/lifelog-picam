@@ -1,18 +1,26 @@
 import { ArchiveRounded, RestoreRounded } from '@mui/icons-material';
 import { Button, IconButton, Stack } from '@mui/material';
 import React from 'react';
-import { getDeletedImages, restoreImage } from '../apis/browsing';
-import { ImageObject } from '@utils/types'
+import {
+    forceDeleteImage,
+    getDeletedImages,
+    restoreImage,
+} from '../apis/browsing';
+import { ImageObject } from '@utils/types';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
+import { setLoading } from 'reducers/feedback';
+import { useAppDispatch } from 'reducers/hooks';
 
 const DeletedImages = () => {
+    const dispatch = useAppDispatch();
     const [results, setResults] = React.useState<ImageObject[]>([]);
     const [open, setOpen] = React.useState(false);
 
     const fetchImages = () => {
         getDeletedImages().then((data) => {
             setResults(data);
+            dispatch(setLoading(false));
         });
     };
 
@@ -44,11 +52,23 @@ const DeletedImages = () => {
                                 <Button
                                     color="error"
                                     size="small"
-                                    onClick={() => restoreImage(image.imagePath).then(() => fetchImages())}
+                                    sx={{ minWidth: 32 }}
+                                    onClick={() => {
+                                        dispatch(setLoading(true));
+                                        restoreImage(image.imagePath).then(() =>
+                                            fetchImages()
+                                        );
+                                    }}
                                 >
                                     <RestoreRounded />
                                 </Button>
                             }
+                            onDelete={(image) => {
+                                dispatch(setLoading(true));
+                                forceDeleteImage(image).then(() =>
+                                    fetchImages()
+                                );
+                            }}
                         />
                     ))}
                 </Stack>

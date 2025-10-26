@@ -23,6 +23,7 @@ import PasswordLock from './components/PasswordLock';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
 import dayjs from 'dayjs';
+import FeedbackComponents from 'components/FeedbackComponents';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 let theme = createTheme({
@@ -86,6 +87,7 @@ const App = () => {
                                 Back to Home
                             </Typography>
                         </AppBar>
+                        <FeedbackComponents />
                         <Container
                             sx={{ marginTop: '0px', marginBottom: '40px' }}
                         >

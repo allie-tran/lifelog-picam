@@ -67,3 +67,11 @@ export const restoreImage = async (imagePath: string) => {
     });
     return response.data;
 };
+
+export const forceDeleteImage = async (imagePath: string) => {
+    const response = await axios.delete(`${BACKEND_URL}/force-delete-image`, {
+        data: { imagePath }
+    });
+    return response.data;
+}
+

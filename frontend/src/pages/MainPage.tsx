@@ -26,9 +26,9 @@ import '../App.css';
 import DeletedImages from '../components/DeletedImages';
 import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
-import SearchBar from '../components/SearchBar';
 import Settings from '../components/Settings';
 import { SearchRounded } from '@mui/icons-material';
+import { setLoading } from 'reducers/feedback';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -54,7 +54,7 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
 };
 
 const CONFIDENCE_COLOURS: { [key: string]: string } = {
-    High: "success",
+    High: 'success',
     Medium: 'warning',
     Low: 'error',
 };
@@ -84,9 +84,10 @@ function MainPage() {
     const availableHours = data?.available_hours || [];
 
     const deleteRow = (imagePaths: string[]) => {
-        Promise.all(imagePaths.map((path) => deleteImage(path))).then(() =>
-            mutate()
-        );
+        dispatch(setLoading(true));
+        Promise.all(imagePaths.map((path) => deleteImage(path))).then(() => {
+            mutate().then(() => dispatch(setLoading(false)));
+        });
     };
 
     return (
@@ -159,10 +160,18 @@ function MainPage() {
                     {segments.map((segment, index) => {
                         const firstImage = segment[0];
 
-
                         return (
                             <React.Fragment key={index}>
-                                <Typography variant="h6" fontWeight="bold" color={CONFIDENCE_COLOURS[firstImage.activityConfidence || 'Low']}>
+                                <Typography
+                                    variant="h6"
+                                    fontWeight="bold"
+                                    color={
+                                        CONFIDENCE_COLOURS[
+                                            firstImage.activityConfidence ||
+                                                'Low'
+                                        ]
+                                    }
+                                >
                                     {firstImage.activity
                                         ? `${firstImage.activity} (Confidence: ${firstImage.activityConfidence})`
                                         : 'No Activity Detected'}
@@ -211,7 +220,7 @@ function MainPage() {
                                     Delete All {segment.length} Images in this
                                     Row
                                 </Button>
-                                <Divider flexItem  />
+                                <Divider flexItem />
                             </React.Fragment>
                         );
                     })}
