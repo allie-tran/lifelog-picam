@@ -1,8 +1,10 @@
 from datetime import datetime
 
 import numpy as np
+from preprocess import compress_image
 from database.types import DaySummaryRecord, ImageRecord
 from tqdm.auto import tqdm
+
 from scripts.describe_segments import describe_segment
 
 
@@ -128,7 +130,7 @@ def load_all_segments(features, image_paths, deleted_images: set[str]):
             data={"$set": {"segment_id": max_id + i}},
         )
         describe_segment(
-            segment,
+            [compress_image(i) for i in segment],
             segment_idx=max_id + i,
         )
         date = segment[0].split("_")[0]

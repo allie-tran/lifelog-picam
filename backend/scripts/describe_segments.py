@@ -1,6 +1,8 @@
 import random
 import time
 import traceback
+import io
+from PIL import Image
 
 from constants import DIR
 from database.types import ImageRecord
@@ -85,6 +87,7 @@ def get_description_from_frames(
         get_visual_content(image_bytes)
         + [MixedContent(type="text", content=instructions[0])],
     )
+    description = str(description)
     description_text = description.strip()
     print("LLM Response:")
     print(description_text)
@@ -132,8 +135,13 @@ def describe_segment(segment: list[str], segment_idx: int):
 
     final_category = "Unclear"
     for image_path in segment:
-        img = open(f"{DIR}/{image_path}", "rb").read()
-        image_bytes.append(img)
+        # Read webp then convert to jpeg and send bytes
+        # img = open(f"{DIR}/{image_path}", "rb").read()
+        # image_bytes.append(img)
+        image = Image.open(image_path).convert("RGB")
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG")
+        image_bytes.append(buf.getvalue())
 
     category = "Unclear"
     description = ""
@@ -186,5 +194,3 @@ def describe_segment(segment: list[str], segment_idx: int):
             }
         },
     )
-
-

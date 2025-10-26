@@ -15,6 +15,7 @@ from tqdm.auto import tqdm
 
 from app_types import CustomFastAPI, DaySummary, SummarySegment
 from auth import auth_app
+from pipelines.delete import remove_from_features, remove_physical_image
 from constants import DIR
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
@@ -457,8 +458,9 @@ def check_all_files_exist(request: CheckFilesRequest):
             deleted_files = deleted_files.union(set(deleted))
 
     missing_files = [f for f in all_files if f not in existing_files and f not in deleted_files]
+    to_deleted = [f for f in all_files if f in deleted_files]
     if missing_files:
-        return missing_files, list(deleted_files)
+        return missing_files,  to_deleted
     else:
         return [], list(deleted_files)
 
@@ -489,51 +491,27 @@ def delete_image(request: DeleteImageRequest):
 @app.get("/get-deleted-images")
 def get_deleted_images():
     deleted_list = ImageRecord.find(
-        filter={"deleted": True}, sort=[("image_path", -1)], distinct="image_path"
+        filter={"deleted": True}, sort=[("image_path", -1)]
     )
     deleted_list = list(deleted_list)
     print(f"Found {len(deleted_list)} deleted images.")
-    timestamps = []
+
     now = datetime.now().timestamp() * 1000
     threshold = now - 30 * 24 * 60 * 60 * 1000  # 30 days ago
 
-    for image_path in deleted_list:
-        timestamp = datetime.strptime(
-            image_path.split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
-        ).timestamp()
+    final_list = []
+    for image in deleted_list:
+        if os.path.exists(f"{DIR}/{image.image_path}"):
+            final_list.append(image)
 
-        if timestamp * 1000 < threshold:
+        if image.timestamp < threshold:
             # Delete image permanently
-            full_path = os.path.join(DIR, image_path)
-            thumbnail = None
-            if full_path.endswith(".mp4"):
-                thumbnail = make_video_thumbnail(full_path)
-            else:
-                thumbnail = compress_image(full_path)
-
-            if os.path.exists(full_path):
-                print(
-                    "Deleting permanently:", full_path, timestamp * 1000, "<", threshold
-                )
-                os.remove(full_path)
-            if thumbnail and os.path.exists(thumbnail):
-                os.remove(thumbnail)
+            full_path = os.path.join(DIR, image.image_path)
+            print(f"Permanently deleting image: {full_path}")
+            remove_physical_image(image.image_path)
+            remove_from_features(app, image.image_path)
             continue
-
-        timestamps.append(timestamp * 1000)
-
-    return [
-        ImageRecord(
-            image_path=img,
-            thumbnail=img.replace(".jpg", ".webp")
-            .replace(".mp4", ".webp")
-            .replace(".h264", ".webp"),
-            date=img.split("/")[0],
-            timestamp=ts,
-            is_video=img.lower().endswith((".h264", ".mp4", ".mov", ".avi")),
-        ).model_dump(exclude={"_id", "id"}, by_alias=True)
-        for img, ts in zip(deleted_list, timestamps)
-    ]
+    return final_list
 
 
 @app.post("/restore-image")
@@ -545,20 +523,12 @@ def restore_image(request: DeleteImageRequest):
     )
 
 
-@app.post("/force-delete-image")
+@app.delete("/force-delete-image")
 def force_delete_image(request: DeleteImageRequest):
     image_path = request.image_path
     print(f"Force deleting image: {image_path}")
-    records = ImageRecord.find(
-        {"image_path": image_path},
-    )
-    for record in records:
-        full_path = os.path.join(DIR, record.image_path)
-        if os.path.exists(full_path):
-            os.remove(full_path)
-        if thumbnail and os.path.exists(thumbnail):
-            os.remove(thumbnail)
-
+    remove_physical_image(image_path)
+    remove_from_features(app, image_path)
 
 def process_segments(date: str):
     segments = ImageRecord.find(
@@ -573,7 +543,7 @@ def process_segments(date: str):
 
         describe_segment(
             [
-                img.image_path
+                img.thumbnail
                 for img in ImageRecord.find(
                     filter={"segment_id": segment_id, "deleted": False},
                     sort=[("image_path", 1)],
