@@ -1,9 +1,11 @@
-from scripts.object_detection import extract_object_from_image
-from database.types import ImageRecord, ProcessedInfo
 from datetime import datetime
-from preprocess import compress_image, encode_image, make_video_thumbnail
-from constants import DIR
+
 from app_types import CustomFastAPI
+from constants import DIR
+from database.types import ImageRecord, ProcessedInfo
+from preprocess import blur_image, compress_image, encode_image, make_video_thumbnail
+from scripts.object_detection import extract_object_from_image
+
 
 def find_segment(timestamp: float) -> int | None:
     # Find the segment ID for the given image path and timestamp
@@ -30,13 +32,12 @@ def find_segment(timestamp: float) -> int | None:
         limit=1,
     )
     start = list(start)
-    start = start[0] if start else []
+    start = start[0] if start else None
 
     if not start:
         # This should never happen, but just in case
         print("Warning: No start segment found for timestamp", timestamp)
         return None
-
 
     if start.segment_id == end.segment_id:
         return start.segment_id
@@ -47,6 +48,7 @@ def find_segment(timestamp: float) -> int | None:
         data={"$inc": {"segment_id": 1}},
     )
     return None
+
 
 def process_image(app: CustomFastAPI, date: str, file_name: str):
     if f"{date}/{file_name}" not in app.image_paths:
@@ -62,6 +64,8 @@ def process_image(app: CustomFastAPI, date: str, file_name: str):
     relative_path = f"{date}/{file_name}"
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
     objects, people = extract_object_from_image(f"{DIR}/{relative_path}")
+    if people:
+        blur_image(image_path=f"{DIR}/{relative_path}", boxes=people)
 
     ImageRecord(
         date=date,
@@ -72,12 +76,11 @@ def process_image(app: CustomFastAPI, date: str, file_name: str):
         objects=objects,
         people=people,
         processed=ProcessedInfo(yolo=True, encoded=True),
-        segment_id=find_segment(
-            timestamp.timestamp() * 1000
-        )
+        segment_id=find_segment(timestamp.timestamp() * 1000),
     ).create()
 
     return app
+
 
 def process_video(app: CustomFastAPI, date: str, file_name: str):
     output_path = f"{DIR}/{date}/{file_name}"
@@ -97,4 +100,3 @@ def process_video(app: CustomFastAPI, date: str, file_name: str):
         )
 
     return app
-

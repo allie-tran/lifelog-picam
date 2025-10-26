@@ -443,19 +443,24 @@ def check_all_files_exist(request: CheckFilesRequest):
         return {"message": "Date is required."}
 
     existing_files = set()
+    deleted_files = set()
     for d in all_dates:
         dir_path = f"{DIR}/{d}"
         if os.path.exists(dir_path):
             files = os.listdir(dir_path)
             existing_files = existing_files.union(set(files))
+            deleted = ImageRecord.find(
+                filter={"date": d, "deleted": True},
+                distinct="image_path",
+            )
+            deleted = [f.split("/")[-1] for f in deleted]
+            deleted_files = deleted_files.union(set(deleted))
 
-    missing_files = [f for f in all_files if f not in existing_files]
-
+    missing_files = [f for f in all_files if f not in existing_files and f not in deleted_files]
     if missing_files:
-        return missing_files
+        return missing_files, list(deleted_files)
     else:
-        return []
-
+        return [], list(deleted_files)
 
 class DeleteImageRequest(CamelCaseModel):
     image_path: str
@@ -538,6 +543,21 @@ def restore_image(request: DeleteImageRequest):
         {"image_path": image_path},
         {"$set": {"deleted": False}},
     )
+
+
+@app.post("/force-delete-image")
+def force_delete_image(request: DeleteImageRequest):
+    image_path = request.image_path
+    print(f"Force deleting image: {image_path}")
+    records = ImageRecord.find(
+        {"image_path": image_path},
+    )
+    for record in records:
+        full_path = os.path.join(DIR, record.image_path)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+        if thumbnail and os.path.exists(thumbnail):
+            os.remove(thumbnail)
 
 
 def process_segments(date: str):
@@ -675,14 +695,24 @@ def get_day_summary(date: str):
 
     updated = True
     day_summary_record = DaySummaryRecord.find_one({"date": date})
-    if day_summary_record and not day_summary_record.updated and day_summary_record.summary_text:
+    if (
+        day_summary_record
+        and not day_summary_record.updated
+        and day_summary_record.summary_text
+    ):
         day_summary = day_summary_record.summary_text
         updated = False
     else:
         try:
             raw_activities = ImageRecord.aggregate(
                 [
-                    {"$match": {"date": date, "deleted": False, "segment_id": {"$ne": None}}},
+                    {
+                        "$match": {
+                            "date": date,
+                            "deleted": False,
+                            "segment_id": {"$ne": None},
+                        }
+                    },
                     {
                         "$group": {
                             "_id": "$segment_id",

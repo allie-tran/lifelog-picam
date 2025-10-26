@@ -26,8 +26,8 @@ def check_if_folder_is_synced(date: str):
     try:
         response = requests.post(CHECK_ALL_URL, json=payload, timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            missing = set(data)
+            missing, deleted = response.json()
+            missing = set(missing)
             missing = set(os.path.join(DATE_DIR, f) for f in missing)
             synced_files = files - missing
             missing_files.update(missing)
@@ -38,6 +38,12 @@ def check_if_folder_is_synced(date: str):
             if not missing:
                 with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
                     f.write("All files are synced.\n")
+
+            for f in deleted:
+                deleted_file_path = os.path.join(DATE_DIR, f)
+                if os.path.exists(deleted_file_path):
+                    os.remove(deleted_file_path)
+                    print(f"Deleted file {deleted_file_path} as per server instruction.")
 
             return sorted(missing)
     except requests.RequestException as e:

@@ -1,12 +1,14 @@
 import os
 
+from PIL import Image, ImageFilter
 import numpy as np
 from PIL import Image
 
-from database.types import ImageRecord
+from database.types import ImageRecord, ObjectDetection
 from constants import DIR
 from scripts.querybank_norm import BETA, apply_qb_norm_to_query
 from visual import siglip_model
+from typing import List
 
 os.makedirs(f"{DIR}/thumbnails", exist_ok=True)
 
@@ -24,6 +26,34 @@ def compress_image(image_path, quality=85):
     img.save(output_path, "WEBP", quality=quality)
     return output_path
 
+def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
+    image = Image.open(image_path)
+    for box in boxes:
+        x1, y1, x2, y2 = box.bbox
+        # expand box by 10%
+        box_width = x2 - x1
+        box_height = y2 - y1
+        x1 = max(0, int(x1 - box_width * 0.1))
+        y1 = max(0, int(y1 - box_height * 0.1))
+        x2 = min(image.width, int(x2 + box_width * 0.1))
+        y2 = min(image.height, int(y2 + box_height * 0.1))
+        try:
+            # adjusting the strength of the blur based on box size
+            box_area = (x2 - x1) * (y2 - y1)
+            adjusted_blur_strength = int(blur_strength * (box_area / (image.width * image.height))) * 100
+            print(f"Blurring region ({x1}, {y1}, {x2}, {y2}) with strength {adjusted_blur_strength}")
+            region = image.crop((x1, y1, x2, y2))
+            blurred_region = region.filter(ImageFilter.GaussianBlur(max(30, adjusted_blur_strength)))
+            image.paste(blurred_region, (x1, y1))
+        except Exception as e:
+            print(f"Error blurring region ({x1}, {y1}, {x2}, {y2}): {e}")
+            continue
+    # save in webp format
+    image.thumbnail((800, 800))
+    rel_path = image_path.replace(DIR + "/", "")
+    output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    image.save(output_path, "WEBP")
 
 def make_video_thumbnail(video_path, quality=85):
     rel_path = video_path.replace(DIR + "/", "")

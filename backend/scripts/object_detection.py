@@ -58,7 +58,22 @@ def extract_object_from_image(
                     face_data = get_face_data_from_person_crop(
                         frame[y1:y2, x1:x2]
                     )
-                    people.extend(face_data)
+                    # Add face bounding boxes to people list
+                    for face in face_data:
+                        face_bbox = face.bbox
+                        # Adjust face bbox coordinates to original image
+                        adjusted_bbox = [
+                            face_bbox[0] + x1,
+                            face_bbox[1] + y1,
+                            face_bbox[2] + x1,
+                            face_bbox[3] + y1,
+                        ]
+                        people.append(ObjectDetection(
+                            label="face",
+                            confidence=face.confidence,
+                            bbox=adjusted_bbox,
+                            embedding=face.embedding,
+                        ))
     return objects, people
 
 PERSON_CONF_THRESHOLD = 0.5

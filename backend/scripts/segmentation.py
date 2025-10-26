@@ -1,8 +1,8 @@
+from datetime import datetime
+
 import numpy as np
-from pipelines.all import find_segment
 from database.types import DaySummaryRecord, ImageRecord
 from tqdm.auto import tqdm
-
 from scripts.describe_segments import describe_segment
 
 
@@ -42,8 +42,40 @@ def reset_all_segments():
     )
 
 
+def find_first_unsegmented_timestamp():
+    today = datetime.now().strftime("%Y-%m-%d")
+    record = ImageRecord.find(
+        filter={
+            "segment_id": None,
+            "deleted": False,
+            "date": today,
+        },
+        sort=[("timestamp", 1)],
+    )
+    record = list(record)
+    print(record)
+    if record:
+        return record[0].timestamp
+    return None
+
+
 def load_all_segments(features, image_paths, deleted_images: set[str]):
     # reset_all_segments()
+    # first_unsegmented_time = find_first_unsegmented_timestamp()
+    # if first_unsegmented_time is None:
+    #     print("All images are already segmented. Exiting.")
+    #     return
+
+    # Reset all the segments after the first unsegmented timestamp
+    # print(
+    #     f"First unsegmented image timestamp: {first_unsegmented_time}, {datetime.fromtimestamp(int(first_unsegmented_time / 1000))}"
+    # )
+    # ImageRecord.update_many(
+    #     filter={"timestamp": {"$gte": first_unsegmented_time}},
+    #     data={"$unset": {"segment_id": None}},
+    # )
+
+    # Load all old records that have segment IDs
     print("Loading all segments...")
     # Check exisiting segments
     segment_ids = ImageRecord.find(
@@ -68,22 +100,10 @@ def load_all_segments(features, image_paths, deleted_images: set[str]):
         sort=[("image_path", -1)],
     )
 
-    # Try to find index that belong to already segmented images
-    actual_new_records = []
-    for record in new_records:
-        segment_id = find_segment(record.timestamp)
-        if segment_id is not None:
-            ImageRecord.update_one(
-                filter={"image_path": record.image_path},
-                data={"$set": {"segment_id": segment_id}},
-            )
-        else:
-            actual_new_records.append(record)
-
     image_to_index = {image_path: idx for idx, image_path in enumerate(image_paths)}
     image_paths = [
         record.image_path
-        for record in actual_new_records
+        for record in new_records
         if record.image_path in image_to_index
     ]
 
