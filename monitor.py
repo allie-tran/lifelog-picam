@@ -7,6 +7,8 @@ import time
 missing_files = set()
 uploaded_files = set()
 
+device_id = os.getenv("DEVICE_ID", "omi")
+
 def check_if_folder_is_synced(date: str):
     DATE_DIR = os.path.join(OUTPUT, date)
     files = set(os.path.join(DATE_DIR, f) for f in os.listdir(DATE_DIR))
@@ -24,7 +26,7 @@ def check_if_folder_is_synced(date: str):
     payload = {"date": date, "all_files": list(basenames)}
 
     try:
-        response = requests.post(CHECK_ALL_URL, json=payload, timeout=10)
+        response = requests.post(CHECK_ALL_URL, json=payload, timeout=10, headers={"X-Device-ID": device_id})
         if response.status_code == 200:
             missing, deleted = response.json()
             missing = set(missing)
