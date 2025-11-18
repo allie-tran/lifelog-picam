@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 
 import requests
-from pydotenv import load_dotenv
+from dotenv import load_dotenv
 
 load_dotenv()
 device_id = os.getenv("DEVICE_ID", "omi")
