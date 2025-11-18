@@ -1,11 +1,13 @@
 import { configureStore } from '@reduxjs/toolkit';
 import zoomedImageSlice from './zoomedImage';
 import feedbackSlice from './feedback';
+import authSlice from './auth';
 
 export const store = configureStore({
     reducer: {
         zoomedImage: zoomedImageSlice,
         feedback: feedbackSlice,
+        auth: authSlice,
     },
 });
 

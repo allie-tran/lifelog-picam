@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from typing import List
+from typing import Dict, List
 from PIL import Image
 from constants import DIR
 
@@ -62,8 +62,8 @@ def get_score(image_path):
     return prediction
 
 
-def check_all_files(image_paths: List[str]):
-    print(f"Checking {len(image_paths)} images for visual density...")
+def check_all_files(image_paths: Dict[str, List[str]]):
+    print(f"Checking images for visual density...")
     existing_df = None
     existing_images = set()
 
@@ -73,6 +73,8 @@ def check_all_files(image_paths: List[str]):
         existing_images = set(existing_df["image"].tolist())
 
     # Only process new images
+    # Flatten image_paths
+    image_paths = [f"{device_id}/{path}" for device_id, paths in image_paths.items() for path in paths]
     image_paths = [p for p in image_paths if p not in existing_images]
     scores = []
 
@@ -103,12 +105,15 @@ def get_low_visual_density_indices(image_paths):
         return np.array([])
     df = pd.read_csv(f"files/visual_density.csv")
     score_dict = dict(zip(df["image"], df["score"]))
-    scores = [score_dict.get(path, 10) for path in image_paths]  # default to 10 if not found
-
-    # remove < 5
-    indices = [i for i, score in enumerate(scores) if score < 8]
-    images_with_low_density = [image_paths[i] for i in indices]
-    print(f"Found {len(indices)} images with low visual density.")
-    return np.array(indices), set(images_with_low_density)
-
-
+    # scores = [score_dict.get(path, 10) for path in image_paths]  # default to 10 if not found
+    all_indices = {}
+    all_images_with_low_density = set()
+    for device in image_paths:
+        scores = [score_dict.get(f"{device}/{path}", 10) for path in image_paths[device]]
+        indices = [i for i, score in enumerate(scores) if score < 8]
+        all_indices[device] = indices
+        all_images_with_low_density.update(
+            {f"{device}/{image_paths[device][i]}" for i in indices}
+        )
+        print(f"Device {device}: Found {len(indices)} images with low visual density.")
+    return all_indices, all_images_with_low_density

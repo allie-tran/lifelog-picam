@@ -4,10 +4,15 @@ import {
     Button,
     Divider,
     Drawer,
+    FormControl,
     IconButton,
+    InputLabel,
+    MenuItem,
     Pagination,
     Paper,
+    Select,
     Stack,
+    TextField,
     Toolbar,
     Typography,
 } from '@mui/material';
@@ -18,17 +23,24 @@ import DaySummary from 'components/DaySummary';
 import dayjs from 'dayjs';
 import React from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useAppDispatch } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
-import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
+import {
+    deleteImage,
+    getAllDates,
+    getDevices,
+    getImagesByHour,
+} from '../apis/browsing';
 import '../App.css';
 import DeletedImages from '../components/DeletedImages';
 import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
 import Settings from '../components/Settings';
-import { SearchRounded } from '@mui/icons-material';
+import { AdminPanelSettingsRounded, SearchRounded } from '@mui/icons-material';
 import { setLoading } from 'reducers/feedback';
+import ModalWithCloseButton from 'components/ModalWithCloseButton';
+import { changeSegmentActivity } from 'apis/process';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -64,20 +76,38 @@ function MainPage() {
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
 
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const [page, setPage] = React.useState(1);
     const [hour, setHour] = React.useState<number | null>(null);
+    const [segmentToEdit, setSegmentToEdit] = React.useState<number | null>(
+        null
+    );
+    const [activityEditText, setActivityEditText] = React.useState<string>('');
+
     const dispatch = useAppDispatch();
     const { data, error, mutate } = useSWR(
         [page, date, hour],
-        () => getImagesByHour(date || '', hour || 0, page),
+        () => getImagesByHour(deviceId, date || '', hour || 0, page),
         {
             revalidateOnFocus: false,
         }
     );
 
-    const { data: allDates } = useSWR('all-dates', getAllDates, {
-        revalidateOnFocus: false,
-    });
+    const { data: devices, isLoading: devicesLoading } = useSWR(
+        'devices-list',
+        getDevices,
+        {
+            revalidateOnFocus: false,
+        }
+    );
+
+    const { data: allDates } = useSWR(
+        'all-dates',
+        () => getAllDates(deviceId),
+        {
+            revalidateOnFocus: false,
+        }
+    );
 
     const images = data?.images;
     const segments = data?.segments || [];
@@ -85,14 +115,44 @@ function MainPage() {
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
-        Promise.all(imagePaths.map((path) => deleteImage(path))).then(() => {
-            mutate().then(() => dispatch(setLoading(false)));
-        });
+        Promise.all(imagePaths.map((path) => deleteImage(deviceId, path))).then(
+            () => {
+                mutate().then(() => dispatch(setLoading(false)));
+            }
+        );
     };
 
     return (
         <>
             <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
+                <FormControl fullWidth sx={{ maxWidth: '400px' }}>
+                    <InputLabel id="device-select-label">Device</InputLabel>
+                    <Select
+                        labelId="device-select-label"
+                        value={deviceId || ''}
+                        label="Device"
+                        onChange={(e) => {
+                            const selectedDeviceId = e.target.value;
+                            setPage(1);
+                            navigate(
+                                `/?date=${date || ''}${
+                                    selectedDeviceId
+                                        ? `&device_id=${selectedDeviceId}`
+                                        : ''
+                                }`
+                            );
+                        }}
+                        disabled={devicesLoading}
+                    >
+                        <MenuItem value="">All Devices</MenuItem>
+                        {devices?.map((device) => (
+                            <MenuItem key={device} value={device}>
+                                {device}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+
                 <Drawer
                     variant="permanent"
                     open
@@ -106,6 +166,13 @@ function MainPage() {
                         sx={{ marginTop: '16px', marginLeft: '8px' }}
                     >
                         <SearchRounded />
+                    </IconButton>
+                    <IconButton
+                        color="secondary"
+                        onClick={() => navigate('/admin')}
+                        sx={{ marginTop: '16px', marginLeft: '8px' }}
+                    >
+                        <AdminPanelSettingsRounded />
                     </IconButton>
                 </Drawer>
                 <Typography variant="h4" color="primary" fontWeight="bold">
@@ -152,7 +219,6 @@ function MainPage() {
                         </Button>
                     ))}
                 </Stack>
-                {error && <div>Failed to load images</div>}
                 {segments.length === 0 && images && images.length === 0 && (
                     <div>No images found for this date/hour.</div>
                 )}
@@ -220,23 +286,75 @@ function MainPage() {
                                     Delete All {segment.length} Images in this
                                     Row
                                 </Button>
+                                {firstImage.segmentId ? (
+                                    <Button
+                                        variant="outlined"
+                                        onClick={() => {
+                                            setSegmentToEdit(
+                                                firstImage.segmentId as unknown as number
+                                            );
+                                            setActivityEditText(
+                                                firstImage.activity || ''
+                                            );
+                                        }}
+                                    >
+                                        Edit Activity Info
+                                    </Button>
+                                ) : null}
                                 <Divider flexItem />
                             </React.Fragment>
                         );
                     })}
                 </Stack>
-                <Pagination
-                    page={page}
-                    count={data?.total_pages || 1}
-                    color="primary"
-                    onChange={(_, page) => {
-                        setPage(page);
-                        const element = document.getElementById('app');
-                        element?.scrollIntoView({ behavior: 'smooth' });
-                    }}
-                />
+                {data && data.total_pages > 1 && (
+                    <Pagination
+                        page={page}
+                        count={data?.total_pages || 1}
+                        color="primary"
+                        onChange={(_, page) => {
+                            setPage(page);
+                            const element = document.getElementById('app');
+                            element?.scrollIntoView({ behavior: 'smooth' });
+                        }}
+                    />
+                )}
             </Stack>
             <ImageZoom onDelete={() => mutate()} />
+            <ModalWithCloseButton
+                open={segmentToEdit !== null}
+                onClose={() => setSegmentToEdit(null)}
+            >
+                <Stack spacing={2} sx={{ padding: 2, width: '400px' }}>
+                    <Typography>
+                        Edit activity for segment #
+                        {segmentToEdit !== null ? segmentToEdit + 1 : ''}
+                    </Typography>
+                    <TextField
+                        label="New Activity Info"
+                        multiline
+                        minRows={3}
+                        value={activityEditText}
+                        onChange={(e) => setActivityEditText(e.target.value)}
+                    />
+                    <Button
+                        variant="contained"
+                        onClick={() => {
+                            dispatch(setLoading(true));
+                            changeSegmentActivity(
+                                deviceId,
+                                segmentToEdit as unknown as number,
+                                activityEditText
+                            ).then(() => {
+                                mutate();
+                                setSegmentToEdit(null);
+                                dispatch(setLoading(false));
+                            });
+                        }}
+                    >
+                        Save Changes
+                    </Button>
+                </Stack>
+            </ModalWithCloseButton>
         </>
     );
 }

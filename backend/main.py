@@ -1,12 +1,13 @@
-import base64
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from typing import Annotated
+import io
+import base64
 
-import numpy as np
 import redis
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
@@ -15,28 +16,29 @@ from tqdm.auto import tqdm
 
 from app_types import CustomFastAPI, DaySummary, SummarySegment
 from auth import auth_app
-from pipelines.delete import remove_from_features, remove_physical_image
+from auth.auth_models import auth_dependency
+from auth.devices import verify_device_token
+from auth.types import AccessLevel
 from constants import DIR
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from pipelines.all import process_image, process_video
+from pipelines.delete import remove_from_features, remove_physical_image
 from pipelines.hourly import update_app
-from preprocess import (
-    compress_image,
-    get_similar_images,
-    load_features,
-    make_video_thumbnail,
-    retrieve_image,
-    save_features,
-)
+from preprocess import get_blurred_image, get_similar_images, load_features, retrieve_image, save_features
 from scripts.describe_segments import describe_segment
 from scripts.openai import openai_llm
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 
-load_dotenv()
 
+class CheckFilesRequest(BaseModel):
+    date: str
+    all_files: list[str]
+
+
+load_dotenv()
 picam_username = os.getenv("PICAM_USERNAME", "default_user")
 
 
@@ -44,52 +46,45 @@ picam_username = os.getenv("PICAM_USERNAME", "default_user")
 async def lifespan(app: CustomFastAPI):
     print("Starting up server...")
     init_db()
-    if not PiCamControl.find_one({"username": picam_username}):
-        PiCamControl.update_one(
-            {"username": picam_username},
-            {
-                "$setOnInsert": PiCamControl(username=picam_username).model_dump(),
-            },
-            upsert=True,
-        )
+    registered_devices = os.getenv("REGISTERED_DEVICES", "")
+    for device in registered_devices.split(","):
+        if not PiCamControl.find_one({"username": device}):
+            PiCamControl.update_one(
+                {"username": picam_username},
+                {
+                    "$setOnInsert": PiCamControl(username=picam_username).model_dump(),
+                },
+                upsert=True,
+            )
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
     app.features, app.image_paths = load_features()
 
     to_process = set()
-    for root, _, files in os.walk(DIR):
-        for file in files:
-            relative_path = ""
-            if file.endswith(".jpg"):
-                relative_path = os.path.relpath(os.path.join(root, file), DIR)
-                # compress_image(os.path.join(root, file))
-                if relative_path not in app.image_paths:
-                    to_process.add(relative_path)
-            elif file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
-                relative_path = os.path.relpath(os.path.join(root, file), DIR)
-                # make_video_thumbnail(os.path.join(root, file))
-                if relative_path not in app.image_paths:
-                    print(relative_path, "is a video, adding to process list.")
-                    to_process.add(relative_path)
-            else:
-                continue
-            # timestamp = datetime.strptime(file.split(".")[0], "%Y%m%d_%H%M%S")
-            # ImageRecord(
-            #     date=relative_path.split("/", 1)[0],
-            #     image_path=relative_path,
-            #     thumbnail=relative_path.replace(".jpg", ".webp"),
-            #     timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-            #     is_video=relative_path.lower().endswith(
-            #         (".h264", ".mp4", ".mov", ".avi")
-            #     ),
-            # ).create()
+    for device in os.listdir(DIR):
+        for root, _, files in os.walk(os.path.join(DIR, device)):
+            for file in files:
+                relative_path = ""
+                if file.endswith(".jpg"):
+                    relative_path = os.path.relpath(os.path.join(root, device, file), DIR)
+                    # compress_image(os.path.join(root, file))
+                    if relative_path not in app.image_paths:
+                        to_process.add(relative_path)
+                elif file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
+                    relative_path = os.path.relpath(os.path.join(root, device, file), DIR)
+                    # make_video_thumbnail(os.path.join(root, file))
+                    if relative_path not in app.image_paths:
+                        print(relative_path, "is a video, adding to process list.")
+                        to_process.add(relative_path)
+                else:
+                    continue
 
     # Create features from DIR first
     if to_process:
         print(f"Processing {len(to_process)} new images...")
         for relative_path in tqdm(sorted(to_process)):
-            process_image(app, *relative_path.split("/", 1))
-        app.features, app_image_paths = save_features(app.features, app.image_paths)
+            process_image(app, *relative_path.split("/", 2))
+        app.features, app.image_paths = save_features(app.features, app.image_paths)
 
     update_app(app)
     yield
@@ -102,7 +97,7 @@ app.mount("/auth", auth_app)
 app.mount("/controls", control_app)
 
 DIM = 1152
-app.features, app.image_paths = np.empty((0, DIM), dtype=np.float32), []
+app.features, app.image_paths = {}, {}
 load_dotenv()
 
 # Allow CORS for all origins
@@ -130,99 +125,9 @@ async def save_features_endpoint():
     return {"message": "Features saved successfully."}
 
 
-@app.get("/check-image-uploaded")
-async def check_image_uploaded(timestamp: int):
-    try:
-        dt = datetime.fromtimestamp(
-            int(timestamp) / 1000
-        )  # Convert milliseconds to seconds
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid timestamp format.")
-
-    date = dt.strftime("%Y-%m-%d")
-    file_name = f"{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
-    file_path = f"{DIR}/{date}/{file_name}"
-
-    if os.path.exists(file_path):
-        print(f"Image {file_name} exists for date {date}.")
-        return True
-
-    raise HTTPException(status_code=404, detail="Image not found")
-
-
-@app.put("/upload-image")
-async def upload_image(file: UploadFile, background_tasks: BackgroundTasks):
-    file_name = file.filename
-    if file_name is None:
-        raise HTTPException(status_code=400, detail="Filename is required.")
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
-
-    date = timestamp.strftime("%Y-%m-%d")
-    if not os.path.exists(f"{DIR}/{date}"):
-        os.makedirs(f"{DIR}/{date}")
-
-    if os.path.exists(f"{DIR}/{date}/{file_name}"):
-        print(f"File {file_name} already exists for date {date}.")
-    else:
-        print(f"Saving file {file_name} for date {date}.")
-        # Rotate 90 degrees if needed
-        try:
-            image = Image.open(file.file)
-        except UnidentifiedImageError:
-            print("Invalid image file uploaded.")
-            # Just save the file without processing
-            output_path = f"{DIR}/{date}/{file_name}"
-            with open(output_path, "wb") as f:
-                f.write(await file.read())
-            raise HTTPException(status_code=400, detail="Invalid image file.")
-
-        exif = image.getexif()
-        if image.width > image.height:
-            image = image.rotate(-90, expand=True)
-            # Update EXIF orientation tag
-            exif[274] = 1  # Normal orientation
-        # Save image with EXIF data
-        output_path = f"{DIR}/{date}/{file_name}"
-        image.save(output_path, exif=exif)
-        background_tasks.add_task(process_image, app, date, file_name)
-
-    now = datetime.now()
-    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-        background_tasks.add_task(update_app, app)
-    return get_mode()
-
-
-@app.put("/upload-video")
-async def upload_video(file: UploadFile, background_tasks: BackgroundTasks):
-    file_name = file.filename
-    if file_name is None:
-        raise HTTPException(status_code=400, detail="Filename is required.")
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
-    date = timestamp.strftime("%Y-%m-%d")
-
-    if not os.path.exists(f"{DIR}/{date}"):
-        os.makedirs(f"{DIR}/{date}")
-
-    output_path = f"{DIR}/{date}/{file_name}"
-    with open(output_path, "wb") as f:
-        f.write(await file.read())
-
-    # convert h264 to mp4 if needed and rotate 90 degrees
-    if file_name.lower().endswith(".h264"):
-        mp4_path = output_path[:-5] + ".mp4"
-        os.system(
-            f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -metadata:s:v rotate=90"
-        )
-        os.remove(output_path)
-        output_path = mp4_path
-
-    background_tasks.add_task(process_video, app, date, file_name)
-    return {"message": "Video uploaded successfully."}
-
-
-def to_base64(image_data: bytes) -> str:
-    """Convert image data to base64 string."""
-    return base64.b64encode(image_data).decode("utf-8")
+# =================================================================================== #
+# UPLOAD ENDPOINTS
+# =================================================================================== #
 
 
 @app.get("/check-image")
@@ -248,61 +153,199 @@ async def check_image(date: str, timestamp: str):
         }
 
 
-@app.get("/get-images", response_model=dict)
-async def get_images(date: str = "", page: int = 1):
-    print(f"Fetching images for date: {date}")
-    if not date:
-        date = datetime.now().strftime("%Y-%m-%d")
+def get_device_from_headers(request) -> str:
+    device_token = request.headers.get("X-Device-ID")
+    if not device_token:
+        raise HTTPException(status_code=400, detail="Missing X-Device-ID header.")
+    # check if device is registered
+    device = verify_device_token(device_token)["device"]
+    device = PiCamControl.find_one({"username": device})
+    if not device:
+        raise HTTPException(status_code=403, detail="Device not registered.")
+    return device.username
 
-    dir_path = f"{DIR}/{date}"
-    if not os.path.exists(dir_path):
-        return {"message": f"No images found for date {date}"}
 
-    all_files = ImageRecord.find(
-        filter={"date": date, "deleted": False},
-        sort=[("image_path", -1)],
-    )
-    all_files = [f.image_path.split("/")[-1] for f in all_files]
-    # Pagination
-    items_per_page = 3 * 10
-    start_index = (page - 1) * items_per_page
-    end_index = start_index + items_per_page
-    all_files = all_files[start_index:end_index]
+@app.put("/upload-image")
+async def upload_image(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    device: str = Depends(get_device_from_headers),
+):
+    file_name = file.filename
+    if file_name is None:
+        raise HTTPException(status_code=400, detail="Filename is required.")
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
 
-    images = []
-    for file_name in all_files:
-        timestamp = datetime.strptime(
-            file_name.split(".")[0], "%Y%m%d_%H%M%S"
-        ).timestamp()
-        images.append(
-            ImageRecord(
-                image_path=f"{date}/{file_name}",
-                thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
-                date=date,
-                timestamp=timestamp * 1000,  # Convert to milliseconds
-                is_video=file_name.lower().endswith((".h264", ".mp4", ".mov", ".avi")),
-            )
+    date = timestamp.strftime("%Y-%m-%d")
+    folder = f"{DIR}/{device}/{date}"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    if os.path.exists(f"{folder}/{file_name}"):
+        print(f"File {file_name} already exists for date {date}.")
+    else:
+        print(f"Saving file {file_name} for date {date}.")
+        # Rotate 90 degrees if needed
+        try:
+            image = Image.open(file.file)
+        except UnidentifiedImageError:
+            print("Invalid image file uploaded.")
+            # Just save the file without processing
+            output_path = f"{folder}/{file_name}"
+            with open(output_path, "wb") as f:
+                f.write(await file.read())
+            raise HTTPException(status_code=400, detail="Invalid image file.")
+
+        exif = image.getexif()
+        if image.width > image.height:
+            image = image.rotate(-90, expand=True)
+            # Update EXIF orientation tag
+            exif[274] = 1  # Normal orientation
+        # Save image with EXIF data
+        output_path = f"{folder}/{file_name}"
+        image.save(output_path, exif=exif)
+        background_tasks.add_task(process_image, app, device, date, file_name)
+
+    now = datetime.now()
+    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+        background_tasks.add_task(update_app, app)
+    return get_mode()
+
+
+@app.put("/upload-video")
+async def upload_video(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    device: str = Depends(get_device_from_headers),
+):
+    file_name = file.filename
+    if file_name is None:
+        raise HTTPException(status_code=400, detail="Filename is required.")
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    date = timestamp.strftime("%Y-%m-%d")
+
+    folder = f"{DIR}/{device}/{date}"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    output_path = f"{folder}/{file_name}"
+    with open(output_path, "wb") as f:
+        f.write(await file.read())
+
+    # convert h264 to mp4 if needed and rotate 90 degrees
+    if file_name.lower().endswith(".h264"):
+        mp4_path = output_path[:-5] + ".mp4"
+        os.system(
+            f"ffmpeg -i {output_path} -c copy {mp4_path} -vn -y -metadata:s:v rotate=90"
         )
+        os.remove(output_path)
+        output_path = mp4_path
 
-    return {
-        "date": date,
-        "images": images,
-        "total_pages": (len(os.listdir(dir_path)) + items_per_page - 1),
-    }
+    background_tasks.add_task(process_video, app, device, date, file_name)
+    return {"message": "Video uploaded successfully."}
+
+
+@app.post("/check-all-images-uploaded")
+def check_all_files_exist(
+    request: CheckFilesRequest, device: str = Depends(get_device_from_headers)
+):
+    print(request.date, len(request.all_files), request.all_files[:5])
+    all_files = request.all_files
+    all_dates = [f.split("/")[-1].split("_")[0] for f in all_files]
+    all_dates = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in all_dates]
+    all_dates = set(all_dates)
+
+    date = request.date
+    all_dates.add(date)
+    if not all_dates:
+        return {"message": "Date is required."}
+
+    existing_files = set()
+    deleted_files = set()
+    for d in all_dates:
+        dir_path = f"{DIR}/{device}/{d}"
+        if os.path.exists(dir_path):
+            files = os.listdir(dir_path)
+            existing_files = existing_files.union(set(files))
+            deleted = ImageRecord.find(
+                filter={"date": d, "deleted": True},
+                distinct="image_path",
+            )
+            deleted = [f.split("/")[-1] for f in deleted]
+            deleted_files = deleted_files.union(set(deleted))
+
+    missing_files = [
+        f for f in all_files if f not in existing_files and f not in deleted_files
+    ]
+    to_deleted = [f for f in all_files if f in deleted_files]
+    if missing_files:
+        return missing_files, to_deleted
+    else:
+        return [], list(deleted_files)
+
+
+# =================================================================================== #
+# RETRIEVAL ENDPOINTS
+# =================================================================================== #
+@app.get("/get-devices")
+def get_devices():
+    devices = []
+    for device in PiCamControl.find({}, sort=[("username", 1)]):
+        devices.append(device.username)
+    return devices
+
+@app.get("/get-image")
+def get_image(device: str, filename: str, access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE):
+    if access_level == AccessLevel.NONE:
+        print("Access level:", access_level)
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    image = ImageRecord.find_one(
+        filter={"device": device, "image_path": filename}
+    )
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    # Read the image file and return as base64
+    image_path = os.path.join(DIR, device, filename)
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="Image file not found.")
+
+    # Censor if needed (for example, blur faces)
+    img = get_blurred_image(image_path, image.people)
+
+    # Return
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    byte_im = buf.getvalue()
+
+    base64_image = base64.b64encode(byte_im).decode("utf-8")
+    return f"data:image/jpeg;base64, {base64_image}"
 
 
 @app.get("/get-images-by-hour", response_model=dict)
-async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
+async def get_images_by_hour(
+    device: str,
+    date: str = "",
+    hour: int = 0,
+    page: int = 1,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        print("Access level:", access_level)
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
     print(f"Fetching images for date: {date} and hour: {hour}")
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    dir_path = f"{DIR}/{date}"
+    dir_path = f"{DIR}/{device}/{date}"
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
     all_hours = ImageRecord.find(
-        filter={"date": date, "deleted": False},
+        filter={"date": date, "deleted": False, "device": device},
         sort=[("image_path", -1)],
         distinct="hour",
     )
@@ -318,7 +361,14 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
     # group by segment_id
     # Take maximum 20 segments per page
     group_pipeline = [
-        {"$match": {"date": date, "deleted": False, "hour": str(hour).zfill(2)}},
+        {
+            "$match": {
+                "date": date,
+                "deleted": False,
+                "hour": str(hour).zfill(2),
+                "device": device,
+            }
+        },
         {
             "$group": {
                 "_id": "$segment_id",
@@ -362,119 +412,115 @@ async def get_images_by_hour(date: str = "", hour: int = 0, page: int = 1):
 
 
 @app.get("/get-all-dates")
-def get_all_dates():
+def get_all_dates(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
     """Get all dates with images."""
-    if not os.path.exists(DIR):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    if not os.path.exists(f"{DIR}/{device}"):
         return []
 
     dates = []
-    for entry in os.listdir(DIR):
-        if os.path.isdir(os.path.join(DIR, entry)):
+    for entry in os.listdir(f"{DIR}/{device}"):
+        if os.path.isdir(os.path.join(DIR, device, entry)):
             dates.append(entry)
 
     return sorted(dates)
 
 
 @app.get("/search-images")
-def search(query: str):
+def search(
+    query: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
     print(len(app.image_paths), "images in the database.")
     print(len(app.features), "features in the database.")
 
     if not query:
         return []
 
-    deleted_set = set(ImageRecord.find(filter={"deleted": True}, distinct="image_path"))
+    deleted_set = set(
+        ImageRecord.find(
+            filter={
+                "deleted": True,
+                "device": device,
+            },
+            distinct="image_path",
+        )
+    )
 
     results = retrieve_image(
+        device,
         query,
-        app.features,
-        app.image_paths,
+        app.features[device],
+        app.image_paths[device],
         deleted_set,
         k=100,
-        retrieved_videos=app.retrieved_videos,
-        normalizing_sum=app.normalizing_sum,
-        remove=app.low_visual_indices,
+        retrieved_videos=app.retrieved_videos[device],
+        normalizing_sum=app.normalizing_sum[device],
+        remove=app.low_visual_indices[device],
     )
     return results
 
 
 @app.get("/similar-images")
-def similar_images(image: str):
-    delete_set = set(ImageRecord.find(filter={"deleted": True}, distinct="image_path"))
+def similar_images(
+    image: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    delete_set = set(
+        ImageRecord.find(
+            filter={"deleted": True, "device": device}, distinct="image_path"
+        )
+    )
     results = get_similar_images(
+        device,
         image,
-        app.features,
-        app.image_paths,
+        app.features[device],
+        app.image_paths[device],
         delete_set,
         k=100,
-        retrieved_videos=app.retrieved_videos,
-        normalizing_sum=app.normalizing_sum,
-        remove=app.low_visual_indices,
+        retrieved_videos=app.retrieved_videos[device],
+        normalizing_sum=app.normalizing_sum[device],
+        remove=app.low_visual_indices[device],
     )
     return results
 
 
-@app.get("/login")
-def login(password: str):
-    if password in os.getenv("ADMIN_PASSWORD", "").split(","):
-        save_features(
-            app.features, app.image_paths
-        )  # TODO!: find a better way to autosave
-        return {"success": True}
-    else:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+# =================================================================================== #
+# DELETE / RESTORE ENDPOINTS
+# =================================================================================== #
 
-
-class CheckFilesRequest(BaseModel):
-    date: str
-    all_files: list[str]
-
-
-@app.post("/check-all-images-uploaded")
-def check_all_files_exist(request: CheckFilesRequest):
-    print(request.date, len(request.all_files), request.all_files[:5])
-    all_files = request.all_files
-    all_dates = [f.split("/")[-1].split("_")[0] for f in all_files]
-    all_dates = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in all_dates]
-    all_dates = set(all_dates)
-
-    date = request.date
-    all_dates.add(date)
-    if not all_dates:
-        return {"message": "Date is required."}
-
-    existing_files = set()
-    deleted_files = set()
-    for d in all_dates:
-        dir_path = f"{DIR}/{d}"
-        if os.path.exists(dir_path):
-            files = os.listdir(dir_path)
-            existing_files = existing_files.union(set(files))
-            deleted = ImageRecord.find(
-                filter={"date": d, "deleted": True},
-                distinct="image_path",
-            )
-            deleted = [f.split("/")[-1] for f in deleted]
-            deleted_files = deleted_files.union(set(deleted))
-
-    missing_files = [f for f in all_files if f not in existing_files and f not in deleted_files]
-    to_deleted = [f for f in all_files if f in deleted_files]
-    if missing_files:
-        return missing_files,  to_deleted
-    else:
-        return [], list(deleted_files)
 
 class DeleteImageRequest(CamelCaseModel):
     image_path: str
 
 
 @app.delete("/delete-image")
-def delete_image(request: DeleteImageRequest):
+def delete_image(
+    request: DeleteImageRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to delete images.")
+
     image_path = request.image_path
     if not (image_path.endswith(".jpg") or image_path.endswith(".mp4")):
-        if os.path.exists(f"{DIR}/{image_path}.jpg"):
+        if os.path.exists(f"{DIR}/{device}/{image_path}.jpg"):
             original = f"{image_path}.jpg"
-        elif os.path.exists(f"{DIR}/{image_path}.mp4"):
+        elif os.path.exists(f"{DIR}/{device}/{image_path}.mp4"):
             original = f"{image_path}.mp4"
         else:
             raise HTTPException(status_code=404, detail="Image not found")
@@ -483,15 +529,23 @@ def delete_image(request: DeleteImageRequest):
 
     print(f"Deleting image: {original}")
     ImageRecord.update_many(
-        {"image_path": original},
+        {"image_path": original, "device": device},
         {"$set": {"deleted": True}},
     )
 
 
 @app.get("/get-deleted-images")
-def get_deleted_images():
+def get_deleted_images(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access deleted images."
+        )
+
     deleted_list = ImageRecord.find(
-        filter={"deleted": True}, sort=[("image_path", -1)]
+        filter={"deleted": True, "device": device}, sort=[("image_path", -1)]
     )
     deleted_list = list(deleted_list)
     print(f"Found {len(deleted_list)} deleted images.")
@@ -501,100 +555,142 @@ def get_deleted_images():
 
     final_list = []
     for image in deleted_list:
-        if os.path.exists(f"{DIR}/{image.image_path}"):
+        if os.path.exists(f"{DIR}/{device}/{image.image_path}"):
             final_list.append(image)
 
         if image.timestamp < threshold:
             # Delete image permanently
-            full_path = os.path.join(DIR, image.image_path)
+            full_path = os.path.join(DIR, device, image.image_path)
             print(f"Permanently deleting image: {full_path}")
-            remove_physical_image(image.image_path)
-            remove_from_features(app, image.image_path)
+            remove_physical_image(device, image.image_path)
+            remove_from_features(app, device, image.image_path)
             continue
     return final_list
 
 
 @app.post("/restore-image")
-def restore_image(request: DeleteImageRequest):
+def restore_image(
+    request: DeleteImageRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to restore images.")
+
     image_path = request.image_path
     ImageRecord.update_many(
-        {"image_path": image_path},
+        {"image_path": image_path, "device": device},
         {"$set": {"deleted": False}},
     )
 
 
 @app.delete("/force-delete-image")
-def force_delete_image(request: DeleteImageRequest):
+def force_delete_image(
+    request: DeleteImageRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_path = request.image_path
     print(f"Force deleting image: {image_path}")
-    remove_physical_image(image_path)
-    remove_from_features(app, image_path)
+    remove_physical_image(device, image_path)
+    remove_from_features(app, device, image_path)
 
-def process_segments(date: str):
+
+def process_segments(date: str, device: str):
     segments = ImageRecord.find(
         filter={"date": date, "deleted": False, "activity": ""},
         distinct="segment_id",
     )
     segments = list(segments)
     print(f"Processing {len(segments)} segments for date {date}.")
+    all_summaries = ImageRecord.aggregate(
+        [
+            {
+                "$match": {
+                    "date": date,
+                    "deleted": False,
+                    "activity": {"$ne": ""},
+                    "device": device,
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$segment_id",
+                    "summary": {"$first": "$activity_description"},
+                }
+            },
+        ]
+    )
+    all_summaries = list(all_summaries)[-10:]  # last 10 summaries
+    all_summaries = [s.summary for s in all_summaries]
     for segment_id in tqdm(segments):
         if segment_id is None:
             continue
 
-        describe_segment(
+        new_description = describe_segment(
+            device,
             [
                 img.thumbnail
                 for img in ImageRecord.find(
-                    filter={"segment_id": segment_id, "deleted": False},
+                    filter={"segment_id": segment_id, "deleted": False, "device": device},
                     sort=[("image_path", 1)],
                 )
             ],
             segment_id,
+            extra_info=[
+                "Here are some summaries of other segments from the same day:\n"
+                + "\n".join(all_summaries)
+            ],
         )
+        all_summaries.append(new_description)
+        all_summaries = all_summaries[-10:]  # keep last 10 summaries
 
         DaySummaryRecord.update_one(
-            {"date": date},
+            {"date": date, "device": device},
             {"$set": {"updated": True}},
             upsert=True,
         )
 
 
 @app.get("/process-date")
-def process_date(date: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(process_segments, date)
+def process_date(
+    date: str,
+    device: str,
+    background_tasks: BackgroundTasks,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(status_code=403, detail="Not authorized to process date.")
+    background_tasks.add_task(process_segments, date, device)
     return {"message": f"Processing segments for date {date} in background."}
 
 
 @app.get("/day-summary")
-def get_day_summary(date: str):
+def get_day_summary(
+    date: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access day summary."
+        )
 
-    # summary = []
-    # for segment in activities:
-    #     segment = segment.dict()
-    #     start_time = datetime.fromtimestamp(segment["start_time"] / 1000).strftime(
-    #         "%H:%M:%S"
-    #     )
-    #     end_time = datetime.fromtimestamp(segment["end_time"] / 1000).strftime(
-    #         "%H:%M:%S"
-    #     )
-    #     summary.append(
-    #         SummarySegment(
-    #             segment_index=segment["_id"],
-    #             activity=segment["activity"] or "Unclear",
-    #             start_time=start_time,
-    #             end_time=end_time,
-    #             duration=int((segment["end_time"] - segment["start_time"]) / 1000),
-    #         )
-    #     )
-
-    # return DaySummary(
-    #     date=date,
-    #     segments=summary,
-    # )
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
 
     activities = ImageRecord.aggregate(
         [
-            {"$match": {"date": date, "deleted": False, "segment_id": {"$ne": None}}},
+            {
+                "$match": {
+                    "date": date,
+                    "deleted": False,
+                    "segment_id": {"$ne": None},
+                    "device": device,
+                }
+            },
             {
                 "$group": {
                     "_id": "$segment_id",
@@ -681,6 +777,7 @@ def get_day_summary(date: str):
                             "date": date,
                             "deleted": False,
                             "segment_id": {"$ne": None},
+                            "device": device,
                         }
                     },
                     {
@@ -697,7 +794,7 @@ def get_day_summary(date: str):
             )
 
             day_summary = openai_llm.generate_from_text(
-                "Create a summary of the activities performed during the day based on the following segments. Make it concise and informative. Such as: you spent the morning working, had lunch at 1 PM, spent the afternoon relaxing, and in the evening you went for a walk.\n"
+                "Create a summary of the activities performed during the day based on the following segments. Make it concise and informative (2-3 sentences). Such as: you spent the morning working, had lunch at 1 PM, spent the afternoon relaxing, and in the evening you went for a walk.\n"
                 "Ignore unclear activities.\n"
                 + "\n".join(
                     [
@@ -721,9 +818,78 @@ def get_day_summary(date: str):
         date=date, segments=summary, summary_text=day_summary, updated=updated
     )
     DaySummaryRecord.update_one(
-        {"date": date},
+        {"date": date, "device": device},
         {"$set": summary.model_dump(by_alias=True)},
         upsert=True,
     )
 
     return summary
+
+
+class ChangeSegmentActivityRequest(CamelCaseModel):
+    segment_id: int
+    new_activity_info: str
+
+
+@app.post("/change-segment-activity")
+async def change_segment_activity(
+    request: ChangeSegmentActivityRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    """Change the activity of a specific segment."""
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to change activity."
+        )
+
+    segment = ImageRecord.find_one({"segment_id": request.segment_id})
+    if not segment or segment.segment_id is None:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    all_summaries = ImageRecord.aggregate(
+        [
+            {
+                "$match": {
+                    "date": segment.date,
+                    "deleted": False,
+                    "activity": {"$ne": ""},
+                    "segment_id": {"$lt": request.segment_id},
+                    "device": device,
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$segment_id",
+                    "summary": {"$first": "$activity_description"},
+                }
+            },
+        ]
+    )
+    all_summaries = list(all_summaries)[-10:]  # last 10 summaries
+    all_summaries = [s.summary for s in all_summaries]
+    new_description = describe_segment(
+        device,
+        [
+            img.thumbnail
+            for img in ImageRecord.find(
+                filter={
+                    "segment_id": segment.segment_id,
+                    "deleted": False,
+                    "device": device,
+                },
+                sort=[("image_path", 1)],
+            )
+        ],
+        segment.segment_id,
+        extra_info=[
+            f"The previous activity descriptions were: {', '.join(all_summaries)}.",
+            f"Here is the provide activity information from the camera viewer: {request.new_activity_info}. Incorporate this into the description.",
+        ],
+    )
+
+    DaySummaryRecord.update_one(
+        {"date": segment.date, "device": device},
+        {"$set": {"updated": True}},
+        upsert=True,
+    )

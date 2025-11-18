@@ -21,19 +21,23 @@ def update_app(app: CustomFastAPI):
         get_low_visual_density_indices(app.image_paths)
     )
     low_pocket_indices, images_with_pocket = get_pocket_indices(app.image_paths)
-    app.low_visual_indices = np.unique(
-        np.concatenate([app.low_visual_indices, low_pocket_indices])
-    )
+    for device_id in app.features.keys():
+        app.low_visual_indices[device_id] = np.unique(
+            np.concatenate([app.low_visual_indices[device_id], low_pocket_indices[device_id]])
+        )
+
     app.images_with_low_density = app.images_with_low_density.union(images_with_pocket)
 
     # Segment images excluding deleted and low visual density images
-    load_all_segments(
-        app.features,
-        app.image_paths,
-        set(ImageRecord.find(filter={"deleted": True}, distinct="image_path")).union(
-            app.images_with_low_density
-        ),
-    )
+    for device_id in app.features.keys():
+        load_all_segments(
+            device_id,
+            app.features,
+            app.image_paths,
+            set(ImageRecord.find(filter={"deleted": True}, distinct="image_path")).union(
+                app.images_with_low_density
+            ),
+        )
     return app
 
 def activity_recognition(app: CustomFastAPI):

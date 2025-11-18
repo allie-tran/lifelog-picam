@@ -24,6 +24,7 @@ import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
 import dayjs from 'dayjs';
 import FeedbackComponents from 'components/FeedbackComponents';
+import Admin from 'pages/Admin';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 let theme = createTheme({
@@ -70,6 +71,8 @@ const App = () => {
                                 position: 'fixed',
                                 backgroundColor: 'transparent',
                                 zIndex: 1101,
+                                // allow clicks to pass through
+                                pointerEvents: 'none',
                             }}
                             elevation={0}
                         >
@@ -79,7 +82,12 @@ const App = () => {
                                 onClick={() => {
                                     window.location.href = '/omi/';
                                 }}
-                                sx={{ cursor: 'pointer', color: 'primary.contrastText' }}
+                                sx={{
+                                    pointerEvents: 'auto',
+                                    cursor: 'pointer',
+                                    color: 'primary.contrastText',
+                                    width: 'fit-content',
+                                }}
                             >
                                 <ArrowLeftRounded
                                     sx={{ verticalAlign: 'middle', mt: '-4px' }}
@@ -114,6 +122,12 @@ const App = () => {
                                         path="/similar"
                                         element=<PasswordLock>
                                             <SimilarImages />
+                                        </PasswordLock>
+                                    />
+                                    <Route
+                                        path="/admin"
+                                        element=<PasswordLock>
+                                            <Admin />
                                         </PasswordLock>
                                     />
                                 </Routes>

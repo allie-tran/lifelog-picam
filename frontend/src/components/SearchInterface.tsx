@@ -4,13 +4,15 @@ import ModalWithCloseButton from './ModalWithCloseButton';
 import ImageWithDate from './ImageWithDate';
 import { ImageObject } from '@utils/types'
 import { searchImages } from '../apis/browsing';
+import { useAppSelector } from 'reducers/hooks';
 
 const SearchInterface = () => {
     const [query, setQuery] = React.useState('');
     const [results, setResults] = React.useState<ImageObject[]>([]);
     const [open, setOpen] = React.useState(false);
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const onSearch = (query: string) => {
-        searchImages(query).then((data) => {
+        searchImages(deviceId, query).then((data) => {
             setResults(data);
         });
     };

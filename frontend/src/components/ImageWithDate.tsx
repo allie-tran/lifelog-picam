@@ -4,6 +4,7 @@ import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
 import { deleteImage } from 'apis/browsing';
 import { ImageObject } from '@utils/types';
+import { useAppSelector } from 'reducers/hooks';
 
 const ImageWithDate = ({
     image,
@@ -16,7 +17,8 @@ const ImageWithDate = ({
     extra?: React.ReactNode;
     onDelete?: (image: string) => void;
 }) => {
-    const imageUrl = `${THUMBNAIL_HOST_URL}/${image.thumbnail}`;
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const imageUrl = `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`;
     const formattedDate = dayjs(image.timestamp).format('lll');
 
     return (
@@ -69,7 +71,7 @@ const ImageWithDate = ({
                         size="small"
                         sx={{ minWidth: 32 }}
                         onClick={() => {
-                            deleteImage(image.imagePath);
+                            deleteImage(deviceId, image.imagePath);
                             onDelete && onDelete(image.imagePath);
                         }}
                     >

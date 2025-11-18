@@ -4,9 +4,13 @@ import { loginRequest } from '../apis/auth';
 import { parseErrorResponse } from '../utils/misc';
 import { useCookies } from 'react-cookie';
 import { Link, useNavigate } from 'react-router';
+import { useAppDispatch } from 'reducers/hooks';
+import { login, logout } from 'reducers/auth';
+import axios from 'axios';
 
 const Login = () => {
     const navigate = useNavigate();
+    const dispatch = useAppDispatch();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [cookies, setCookie, removeCookie] = useCookies(['token']);
@@ -25,13 +29,19 @@ const Login = () => {
                 const token = response.data.token;
                 // Save to cookie
                 setCookie('token', token, { path: '/', maxAge: 3600 });
+                axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
                 navigate('/');
+                dispatch(login({
+                    username: response.data.username,
+                    devices: response.data.devices,
+                }));
             })
             .catch((error: any) => {
                 console.error('There was an error loging in!', error);
                 alert(parseErrorResponse(error.response));
                 // remove invalid token
                 removeCookie('token', { path: '/' });
+                dispatch(logout());
             });
     };
 

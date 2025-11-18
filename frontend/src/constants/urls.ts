@@ -7,7 +7,6 @@ if (window.location.hostname === "localhost") {
   IMAGE_HOST_URL = `http://localhost:9000/LifelogPicam/`;
 }
 
-export const THUMBNAIL_HOST_URL = `${IMAGE_HOST_URL}thumbnails/`;
-
+export const THUMBNAIL_HOST_URL = IMAGE_HOST_URL;
 export { BACKEND_URL, IMAGE_HOST_URL };
 

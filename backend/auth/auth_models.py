@@ -8,7 +8,7 @@ from fastapi import HTTPException, Request
 from rich import print
 from dotenv import load_dotenv
 
-from auth.types import CreateUserRequest, LoginRequest, LoginResponse, User
+from auth.types import CreateUserRequest, LoginRequest, LoginResponse, User, AccessLevel
 from configs import REDIS_HOST, REDIS_PORT
 
 load_dotenv()
@@ -22,7 +22,7 @@ def flush_redis() -> None:
     print("Redis flushed")
 
 # flush_redis()
-def create_user(request: CreateUserRequest, overwrite=False) -> None:
+def create_user(request: CreateUserRequest, overwrite=False) -> User:
     """
     Create a new user
     """
@@ -38,6 +38,9 @@ def create_user(request: CreateUserRequest, overwrite=False) -> None:
             "$set": {
                 "password": bcrypt.hashpw(request.password.encode(), bcrypt.gensalt()),
                 "email": request.username,
+                "devices": [
+                    {"device_id": request.username, "access_level": "owner"}
+                ],
             }
         },
         upsert=True,
@@ -46,7 +49,7 @@ def create_user(request: CreateUserRequest, overwrite=False) -> None:
     return find_user_by_username(request.username)
 
 
-def generate_token(username: str) -> str:
+def generate_token(username: str):
     """
     Generate a token for the user
     """
@@ -71,6 +74,7 @@ def verify_user(request: LoginRequest) -> LoginResponse:
     """
     user = User.find_one({"username": request.username})
     if not user:
+        print("User not found:", request.username)
         raise HTTPException(status_code=401, detail="User does not exist")
     if bcrypt.checkpw(request.password.encode(), bytes(user.password, "utf-8")):
         return LoginResponse(
@@ -110,3 +114,19 @@ async def get_user(request: Request) -> User:
     user = find_user_by_username(username)
     return user
 
+def auth_dependency(request: Request):
+    token = request.headers.get("Authorization")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = token.replace("Bearer ", "")
+    data = verify_token(token)
+    user = find_user_by_username(data["username"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User does not exist")
+    devices = user.devices or []
+    device = request.query_params.get("device")
+    print("Authenticating device:", device, "for user:", user)
+    for d in user.devices:
+        if d.device_id == device:
+            return d.access_level
+    return AccessLevel.NONE

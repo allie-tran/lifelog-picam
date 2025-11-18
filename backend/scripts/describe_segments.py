@@ -4,7 +4,7 @@ import traceback
 import io
 from PIL import Image
 
-from constants import DIR
+from constants import THUMBNAIL_DIR
 from database.types import ImageRecord
 from google.genai.errors import ClientError, ServerError
 from partialjson.json_parser import JSONParser
@@ -85,7 +85,7 @@ def get_description_from_frames(
 ) -> dict[str, str] | None:
     description = openai_llm.generate_from_mixed_media(
         get_visual_content(image_bytes)
-        + [MixedContent(type="text", content=instructions[0])],
+        + [MixedContent(type="text", content=instructions) for instructions in instructions]
     )
     description = str(description)
     description_text = description.strip()
@@ -113,7 +113,9 @@ def get_rewritten_description(description, instructions: list[str] = []):
         return description
 
 
-PROMPT = """Describe and classify the activity being performed in the following images into one of the predefined categories.
+PROMPT = """
+These are photos captured from a POV camera worn by me.
+Describe and classify the activity being performed in the following images into one of the predefined categories.
 {categories_list}
 
 Return with the following format:
@@ -128,7 +130,7 @@ Return with the following format:
 """
 
 
-def describe_segment(segment: list[str], segment_idx: int):
+def describe_segment(device: str, segment: list[str], segment_idx: int, extra_info: list[str] = []):
     image_bytes = []
     if len(segment) > 20:
         segment = [segment[i] for i in sorted(random.sample(range(len(segment)), 20))]
@@ -138,6 +140,8 @@ def describe_segment(segment: list[str], segment_idx: int):
         # Read webp then convert to jpeg and send bytes
         # img = open(f"{DIR}/{image_path}", "rb").read()
         # image_bytes.append(img)
+        if THUMBNAIL_DIR not in image_path:
+            image_path = f"{THUMBNAIL_DIR}/{device}/{image_path}"
         image = Image.open(image_path).convert("RGB")
         buf = io.BytesIO()
         image.save(buf, format="JPEG")
@@ -158,7 +162,7 @@ def describe_segment(segment: list[str], segment_idx: int):
                     PROMPT.format(
                         categories_list="\n".join([f"- {c}" for c in CATEGORIES.keys()])
                     )
-                ],
+                ] + extra_info,
                 image_bytes,
             )
 
@@ -185,7 +189,7 @@ def describe_segment(segment: list[str], segment_idx: int):
 
     print(f"Segment {segment_idx}: {final_category}")
     ImageRecord.update_many(
-        filter={"segment_id": segment_idx},
+        filter={"segment_id": segment_idx, "device": device},
         data={
             "$set": {
                 "activity": final_category,
@@ -194,3 +198,4 @@ def describe_segment(segment: list[str], segment_idx: int):
             }
         },
     )
+    return description

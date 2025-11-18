@@ -6,7 +6,7 @@ import { ImageZoom } from 'components/ImageZoom';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useAppDispatch } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 
@@ -19,6 +19,7 @@ const toTimestamp = (imagePath: string): number => {
 
 const SimilarImages = () => {
     const [searchParams, _] = useSearchParams();
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const dispatch = useAppDispatch();
 
     const image: ImageObject = {
@@ -30,7 +31,7 @@ const SimilarImages = () => {
 
     const { data, isLoading } = useSWR(
         ['similar-images', searchParams.get('image')],
-        () => similarImages(searchParams.get('image') || ''),
+        () => similarImages(deviceId, searchParams.get('image') || ''),
         {
             revalidateOnFocus: false,
         }

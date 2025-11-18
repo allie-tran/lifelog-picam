@@ -1,8 +1,9 @@
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, Dict, Literal, TypeVar
 from fastapi import FastAPI
 from datetime import datetime
 import numpy as np
 import numpy.typing as npt
+from collections import defaultdict
 
 from dependencies import CamelCaseModel
 
@@ -16,16 +17,16 @@ Array3x3 = Annotated[npt.NDArray[DType], Literal[3, 3]]
 ArrayNxNx3 = Annotated[npt.NDArray[DType], Literal["N", "N", 3]]
 
 class CustomFastAPI(FastAPI):
-    features: Array2D[np.float64 | np.float32]
-    image_paths: list[str]
+    features: Dict[str, Array2D[np.float64 | np.float32]]
+    image_paths: Dict[str, list[str]]
 
-    retrieved_videos: np.ndarray  # Indices of retrieved videos for QB norm
-    normalizing_sum: np.ndarray  # Normalizing sum for QB norm
-    low_visual_indices: np.ndarray  # Indices of low visual density images
+    retrieved_videos: Dict[str, np.ndarray]  # Indices of retrieved videos for QB norm
+    normalizing_sum: Dict[str, np.ndarray]  # Normalizing sum for QB norm
+    low_visual_indices: Dict[str, np.ndarray]  # Indices of low visual density images
     images_with_low_density: set[str] = set()
 
-    segments: list[list[str]] = []
-    image_to_segment: dict[str, int] = {}
+    segments: Dict[str, list[list[str]]] = defaultdict(list)
+    image_to_segment: Dict[str, dict[str, int]] = defaultdict(dict)
 
     last_saved: datetime = datetime.now()
 
@@ -42,3 +43,4 @@ class DaySummary(CamelCaseModel):
     segments: list[SummarySegment] = []
     summary_text: str = ""
     updated: bool = False
+    device: str = ""

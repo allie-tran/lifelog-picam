@@ -1,5 +1,4 @@
 import numpy as np
-import pickle
 import os
 from app_types import Array1D
 from visual import siglip_model
@@ -55,12 +54,28 @@ def load_qb_norm_features(features):
     )
 
     # Step 1: Precompute with training queries and dataset features
-    train_test = query_features @ features.T
+    merged_features = np.concatenate([features[device_id] for device_id in features.keys()], axis=0)
+    train_test = query_features @ merged_features.T  # shape: (M, I)
     train_test_exp = np.exp(train_test * beta)
-    retrieved_videos = get_retrieved_images(train_test_exp, k)
-    normalizing_sum = np.sum(a=train_test_exp, axis=0)
+    all_retrieved_videos = get_retrieved_images(train_test_exp, k)
+    all_normalizing_sum = np.sum(a=train_test_exp, axis=0)
 
-    print(f"Loaded QB-Norm features with {len(retrieved_videos)} retrieved videos.")
+    print(f"Loaded QB-Norm features with retrieved videos.")
+
+    # split per devices
+    retrieved_videos = {}
+    normalizing_sum = {}
+    start_idx = 0
+    for device_id, device_features in features.items():
+        end_idx = start_idx + device_features.shape[0]
+        device_retrieved_videos = all_retrieved_videos[
+            (all_retrieved_videos >= start_idx) & (all_retrieved_videos < end_idx)
+        ] - start_idx
+        device_normalizing_sum = all_normalizing_sum[start_idx:end_idx]
+        retrieved_videos[device_id] = device_retrieved_videos
+        normalizing_sum[device_id] = device_normalizing_sum
+        start_idx = end_idx
+
     return retrieved_videos, normalizing_sum
 
 

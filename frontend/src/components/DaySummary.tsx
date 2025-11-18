@@ -3,16 +3,18 @@ import { SummarySegment } from '@utils/types';
 import { getDaySummary, processDate } from 'apis/process';
 import CATEGORIES from 'constants/activityColors';
 import { useSearchParams } from 'react-router';
+import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import 'utils/animation.css';
 
 const DaySummary = () => {
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
     const { data: daySummary } = useSWR(
-        date ? `day-summary-${date}` : null,
-        () => (date ? getDaySummary(date) : null),
+        {date, deviceId},
+        () => (date ? getDaySummary(deviceId, date) : null),
         {
             revalidateOnFocus: false,
         }
@@ -26,7 +28,7 @@ const DaySummary = () => {
             <Button
                 variant="contained"
                 onClick={() =>
-                    processDate(date || '').then(() => {
+                    processDate(deviceId, date || '').then(() => {
                         alert(
                             'The day is being processed. Please refresh later.'
                         );

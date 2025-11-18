@@ -10,15 +10,16 @@ import { ImageObject } from '@utils/types';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import { setLoading } from 'reducers/feedback';
-import { useAppDispatch } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
 const DeletedImages = () => {
     const dispatch = useAppDispatch();
     const [results, setResults] = React.useState<ImageObject[]>([]);
     const [open, setOpen] = React.useState(false);
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
     const fetchImages = () => {
-        getDeletedImages().then((data) => {
+        getDeletedImages(deviceId).then((data) => {
             setResults(data);
             dispatch(setLoading(false));
         });
@@ -55,7 +56,7 @@ const DeletedImages = () => {
                                     sx={{ minWidth: 32 }}
                                     onClick={() => {
                                         dispatch(setLoading(true));
-                                        restoreImage(image.imagePath).then(() =>
+                                        restoreImage(deviceId, image.imagePath).then(() =>
                                             fetchImages()
                                         );
                                     }}
@@ -65,7 +66,7 @@ const DeletedImages = () => {
                             }
                             onDelete={(image) => {
                                 dispatch(setLoading(true));
-                                forceDeleteImage(image).then(() =>
+                                forceDeleteImage(deviceId, image).then(() =>
                                     fetchImages()
                                 );
                             }}

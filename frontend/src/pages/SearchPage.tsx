@@ -8,15 +8,16 @@ import SearchBar from 'components/SearchBar';
 import { ImageZoom } from 'components/ImageZoom';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import { useState } from 'react';
-import { useAppDispatch } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, _] = useSearchParams();
     const query = searchParams.get('query') || '';
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const { data, isLoading } = useSWR(
         ['search', query],
-        () => searchImages(query),
+        () => searchImages(deviceId, query),
         {
             revalidateOnFocus: false,
         }

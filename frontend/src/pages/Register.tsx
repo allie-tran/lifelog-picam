@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createUserRequest } from '../apis/auth';
 import { Button, Stack, TextField, Typography } from '@mui/material';
 import { parseErrorResponse } from '../utils/misc';
-import { Link, Navigate, useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 
 const Register = () => {
     const navigate = useNavigate();

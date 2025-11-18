@@ -4,3 +4,4 @@ siglip_features.npz
 deleted_images.txt
 auth.log
 *.pt
+features/

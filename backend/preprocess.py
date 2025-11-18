@@ -5,17 +5,17 @@ import numpy as np
 from PIL import Image
 
 from database.types import ImageRecord, ObjectDetection
-from constants import DIR
+from constants import DIR, THUMBNAIL_DIR
 from scripts.querybank_norm import BETA, apply_qb_norm_to_query
 from visual import siglip_model
 from typing import List
 
-os.makedirs(f"{DIR}/thumbnails", exist_ok=True)
+os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 
 def compress_image(image_path, quality=85):
     rel_path = image_path.replace(DIR + "/", "")
-    output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
+    output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     if os.path.exists(output_path):
         return output_path
 
@@ -26,7 +26,7 @@ def compress_image(image_path, quality=85):
     img.save(output_path, "WEBP", quality=quality)
     return output_path
 
-def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
+def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
     image = Image.open(image_path)
     for box in boxes:
         x1, y1, x2, y2 = box.bbox
@@ -48,16 +48,20 @@ def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
         except Exception as e:
             print(f"Error blurring region ({x1}, {y1}, {x2}, {y2}): {e}")
             continue
+    return image
+
+def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
+    image = get_blurred_image(image_path, boxes, blur_strength)
     # save in webp format
     image.thumbnail((800, 800))
     rel_path = image_path.replace(DIR + "/", "")
-    output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
+    output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     image.save(output_path, "WEBP")
 
 def make_video_thumbnail(video_path, quality=85):
     rel_path = video_path.replace(DIR + "/", "")
-    output_path = f"{DIR}/thumbnails/{rel_path.rsplit('.', 1)[0]}.webp"
+    output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     if os.path.exists(output_path):
         return output_path
 
@@ -72,67 +76,73 @@ def make_video_thumbnail(video_path, quality=85):
     return output_path
 
 
+feature_dir = "features"
 feature_path = "siglip_features.npz"
 DIM = 1152
 
 
 def load_features():
     try:
-        data = np.load(feature_path, allow_pickle=True)
-        features = data["features"]
-        image_paths = data["image_paths"].tolist()
-        min_value = min(len(image_paths), features.shape[0])
-        features = features[:min_value]
-        image_paths = image_paths[:min_value]
-        assert (
-            features.shape[1] == DIM
-        ), f"Feature dimension mismatch: {features.shape[1]} != {DIM}"
-        assert len(features) == len(
-            image_paths
-        ), f"{len(features)} != {len(image_paths)}"
+        features = {}
+        image_paths = {}
+        devices = [f.split(".")[0] for f in os.listdir(feature_dir)]
+        for device in devices:
+            data = np.load(f"{feature_dir}/{device}.features.npz", allow_pickle=True)
+            features[device] = data["features"]
+            image_paths[device] = data["image_paths"].tolist()
 
-        # Sort by image paths
-        sorted_indices = np.argsort(image_paths)
-        features = features[sorted_indices]
-        image_paths = [image_paths[i] for i in sorted_indices]
+            min_value = min(len(image_paths[device]), features[device].shape[0])
+            features[device] = features[device][:min_value]
+            image_paths[device] = image_paths[device][:min_value]
 
-        print(f"Loaded {len(image_paths)} features.")
+            sorted_indices = np.argsort(image_paths[device])
+            features[device] = features[device][sorted_indices]
+            image_paths[device] = [image_paths[device][i] for i in sorted_indices]
+            print(f"Loaded {len(image_paths[device])} features for device {device}")
+
     except FileNotFoundError:
-        features, image_paths = np.empty((0, DIM), dtype=np.float32), []
+        features, image_paths = {}, {}
     return features, image_paths
 
 
 def save_features(features, image_paths):
-    # Sort by image paths
-    sorted_indices = np.argsort(image_paths)
-    features = features[sorted_indices]
-    image_paths = [image_paths[i] for i in sorted_indices]
-    np.savez_compressed(feature_path, features=features, image_paths=image_paths)
+    for device in features.keys():
+        min_value = min(len(image_paths[device]), features[device].shape[0])
+        features[device] = features[device][:min_value]
+        image_paths[device] = image_paths[device][:min_value]
+        sorted_indices = np.argsort(image_paths[device])
+        features[device] = features[device][sorted_indices]
+        image_paths[device] = [image_paths[device][i] for i in sorted_indices]
+        np.savez_compressed(
+            f"{feature_dir}/{device}.features.npz",
+            features=features[device],
+            image_paths=image_paths[device],
+        )
     return features, image_paths
 
-
-def encode_image(image_path: str, features, image_paths):
-    image_paths = image_paths[:len(features)]
+def encode_image(device_id: str, image_path: str, features, image_paths):
+    image_paths[device_id] = image_paths[device_id][:len(features[device_id])]
     try:
-        path = f"{DIR}/{image_path}"
+        path = f"{DIR}/{device_id}/{image_path}"
         if image_path.endswith(".mp4") or image_path.endswith(".h264"):
             # use video thumbnail
-            new_path = make_video_thumbnail(f"{DIR}/{image_path}")
+            new_path = make_video_thumbnail(f"{DIR}/{device_id}/{image_path}")
             if new_path:
                 path = new_path
 
         vector = siglip_model.encode_image(path)
-        image_paths.append(image_path)
+        image_paths[device_id].append(image_path)
         if len(vector.shape) == 0:
             vector = vector.reshape(1, -1)
-        features = np.vstack([features, vector])
+        features[device_id] = np.vstack([features[device_id], vector])
         # assert len(features) == len(image_paths), f"{len(features)} != {len(image_paths)}"
         return vector, features, image_paths
-    except Exception as e:
+    except Exception:
         return None, features, image_paths
 
 
 def retrieve_image(
+    device_id: str,
     text: str,
     features,
     image_paths,
@@ -174,6 +184,7 @@ def retrieve_image(
     results = []
     for idx in top_indices:
         results.append(ImageRecord(
+            device=device_id,
             image_path=image_paths[idx],
             date=image_paths[idx].split("/")[0],
             thumbnail=image_paths[idx]
@@ -187,6 +198,7 @@ def retrieve_image(
 
 
 def get_similar_images(
+    device_id: str,
     image: str,
     features,
     image_paths,
@@ -204,7 +216,10 @@ def get_similar_images(
     if image in image_paths:
         query_vector = features[image_paths.index(image)]
     else:
-        query_vector, _, _ = encode_image(image, np.empty((0, DIM)), [])
+        query_vector, _, _ = encode_image(device_id, image, np.empty((0, DIM)), [])
+        if query_vector is None:
+            print("Failed to encode image:", image)
+            return []
         query_vector = query_vector / np.linalg.norm(query_vector)
 
     # Apply query bank normalization
@@ -233,6 +248,7 @@ def get_similar_images(
     for idx in top_indices:
         results.append(
             ImageRecord(
+                device=device_id,
                 image_path=image_paths[idx],
                 date=image_paths[idx].split("/")[0],
                 thumbnail=image_paths[idx]

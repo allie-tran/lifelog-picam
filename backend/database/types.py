@@ -38,6 +38,7 @@ class ProcessedInfo(BaseModel):
     encoded: bool = False
 
 class ImageRecord(Document, CamelCaseModel):
+    device: str
     image_path: str # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
     timestamp: float  # ISO 8601 format
     thumbnail: str
