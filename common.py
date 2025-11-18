@@ -2,6 +2,10 @@ import os
 from datetime import datetime
 
 import requests
+from pydotenv import load_dotenv
+
+load_dotenv()
+device_id = os.getenv("DEVICE_ID", "omi")
 
 BACKEND_URL = "https://dcu.allietran.com/omi/be"
 UPLOAD_URL = "https://dcu.allietran.com/omi/be/upload-image"
@@ -25,7 +29,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
             "file": (os.path.basename(image_path), img_file, "image/jpeg"),
             "timestamp": (None, str(timestamp)),
         }
-        response = requests.put(UPLOAD_URL, files=files)
+        response = requests.put(UPLOAD_URL, files=files, headers={"X-Device-ID": device_id})
 
     if response.status_code == 200:
         print(f"Uploaded: {image_path}")
@@ -51,7 +55,7 @@ def send_video(video_path, uploaded_files, LOG_FILE):
             "file": (os.path.basename(video_path), vid_file, "video/h264"),
             # "timestamp": (None, str(timestamp)),
         }
-        response = requests.put(UPLOAD_VIDEO_URL, files=files)
+        response = requests.put(UPLOAD_VIDEO_URL, files=files, headers={"X-Device-ID": device_id})
 
     if response.status_code == 200:
         print(f"Uploaded: {video_path}")
