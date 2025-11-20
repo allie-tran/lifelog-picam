@@ -28,5 +28,13 @@ export const getDaySummary = async (deviceId: string, dateString: string) => {
         date: string;
         segments: SummarySegment[];
         summaryText: string;
+        aloneMinutes: number;
+        socialMinutes: number;
+        categoryMinutes: {[key: string]: number};
+        foodDrinkMinutes: number;
+        foodDrinkImages: string[];
+        foodDrinkSummary: string;
+        totalImages: number;
+        totalMinutes: number;
     };
 }

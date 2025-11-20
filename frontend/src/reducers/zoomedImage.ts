@@ -15,7 +15,6 @@ export const zoomedImageSlice = createSlice({
     initialState,
     reducers: {
         setZoomedImage: (state, action: PayloadAction<ZoomedImageState>) => {
-            console.log('Zoomed image set to:', state.image);
             state.image = action.payload.image;
             state.isVideo = action.payload.isVideo;
         },

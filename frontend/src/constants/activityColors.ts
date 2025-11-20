@@ -1,4 +1,4 @@
-const CATEGORIES: Record<string, string> = {
+export const CATEGORIES: Record<string, string> = {
     // Work – Research & Writing
     'Paper Writing': '#F1FA8C',
     'Grant Writing': '#F1FA8C',
@@ -70,5 +70,15 @@ const CATEGORIES: Record<string, string> = {
     'No Activity': 'transparent',
 }
 
-export default CATEGORIES;
+export const THEME_COLORS : Record<string, string> = {
+    "Work – Research & Writing": "#F1FA8C",
+    "Meetings & Collaboration": "#50FA7B",
+    "Teaching & Outreach": "#FFB86C",
+    "Travel": "#6272A4",
+    "Food & Drink": "#FF5555",
+    "Leisure & Wellbeing": "#8BE9FD",
+    "Social & Personal": "#BD93F9",
+    "Sleep / Downtime": "#2c3e50",
+    "Miscellaneous": "#95a5a6",
+}
 

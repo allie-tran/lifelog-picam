@@ -41,6 +41,7 @@ import { AdminPanelSettingsRounded, SearchRounded } from '@mui/icons-material';
 import { setLoading } from 'reducers/feedback';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import { changeSegmentActivity } from 'apis/process';
+import { AccessLevel } from 'types/auth';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -77,6 +78,7 @@ function MainPage() {
     const date = searchParams.get('date');
 
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const { username, deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
     const [hour, setHour] = React.useState<number | null>(null);
     const [segmentToEdit, setSegmentToEdit] = React.useState<number | null>(
@@ -85,9 +87,29 @@ function MainPage() {
     const [activityEditText, setActivityEditText] = React.useState<string>('');
 
     const dispatch = useAppDispatch();
-    const { data, error, mutate } = useSWR(
-        [page, date, hour],
-        () => getImagesByHour(deviceId, date || '', hour || 0, page),
+    const { data, mutate } = useSWR(
+        [page, date, hour, deviceId, deviceAccess],
+        async () => {
+            if (
+                deviceAccess === AccessLevel.ADMIN ||
+                deviceAccess === AccessLevel.OWNER
+            ) {
+                return await getImagesByHour(
+                    deviceId,
+                    date || '',
+                    hour || 0,
+                    page
+                );
+            } else {
+                return {
+                    images: [],
+                    segments: [],
+                    available_hours: [],
+                    date: date || '',
+                    total_pages: 1,
+                };
+            }
+        },
         {
             revalidateOnFocus: false,
         }
@@ -219,9 +241,13 @@ function MainPage() {
                         </Button>
                     ))}
                 </Stack>
-                {segments.length === 0 && images && images.length === 0 && (
-                    <div>No images found for this date/hour.</div>
-                )}
+                {segments.length === 0 &&
+                    images &&
+                    images.length === 0 &&
+                    (deviceAccess === AccessLevel.ADMIN ||
+                        deviceAccess === AccessLevel.OWNER) && (
+                        <div>No images found for this date/hour.</div>
+                    )}
                 <Stack spacing={2} sx={{ width: '100%' }}>
                     {segments.map((segment, index) => {
                         const firstImage = segment[0];
