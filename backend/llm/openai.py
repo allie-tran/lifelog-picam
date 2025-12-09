@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 from openai.types.responses import ResponseInputParam
-from scripts.llm import LLM, MixedContent
+from llm.gemini import LLM, MixedContent
 from google.genai.types import Content, Part  # type: ignore
 from partialjson.json_parser import JSONParser
 from pydantic import BaseModel

@@ -1,15 +1,16 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi_limiter.depends import RateLimiter
 from typing import Annotated
 
 from auth.auth_models import (
     auth_dependency,
+    get_user,
     create_user,
     find_user_by_username,
     verify_token,
     verify_user,
 )
-from auth.types import AccessChangeRequest, CreateUserRequest, DeviceAccess, LoginRequest, LoginResponse, User, UserResponse
+from auth.types import AccessChangeRequest, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
 
 auth_app = FastAPI()
 
@@ -33,7 +34,7 @@ def register(request: CreateUserRequest):
         try:
             res = create_user(request)
             f.write(f" - success\n")
-            return { "success": True }
+            return res
         except Exception as e:
             f.write(f" - failed: {str(e)}\n")
             raise e
@@ -59,7 +60,7 @@ def verify(token: str):
 
 
 @auth_app.get("/users", response_model=list[UserResponse], dependencies=[Depends(auth_dependency)])
-def get_users(user: Annotated[User, Depends(auth_dependency)]):
+def get_users(user: Annotated[User, Depends(get_user)]):
     """
     Endpoint to get all users
     """
@@ -68,8 +69,8 @@ def get_users(user: Annotated[User, Depends(auth_dependency)]):
     users = list(User.find({}))
     return [UserResponse.model_validate(u.model_dump()) for u in users]
 
-@auth_app.post("/change-access", dependencies=[Depends(auth_dependency)])
-def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User, Depends(auth_dependency)]):
+@auth_app.post("/change-access", dependencies=[Depends(get_user)])
+def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User, Depends(get_user)]):
     """
     Endpoint to change user access levels for devices
     """
@@ -95,3 +96,4 @@ def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User,
         },
     )
     return True
+

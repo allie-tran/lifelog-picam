@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks
 from app_types import DaySummary, SummarySegment
 from endpoints.database import process_segments
 from database.types import DaySummaryRecord, ImageRecord
-from scripts.openai import openai_llm
+from llm import llm, MixedContent, get_visual_content
 
 annotations = APIRouter()
 
@@ -121,7 +121,7 @@ def get_day_summary(date: str):
                 ]
             )
 
-            day_summary = openai_llm.generate_from_text(
+            day_summary = llm.generate_from_text(
                 "Create a summary of the activities performed during the day based on the following segments. Make it concise and informative. Such as: you spent the morning working, had lunch at 1 PM, spent the afternoon relaxing, and in the evening you went for a walk.\n"
                 "Ignore unclear activities.\n"
                 + "\n".join(
@@ -132,8 +132,6 @@ def get_day_summary(date: str):
                     ]
                 )
             )
-            print("Day Summary LLM Response:")
-            print(day_summary)
             day_summary = str(day_summary).strip()
             updated = False
 

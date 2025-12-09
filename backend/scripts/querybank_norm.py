@@ -1,10 +1,12 @@
-import numpy as np
 import os
-from app_types import Array1D
-from visual import siglip_model
+
+import numpy as np
+from app_types import AppFeatures, Array1D
 from tqdm.auto import tqdm
+from visual import siglip_model
 
 os.makedirs("files/QB_norm", exist_ok=True)
+
 
 # Returns list of retrieved top k videos based on the sims matrix
 def get_retrieved_images(sims, k):
@@ -32,7 +34,9 @@ def load_query_features():
     queries = [line.strip() for line in open("files/queries.txt").readlines()]
 
     # Add random queries from LLM
-    queries += [line.strip() for line in open("files/Lifelog_Activity_List.csv").readlines()]
+    queries += [
+        line.strip() for line in open("files/Lifelog_Activity_List.csv").readlines()
+    ]
     query_features = []
     for text in tqdm(queries, desc="Encoding queries"):
         query_vector = siglip_model.encode_text(text, normalize=True)
@@ -41,10 +45,12 @@ def load_query_features():
     np.save(f"files/QB_norm/query_features.npy", query_features)
     return query_features
 
+
 BETA = 20
 k = 1000
 
-def load_qb_norm_features(features):
+
+def load_qb_norm_features(features: AppFeatures):
     # Precompute once for all test queries
     beta = BETA
 
@@ -54,7 +60,13 @@ def load_qb_norm_features(features):
     )
 
     # Step 1: Precompute with training queries and dataset features
-    merged_features = np.concatenate([features[device_id] for device_id in features.keys()], axis=0)
+    features_list = []
+    for device in features.keys():
+        feat = features[device]["siglip"].features
+        if len(feat) == 0:
+            continue
+        features_list.append(feat)
+    merged_features = np.concatenate(features_list, axis=0)
     train_test = query_features @ merged_features.T  # shape: (M, I)
     train_test_exp = np.exp(train_test * beta)
     all_retrieved_videos = get_retrieved_images(train_test_exp, k)
@@ -66,11 +78,15 @@ def load_qb_norm_features(features):
     retrieved_videos = {}
     normalizing_sum = {}
     start_idx = 0
-    for device_id, device_features in features.items():
+    for device_id in features.keys():
+        device_features = features[device_id]["siglip"].features
         end_idx = start_idx + device_features.shape[0]
-        device_retrieved_videos = all_retrieved_videos[
-            (all_retrieved_videos >= start_idx) & (all_retrieved_videos < end_idx)
-        ] - start_idx
+        device_retrieved_videos = (
+            all_retrieved_videos[
+                (all_retrieved_videos >= start_idx) & (all_retrieved_videos < end_idx)
+            ]
+            - start_idx
+        )
         device_normalizing_sum = all_normalizing_sum[start_idx:end_idx]
         retrieved_videos[device_id] = device_retrieved_videos
         normalizing_sum[device_id] = device_normalizing_sum
@@ -93,7 +109,10 @@ def apply_qb_norm_to_query(
     # (currently (N,)) -> (N + n, 1)
     max_norm = max(normalizing_sum)
     normalizing_sum = np.concatenate(
-        [normalizing_sum, np.ones(test_test_exp.shape[1] - normalizing_sum.shape[0]) * max_norm],
+        [
+            normalizing_sum,
+            np.ones(test_test_exp.shape[1] - normalizing_sum.shape[0]) * max_norm,
+        ],
         axis=0,
     )
 

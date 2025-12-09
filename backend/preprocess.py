@@ -1,17 +1,17 @@
 import os
-
-from PIL import Image, ImageFilter
-import numpy as np
-from PIL import Image
-
-from database.types import ImageRecord, ObjectDetection
-from constants import DIR, THUMBNAIL_DIR
-from scripts.querybank_norm import BETA, apply_qb_norm_to_query
-from visual import siglip_model
 from typing import List
 
-os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+import numpy as np
+from PIL import Image, ImageFilter
 
+from app_types import AppFeatures, CLIPFeatures, DeviceFeatures, ObjectDetection
+from constants import DIR, THUMBNAIL_DIR
+from database.types import ImageRecord
+from scripts.conclip import conclip
+from scripts.querybank_norm import BETA, apply_qb_norm_to_query
+from visual import siglip_model
+
+os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 def compress_image(image_path, quality=85):
     rel_path = image_path.replace(DIR + "/", "")
@@ -25,6 +25,7 @@ def compress_image(image_path, quality=85):
     img.thumbnail((800, 800))
     img.save(output_path, "WEBP", quality=quality)
     return output_path
+
 
 def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
     image = Image.open(image_path)
@@ -40,15 +41,20 @@ def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_streng
         try:
             # adjusting the strength of the blur based on box size
             box_area = (x2 - x1) * (y2 - y1)
-            adjusted_blur_strength = int(blur_strength * (box_area / (image.width * image.height))) * 100
-            print(f"Blurring region ({x1}, {y1}, {x2}, {y2}) with strength {adjusted_blur_strength}")
+            adjusted_blur_strength = (
+                int(blur_strength * (box_area / (image.width * image.height))) * 100
+            )
+            adjusted_blur_strength = max(30, min(adjusted_blur_strength, 1000))
             region = image.crop((x1, y1, x2, y2))
-            blurred_region = region.filter(ImageFilter.GaussianBlur(max(30, adjusted_blur_strength)))
+            blurred_region = region.filter(
+                ImageFilter.GaussianBlur(radius=adjusted_blur_strength)
+            )
             image.paste(blurred_region, (x1, y1))
         except Exception as e:
             print(f"Error blurring region ({x1}, {y1}, {x2}, {y2}): {e}")
             continue
     return image
+
 
 def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
     image = get_blurred_image(image_path, boxes, blur_strength)
@@ -59,7 +65,8 @@ def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     image.save(output_path, "WEBP")
 
-def make_video_thumbnail(video_path, quality=85):
+
+def make_video_thumbnail(video_path):
     rel_path = video_path.replace(DIR + "/", "")
     output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     if os.path.exists(output_path):
@@ -81,47 +88,72 @@ feature_path = "siglip_features.npz"
 DIM = 1152
 
 
-def load_features():
+def load_features() -> AppFeatures:
+    app_features = AppFeatures()
     try:
-        features = {}
-        image_paths = {}
-        devices = [f.split(".")[0] for f in os.listdir(feature_dir)]
-        for device in devices:
-            data = np.load(f"{feature_dir}/{device}.features.npz", allow_pickle=True)
-            features[device] = data["features"]
-            image_paths[device] = data["image_paths"].tolist()
+        for device in os.listdir(feature_dir):
+            device_features = DeviceFeatures()
+            models = [
+                f.split(".")[0]
+                for f in os.listdir(f"{feature_dir}/{device}")
+                if f.endswith(".features.npz")
+            ]
+            for model in models:
+                data = np.load(
+                    f"{feature_dir}/{device}/{model}.features.npz", allow_pickle=True
+                )
+                features = data["features"]
+                image_paths = data["image_paths"].tolist()
 
-            min_value = min(len(image_paths[device]), features[device].shape[0])
-            features[device] = features[device][:min_value]
-            image_paths[device] = image_paths[device][:min_value]
 
-            sorted_indices = np.argsort(image_paths[device])
-            features[device] = features[device][sorted_indices]
-            image_paths[device] = [image_paths[device][i] for i in sorted_indices]
-            print(f"Loaded {len(image_paths[device])} features for device {device}")
+                # Check if files exist: !TODO
 
+                print(
+                    f"Loaded {len(image_paths)} features for device {device}, model {model}"
+                )
+                device_features[model] = CLIPFeatures(
+                    features=features,
+                    image_paths=image_paths,
+                    image_paths_to_index={
+                        path: idx for idx, path in enumerate(image_paths)
+                    },
+                )
+            app_features[device] = device_features
     except FileNotFoundError:
-        features, image_paths = {}, {}
-    return features, image_paths
+        print("No existing features found.")
+    return app_features
 
 
-def save_features(features, image_paths):
+def save_features(features: AppFeatures):
     for device in features.keys():
-        min_value = min(len(image_paths[device]), features[device].shape[0])
-        features[device] = features[device][:min_value]
-        image_paths[device] = image_paths[device][:min_value]
-        sorted_indices = np.argsort(image_paths[device])
-        features[device] = features[device][sorted_indices]
-        image_paths[device] = [image_paths[device][i] for i in sorted_indices]
-        np.savez_compressed(
-            f"{feature_dir}/{device}.features.npz",
-            features=features[device],
-            image_paths=image_paths[device],
-        )
-    return features, image_paths
+        for model in features[device].keys():
+            feats = features[device][model]
+            print(
+                f"Saving {len(feats.image_paths)}, {feats.features.shape} features for device {device}, model {model}"
+            )
+            min_value = min(len(feats.image_paths), feats.features.shape[0])
+            feats.features = feats.features[:min_value]
+            feats.image_paths = feats.image_paths[:min_value]
+            sorted_indices = np.argsort(feats.image_paths)
+            feats.features = feats.features[sorted_indices]
+            feats.image_paths = [feats.image_paths[i] for i in sorted_indices]
 
-def encode_image(device_id: str, image_path: str, features, image_paths):
-    image_paths[device_id] = image_paths[device_id][:len(features[device_id])]
+            np.savez_compressed(
+                f"{feature_dir}/{device}/{model}.features.npz",
+                features=feats.features,
+                image_paths=feats.image_paths,
+            )
+    return features
+
+
+def encode_image(
+    device_id: str,
+    image_path: str,
+    features: CLIPFeatures,
+    model_name="siglip",
+):
+    model = siglip_model if model_name == "siglip" else conclip
+    features.image_paths = features.image_paths[: len(features.features)]
     try:
         path = f"{DIR}/{device_id}/{image_path}"
         if image_path.endswith(".mp4") or image_path.endswith(".h264"):
@@ -130,112 +162,153 @@ def encode_image(device_id: str, image_path: str, features, image_paths):
             if new_path:
                 path = new_path
 
-        vector = siglip_model.encode_image(path)
-        image_paths[device_id].append(image_path)
+        vector = model.encode_image(path)
+        features.image_paths.append(image_path)
         if len(vector.shape) == 0:
             vector = vector.reshape(1, -1)
-        features[device_id] = np.vstack([features[device_id], vector])
+        if features.features.shape[0] == 0:
+            features.features = vector
+        else:
+            features.features = np.vstack([features.features, vector])
+        features.image_paths_to_index[image_path] = len(features.image_paths) - 1
         # assert len(features) == len(image_paths), f"{len(features)} != {len(image_paths)}"
-        return vector, features, image_paths
-    except Exception:
-        return None, features, image_paths
+        return vector, features
+    except Exception as e:
+        print(e)
+        print(f"Error encoding image {image_path}")
+        if os.path.exists(f"{DIR}/{device_id}/{image_path}"):
+            os.remove(f"{DIR}/{device_id}/{image_path}")
+        return None, features
 
 
 def retrieve_image(
     device_id: str,
     text: str,
-    features,
-    image_paths,
+    feats,
+    paths,
     deleted_images: set[str],
     k=100,
     retrieved_videos=None,
     normalizing_sum=None,
     remove=np.array([]),
 ):
-    if len(features) == 0:
+    if len(feats) == 0:
         print("No features available.")
-        return []
+        return {}
 
-    features = features / np.linalg.norm(features, axis=1, keepdims=True)
+    feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
     query_vector = siglip_model.encode_text(text, normalize=True)
 
     # Apply query bank normalization
     if retrieved_videos is not None and normalizing_sum is not None:
         similarities = apply_qb_norm_to_query(
             query_vector,
-            features,
+            feats,
             retrieved_videos,
             normalizing_sum,
             BETA,
         )
     else:
-        similarities = features @ query_vector
+        similarities = feats @ query_vector
 
     # Exclude deleted images
-    for i, path in enumerate(image_paths):
+    for i, path in enumerate(paths):
         if path in deleted_images:
             similarities[i] = -1.0  # Set similarity to -1 to exclude
 
     # Exclude specific indices
-    similarities[remove] = -1.0
+    if len(remove) > 0:
+        print("Excluding indices:", remove)
+        similarities[remove] = -1.0
 
     top_indices = np.argsort(similarities)[-k:][::-1]
+    top_images = np.array(paths)[top_indices]
 
-    results = []
-    for idx in top_indices:
-        results.append(ImageRecord(
-            device=device_id,
-            image_path=image_paths[idx],
-            date=image_paths[idx].split("/")[0],
-            thumbnail=image_paths[idx]
-            .replace(".jpg", ".webp")
-            .replace(".png", ".webp"),
-            timestamp=os.path.getmtime(f"{DIR}/{image_paths[idx]}") * 1000,
-            is_video=image_paths[idx].endswith(".mp4")
-            or image_paths[idx].endswith(".h264"),
-        ))
-    return results
+    sort_by_timestamp = true
+    if sort_by_timestamp:
+        image_records = ImageRecord.find(
+            filter={
+                "device": device_id,
+                "image_path": {"$in": top_images.tolist()},
+            },
+            sort=[("timestamp", 1)],
+        )
+        # group by segment id
+        segments: dict[str, List[ImageRecord]] = {}
+        for image_record in image_records:
+            if image_record.segment_id in segments:
+                segments[image_record.segment_id].append(image_record)
+            else:
+                segments[image_record.segment_id] = [image_record]
+        return list(segments.values())
+    else:
+        image_records =  ImageRecord.find(
+            filter={
+                "device": device_id,
+                "image_path": {"$in": top_images.tolist()},
+            },
+            sort=[("timestamp", -1)],
+        )
+        image_to_image_record = {img.image_path: img for img in image_records}
 
+        segments: dict[str, List[ImageRecord]] = {}
+        for image in top_images:
+            image_record = image_to_image_record.get(image)
+            if image_record:
+                if image_record.segment_id in segments:
+                    segments[image_record.segment_id].append(image_record)
+                else:
+                    segments[image_record.segment_id] = [image_record]
+        return list(segments.values())
 
 def get_similar_images(
     device_id: str,
     image: str,
-    features,
-    image_paths,
+    feats,
+    paths,
     deleted_images: set[str],
     k=100,
     retrieved_videos=None,
     normalizing_sum=None,
     remove=np.array([]),
 ):
-    if len(features) == 0:
+    if len(feats) == 0:
         print("No features available.")
         return []
 
-    features = features / np.linalg.norm(features, axis=1, keepdims=True)
-    if image in image_paths:
-        query_vector = features[image_paths.index(image)]
+    feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
+    if image in paths:
+        query_vector = feats[paths.index(image)]
     else:
-        query_vector, _, _ = encode_image(device_id, image, np.empty((0, DIM)), [])
-        if query_vector is None:
-            print("Failed to encode image:", image)
+        # query_vector, *_ = encode_image(device_id, image, np.empty((0, DIM)), [])
+        try:
+            path = f"{DIR}/{device_id}/{image}"
+            if path.endswith(".mp4") or path.endswith(".h264"):
+                # use video thumbnail
+                new_path = make_video_thumbnail(f"{DIR}/{device_id}/{image}")
+                if new_path:
+                    path = new_path
+
+            query_vector = siglip_model.encode_image(path)
+            query_vector = query_vector / np.linalg.norm(query_vector)
+        except Exception as e:
+            print(f"Error encoding image {image}: {e}")
             return []
-        query_vector = query_vector / np.linalg.norm(query_vector)
 
     # Apply query bank normalization
     if retrieved_videos is not None and normalizing_sum is not None:
         similarities = apply_qb_norm_to_query(
             query_vector,
-            features,
+            feats,
             retrieved_videos,
             normalizing_sum,
             BETA,
         )
     else:
-        similarities = features @ query_vector
+        similarities = feats @ query_vector
 
     # Exclude deleted images
-    for i, path in enumerate(image_paths):
+    for i, path in enumerate(paths):
         if path in deleted_images:
             similarities[i] = -1.0  # Set similarity to -1 to exclude
 
@@ -243,20 +316,11 @@ def get_similar_images(
     similarities[remove] = -1.0
 
     top_indices = np.argsort(similarities)[-k:][::-1]
-
-    results = []
-    for idx in top_indices:
-        results.append(
-            ImageRecord(
-                device=device_id,
-                image_path=image_paths[idx],
-                date=image_paths[idx].split("/")[0],
-                thumbnail=image_paths[idx]
-                .replace(".jpg", ".webp")
-                .replace(".png", ".webp"),
-                timestamp=os.path.getmtime(f"{DIR}/{image_paths[idx]}") * 1000,
-                is_video=image_paths[idx].endswith(".mp4")
-                or image_paths[idx].endswith(".h264"),
-            )
-        )
-    return results
+    top_images = np.array(paths)[top_indices]
+    return ImageRecord.find(
+        filter={
+            "device": device_id,
+            "image_path": {"$in": top_images.tolist()},
+        },
+        sort=[("timestamp", -1)],
+    )

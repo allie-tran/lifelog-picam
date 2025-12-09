@@ -4,6 +4,7 @@ import os
 from typing import Dict, List
 from PIL import Image
 from constants import DIR
+from app_types import AppFeatures
 
 import torch
 from torch import nn
@@ -62,7 +63,8 @@ def get_score(image_path):
     return prediction
 
 
-def check_all_files(image_paths: Dict[str, List[str]]):
+def check_all_files(image_paths: List[str]):
+    print("-" * 20)
     print(f"Checking images for visual density...")
     existing_df = None
     existing_images = set()
@@ -71,16 +73,20 @@ def check_all_files(image_paths: Dict[str, List[str]]):
     if os.path.exists(f"files/visual_density.csv"):
         existing_df = pd.read_csv(f"files/visual_density.csv")
         existing_images = set(existing_df["image"].tolist())
+        print(f"Found {len(existing_images)} existing visual density scores.")
+        print(list(existing_images)[:5])
 
     # Only process new images
     # Flatten image_paths
-    image_paths = [f"{device_id}/{path}" for device_id, paths in image_paths.items() for path in paths]
-    image_paths = [p for p in image_paths if p not in existing_images]
+    paths = [p for p in image_paths if p not in existing_images]
+    print(f"Processing {len(paths)} new images for visual density...")
+    print(paths[:5])
     scores = []
 
-    pbar = tqdm(total=len(image_paths))
-    for photo_path in image_paths:
+    pbar = tqdm(total=len(paths), desc="Computing visual density scores")
+    for photo_path in paths:
         pbar.update(1)
+        pbar.set_description(f"Processing {photo_path}")
         try:
             score = get_score(photo_path)
             scores.append({"image": photo_path, "score": score})
@@ -97,9 +103,20 @@ def check_all_files(image_paths: Dict[str, List[str]]):
     else:
         print("No images were processed.")
 
+    print("-" * 20)
 
-def get_low_visual_density_indices(image_paths):
-    check_all_files(image_paths)
+
+def get_low_visual_density_indices(features: AppFeatures):
+    image_paths = {}
+    all_paths = []
+    for device_id in features.keys():
+        paths = features[device_id]["siglip"].image_paths
+        image_paths[device_id] = paths
+        all_paths.extend(
+            [f"{device_id}/{path}" for path in paths]
+        )
+    check_all_files(all_paths)
+
     # return the indices of the images with lowest visual density scores
     if not os.path.exists(f"files/visual_density.csv"):
         return np.array([])
@@ -108,8 +125,10 @@ def get_low_visual_density_indices(image_paths):
     # scores = [score_dict.get(path, 10) for path in image_paths]  # default to 10 if not found
     all_indices = {}
     all_images_with_low_density = set()
+
     for device in image_paths:
         scores = [score_dict.get(f"{device}/{path}", 10) for path in image_paths[device]]
+
         indices = [i for i, score in enumerate(scores) if score < 8]
         all_indices[device] = indices
         all_images_with_low_density.update(

@@ -12,9 +12,10 @@ const Settings = () => {
 
     useEffect(() => {
         if (data) {
-            setIsVideoMode(data.captureMode === 'video');
+            const newIsVideoMode = data.captureMode === 'video';
+            if (newIsVideoMode !== isVideoMode) setIsVideoMode(data.captureMode === 'video');
         }
-    }, [data]);
+    }, [data, isVideoMode]);
 
     useEffect(() => {
         toogleModeRequest(isVideoMode ? 'video' : 'photo')

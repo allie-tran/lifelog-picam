@@ -25,6 +25,8 @@ import { store } from 'reducers/store';
 import dayjs from 'dayjs';
 import FeedbackComponents from 'components/FeedbackComponents';
 import Admin from 'pages/Admin';
+import { UploadPage } from 'pages/UploadPage';
+import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 let theme = createTheme({
@@ -80,7 +82,7 @@ const App = () => {
                                 margin={1}
                                 fontWeight="bold"
                                 onClick={() => {
-                                    window.location.href = '/omi/';
+                                    window.location.href = '/selfhealth/';
                                 }}
                                 sx={{
                                     pointerEvents: 'auto',
@@ -99,7 +101,7 @@ const App = () => {
                         <Container
                             sx={{ marginTop: '0px', marginBottom: '40px' }}
                         >
-                            <BrowserRouter basename={'/omi'}>
+                            <BrowserRouter basename={'/selfhealth/'}>
                                 <Routes>
                                     <Route
                                         path="/"
@@ -128,6 +130,18 @@ const App = () => {
                                         path="/admin"
                                         element=<PasswordLock>
                                             <Admin />
+                                        </PasswordLock>
+                                    />
+                                    <Route
+                                        path="/upload"
+                                        element=<PasswordLock>
+                                            <UploadPage />
+                                        </PasswordLock>
+                                    />
+                                    <Route
+                                        path="/status/:jobId"
+                                        element=<PasswordLock>
+                                            <ProcessingStatusPage />
                                         </PasswordLock>
                                     />
                                 </Routes>

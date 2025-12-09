@@ -1,36 +1,51 @@
+import base64
+import io
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Annotated
-import io
-import base64
 
 import redis
+import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.params import Body
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 from tqdm.auto import tqdm
 
-from app_types import CustomFastAPI, DaySummary, SummarySegment
+from app_types import CustomFastAPI, DaySummary
 from auth import auth_app
-from auth.auth_models import auth_dependency
+from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel
-from constants import DIR
+from scripts.segmentation import load_all_segments
+from constants import DIR, LOCAL_PORT
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
+from ingest import app as ingest_app
 from pipelines.all import process_image, process_video
 from pipelines.delete import remove_from_features, remove_physical_image
 from pipelines.hourly import update_app
-from preprocess import get_blurred_image, get_similar_images, load_features, retrieve_image, save_features
+from preprocess import (
+    get_blurred_image,
+    get_similar_images,
+    load_features,
+    retrieve_image,
+    save_features,
+)
 from scripts.describe_segments import describe_segment
-from scripts.openai import openai_llm
+from scripts.summary import (
+    create_day_timeline,
+    summarize_day_by_text,
+    summarize_lifelog_by_day,
+)
 from settings import control_app, get_mode
 from settings.types import PiCamControl
+from settings.utils import create_device
 
 
 class CheckFilesRequest(BaseModel):
@@ -58,46 +73,18 @@ async def lifespan(app: CustomFastAPI):
             )
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
-    app.features, app.image_paths = load_features()
-
-    to_process = set()
-    for device in os.listdir(DIR):
-        for root, _, files in os.walk(os.path.join(DIR, device)):
-            for file in files:
-                relative_path = ""
-                if file.endswith(".jpg"):
-                    relative_path = os.path.relpath(os.path.join(root, device, file), DIR)
-                    # compress_image(os.path.join(root, file))
-                    if relative_path not in app.image_paths:
-                        to_process.add(relative_path)
-                elif file.lower().endswith((".h264", ".mp4", ".mov", ".avi")):
-                    relative_path = os.path.relpath(os.path.join(root, device, file), DIR)
-                    # make_video_thumbnail(os.path.join(root, file))
-                    if relative_path not in app.image_paths:
-                        print(relative_path, "is a video, adding to process list.")
-                        to_process.add(relative_path)
-                else:
-                    continue
-
-    # Create features from DIR first
-    if to_process:
-        print(f"Processing {len(to_process)} new images...")
-        for relative_path in tqdm(sorted(to_process)):
-            process_image(app, *relative_path.split("/", 2))
-        app.features, app.image_paths = save_features(app.features, app.image_paths)
-
+    app.features = load_features()
     update_app(app)
     yield
     await FastAPILimiter.close()
-    save_features(app.features, app.image_paths)
+    save_features(app.features)
 
 
 app = CustomFastAPI(lifespan=lifespan)
 app.mount("/auth", auth_app)
 app.mount("/controls", control_app)
+app.mount("/ingest", ingest_app)
 
-DIM = 1152
-app.features, app.image_paths = {}, {}
 load_dotenv()
 
 # Allow CORS for all origins
@@ -121,7 +108,7 @@ async def root():
 
 @app.get("/save-features")
 async def save_features_endpoint():
-    save_features(app.features, app.image_paths)
+    save_features(app.features)
     return {"message": "Features saved successfully."}
 
 
@@ -153,10 +140,11 @@ async def check_image(date: str, timestamp: str):
         }
 
 
-def get_device_from_headers(request) -> str:
+def get_device_from_headers(request: Request):
     device_token = request.headers.get("X-Device-ID")
     if not device_token:
         raise HTTPException(status_code=400, detail="Missing X-Device-ID header.")
+
     # check if device is registered
     device = verify_device_token(device_token)["device"]
     device = PiCamControl.find_one({"username": device})
@@ -245,9 +233,19 @@ async def upload_video(
     return {"message": "Video uploaded successfully."}
 
 
+@app.post("/update-app")
+async def update_app_endpoint(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+):
+    background_tasks.add_task(update_app, app, job_id=job_id)
+    return {"message": "App update scheduled."}
+
+
 @app.post("/check-all-images-uploaded")
 def check_all_files_exist(
-    request: CheckFilesRequest, device: str = Depends(get_device_from_headers)
+    request: CheckFilesRequest = Body(...),
+    device: str = Depends(get_device_from_headers),
 ):
     print(request.date, len(request.all_files), request.all_files[:5])
     all_files = request.all_files
@@ -288,21 +286,41 @@ def check_all_files_exist(
 # RETRIEVAL ENDPOINTS
 # =================================================================================== #
 @app.get("/get-devices")
-def get_devices():
+def get_devices(user=Depends(get_user)):
     devices = []
-    for device in PiCamControl.find({}, sort=[("username", 1)]):
-        devices.append(device.username)
-    return devices
+    if user.is_admin:
+        for device in PiCamControl.find({}, sort=[("username", 1)]):
+            devices.append(device.username)
+        return devices
+    else:
+        for device in user.devices:
+            devices.append(device.device_id)
+        return devices
+
+
+@app.get("/create-device")
+def create_device_endpoints(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to create devices.")
+
+    create_device(device)
+    return {"message": f"Device {device} created successfully."}
+
 
 @app.get("/get-image")
-def get_image(device: str, filename: str, access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE):
+def get_image(
+    device: str,
+    filename: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
     if access_level == AccessLevel.NONE:
         print("Access level:", access_level)
         raise HTTPException(status_code=403, detail="Not authorized to access images.")
 
-    image = ImageRecord.find_one(
-        filter={"device": device, "image_path": filename}
-    )
+    image = ImageRecord.find_one(filter={"device": device, "image_path": filename})
     if not image:
         raise HTTPException(status_code=404, detail="Image not found.")
 
@@ -389,6 +407,7 @@ async def get_images_by_hour(
     segments = null_segment + non_null_segments
 
     items_per_page = 20
+    total_page = (len(segments) + items_per_page - 1) // items_per_page
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
     segments = segments[start_index:end_index]
@@ -407,7 +426,7 @@ async def get_images_by_hour(
             for segment in segments
         ],
         "available_hours": sorted(all_hours, reverse=True),
-        "total_pages": (len(segments) + items_per_page - 1) // items_per_page,
+        "total_pages": total_page,
     }
 
 
@@ -426,6 +445,9 @@ def get_all_dates(
     dates = []
     for entry in os.listdir(f"{DIR}/{device}"):
         if os.path.isdir(os.path.join(DIR, device, entry)):
+            # check if empty
+            if len(os.listdir(os.path.join(DIR, device, entry))) == 0:
+                os.rmdir(os.path.join(DIR, device, entry))
             dates.append(entry)
 
     return sorted(dates)
@@ -439,9 +461,6 @@ def search(
 ):
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized to access images.")
-
-    print(len(app.image_paths), "images in the database.")
-    print(len(app.features), "features in the database.")
 
     if not query:
         return []
@@ -459,8 +478,8 @@ def search(
     results = retrieve_image(
         device,
         query,
-        app.features[device],
-        app.image_paths[device],
+        app.features[device]["siglip"].features,
+        app.features[device]["siglip"].image_paths,
         deleted_set,
         k=100,
         retrieved_videos=app.retrieved_videos[device],
@@ -487,15 +506,15 @@ def similar_images(
     results = get_similar_images(
         device,
         image,
-        app.features[device],
-        app.image_paths[device],
+        app.features[device]["siglip"].features,
+        app.features[device]["siglip"].image_paths,
         delete_set,
         k=100,
         retrieved_videos=app.retrieved_videos[device],
         normalizing_sum=app.normalizing_sum[device],
         remove=app.low_visual_indices[device],
     )
-    return results
+    return list(results)
 
 
 # =================================================================================== #
@@ -593,14 +612,18 @@ def force_delete_image(
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_path = request.image_path
-    print(f"Force deleting image: {image_path}")
     remove_physical_image(device, image_path)
     remove_from_features(app, device, image_path)
 
 
 def process_segments(date: str, device: str):
     segments = ImageRecord.find(
-        filter={"date": date, "deleted": False, "activity": ""},
+        filter={
+            "date": date,
+            "deleted": False,
+            "activity": {"$in": ["", "Unclear"]},
+            "device": device,
+        },
         distinct="segment_id",
     )
     segments = list(segments)
@@ -625,7 +648,10 @@ def process_segments(date: str, device: str):
     )
     all_summaries = list(all_summaries)[-10:]  # last 10 summaries
     all_summaries = [s.summary for s in all_summaries]
-    for segment_id in tqdm(segments):
+    total = len(segments)
+    for i, segment_id in tqdm(
+        enumerate(segments), total=total, desc="Processing segments"
+    ):
         if segment_id is None:
             continue
 
@@ -634,15 +660,15 @@ def process_segments(date: str, device: str):
             [
                 img.thumbnail
                 for img in ImageRecord.find(
-                    filter={"segment_id": segment_id, "deleted": False, "device": device},
+                    filter={
+                        "segment_id": segment_id,
+                        "deleted": False,
+                        "device": device,
+                    },
                     sort=[("image_path", 1)],
                 )
             ],
             segment_id,
-            extra_info=[
-                "Here are some summaries of other segments from the same day:\n"
-                + "\n".join(all_summaries)
-            ],
         )
         all_summaries.append(new_description)
         all_summaries = all_summaries[-10:]  # keep last 10 summaries
@@ -658,16 +684,46 @@ def process_segments(date: str, device: str):
 def process_date(
     date: str,
     device: str,
+    reset: bool,
     background_tasks: BackgroundTasks,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
     if access_level == AccessLevel.NONE:
         raise HTTPException(status_code=403, detail="Not authorized to process date.")
+
+    DaySummaryRecord.update_one(
+        {"date": date, "device": device},
+        {"$set": {"updated": True}},
+        upsert=True,
+    )
+
+    if reset:
+        print(f"Resetting activities for date {date} and device {device}.")
+        ImageRecord.update_many(
+            {"date": date, "deleted": False, "device": device},
+            {
+                "$set": {
+                    "activity": "",
+                    "activity_description": "",
+                    "activity_confidence": "",
+                    "segment_id": None,
+                }
+            },
+        )
+
+    load_all_segments(
+        device,
+        app.features,
+        set(
+            ImageRecord.find(filter={"deleted": True}, distinct="image_path")
+        ).union(app.images_with_low_density)
+    )
+
     background_tasks.add_task(process_segments, date, device)
     return {"message": f"Processing segments for date {date} in background."}
 
 
-@app.get("/day-summary")
+@app.get("/day-summary", response_model=DaySummary)
 def get_day_summary(
     date: str,
     device: str,
@@ -681,142 +737,21 @@ def get_day_summary(
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    activities = ImageRecord.aggregate(
-        [
-            {
-                "$match": {
-                    "date": date,
-                    "deleted": False,
-                    "segment_id": {"$ne": None},
-                    "device": device,
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$segment_id",
-                    "activity": {"$first": "$activity"},
-                    "start_time": {"$min": "$timestamp"},
-                    "end_time": {"$max": "$timestamp"},
-                }
-            },
-            {"$sort": {"start_time": 1}},
-        ]
-    )
-
-    print("Aggregated activities for day summary.")
-    activities = list(activities)
-
-    # Predefine a grid of time slots (e.g., every 30 minutes)
-    earliest_hour = 0
-    latest_hour = 24
-    if activities:
-        earliest_hour = datetime.fromtimestamp(activities[0].start_time / 1000).hour
-        latest_hour = datetime.fromtimestamp(activities[-1].end_time / 1000).hour + 1
-
-    print("Creating time slots from", earliest_hour, "to", latest_hour)
-
-    time_slots = []
-    slot_duration = 15 * 60 * 1000
-    for slot_start in range(
-        earliest_hour * 60 * 60 * 1000, latest_hour * 60 * 60 * 1000, slot_duration
-    ):
-        slot_end = slot_start + slot_duration
-        time_slots.append((slot_start, slot_end))
-
-    summary = []
-    for slot_start, slot_end in time_slots:
-        slot_activities = []
-        for segment in activities:
-            segment = segment.dict()
-            if (
-                segment["end_time"]
-                >= slot_start + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
-                and segment["start_time"]
-                < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
-            ):
-                slot_activities.append(segment["activity"] or "Unclear")
-
-        if slot_activities:
-            # Choose the most frequent activity in the slot
-            activity = max(set(slot_activities), key=slot_activities.count)
-        else:
-            activity = "No Activity"
-
-        start_time_str = (
-            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_start)
-        ).strftime("%H:%M:%S")
-        end_time_str = (
-            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_end)
-        ).strftime("%H:%M:%S")
-
-        summary.append(
-            SummarySegment(
-                segment_index=None,
-                activity=activity,
-                start_time=start_time_str,
-                end_time=end_time_str,
-                duration=int(slot_duration / 1000),
-            )
-        )
-
-    updated = True
-    day_summary_record = DaySummaryRecord.find_one({"date": date})
-    if (
-        day_summary_record
-        and not day_summary_record.updated
-        and day_summary_record.summary_text
-    ):
-        day_summary = day_summary_record.summary_text
-        updated = False
-    else:
-        try:
-            raw_activities = ImageRecord.aggregate(
-                [
-                    {
-                        "$match": {
-                            "date": date,
-                            "deleted": False,
-                            "segment_id": {"$ne": None},
-                            "device": device,
-                        }
-                    },
-                    {
-                        "$group": {
-                            "_id": "$segment_id",
-                            "activity": {"$first": "$activity"},
-                            "activity_description": {"$first": "$activity_description"},
-                            "start_time": {"$min": "$timestamp"},
-                            "end_time": {"$max": "$timestamp"},
-                        }
-                    },
-                    {"$sort": {"start_time": 1}},
-                ]
-            )
-
-            day_summary = openai_llm.generate_from_text(
-                "Create a summary of the activities performed during the day based on the following segments. Make it concise and informative (2-3 sentences). Such as: you spent the morning working, had lunch at 1 PM, spent the afternoon relaxing, and in the evening you went for a walk.\n"
-                "Ignore unclear activities.\n"
-                + "\n".join(
-                    [
-                        f"{seg.start_time} to {seg.end_time}: {seg.activity_description}"
-                        for seg in raw_activities
-                        if seg.activity != "No Activity"
-                    ]
-                )
-            )
-            print("Day Summary LLM Response:")
-            print(day_summary)
-            day_summary = str(day_summary).strip()
-            updated = False
-
-        except Exception as e:
-            trace = str(e)
-            print("Failed to generate day summary:", trace)
-            day_summary = "No summary available."
+    # Check if there are changes in the segments
+    day_summary_record = DaySummaryRecord.find_one({"date": date, "device": device})
+    if day_summary_record and not day_summary_record.updated:
+        return day_summary_record
 
     summary = DaySummary(
-        date=date, segments=summary, summary_text=day_summary, updated=updated
+        device=device, date=date, segments=[], summary_text="", updated=False
     )
+    summary.segments = create_day_timeline(app, device, date)
+    summary = summarize_day_by_text(summary)
+    summary = summarize_lifelog_by_day(
+        summary,
+        app.features[device]["siglip"]
+    )
+
     DaySummaryRecord.update_one(
         {"date": date, "device": device},
         {"$set": summary.model_dump(by_alias=True)},
@@ -887,9 +822,28 @@ async def change_segment_activity(
             f"Here is the provide activity information from the camera viewer: {request.new_activity_info}. Incorporate this into the description.",
         ],
     )
-
+    ImageRecord.update_many(
+        {"segment_id": segment.segment_id, "device": device},
+        {
+            "$set": {
+                "activity": request.new_activity_info,
+                "activity_description": new_description,
+            }
+        },
+    )
     DaySummaryRecord.update_one(
         {"date": segment.date, "device": device},
         {"$set": {"updated": True}},
         upsert=True,
+    )
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=LOCAL_PORT,
+        reload=True,
+        # workers=2,
+        reload_excludes=["./files/QB_norm/*" "./files/**/*"],
     )

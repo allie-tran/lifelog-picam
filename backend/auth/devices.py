@@ -1,4 +1,5 @@
-import jwt
+from jwt import decode, encode
+from jwt import ExpiredSignatureError, InvalidTokenError
 import os
 from fastapi import HTTPException, Request
 from typing import Dict
@@ -10,11 +11,11 @@ SECRET = os.getenv("JWT_SECRET", "")
 assert SECRET, "JWT_SECRET is not set"
 
 
-def generate_token_for_device(device_id: str) -> str:
+def generate_token_for_device(device_id: str) -> bytes:
     """
     Generate a token for the device
     """
-    return jwt.encode({"device": device_id}, SECRET, algorithm="HS256")
+    return encode({"device": device_id}, SECRET, algorithm="HS256")
 
 
 def verify_device_token(token: str) -> Dict[str, str]:
@@ -22,13 +23,13 @@ def verify_device_token(token: str) -> Dict[str, str]:
     Verify the device token and return the device_id
     """
     try:
-        data = jwt.decode(token, SECRET, algorithms=["HS256"])
+        data = decode(token, SECRET, algorithms=["HS256"])
         if "device" not in data:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return data
-    except jwt.ExpiredSignatureError:
+        return data # type: ignore
+    except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 

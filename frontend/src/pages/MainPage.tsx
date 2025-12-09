@@ -1,47 +1,44 @@
 import {
+    AdminPanelSettingsRounded,
+    RotateLeftRounded,
+    SearchRounded,
+    UploadRounded,
+} from '@mui/icons-material';
+import {
     Badge,
     Box,
     Button,
     Divider,
     Drawer,
-    FormControl,
     IconButton,
-    InputLabel,
-    MenuItem,
     Pagination,
-    Paper,
-    Select,
     Stack,
     TextField,
-    Toolbar,
     Typography,
 } from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { ImageObject } from '@utils/types';
-import DaySummary from 'components/DaySummary';
+import { changeSegmentActivity } from 'apis/process';
+import DaySummaryComponent from 'components/DaySummary';
+import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import dayjs from 'dayjs';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
+import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
-import {
-    deleteImage,
-    getAllDates,
-    getDevices,
-    getImagesByHour,
-} from '../apis/browsing';
+import { AccessLevel } from 'types/auth';
+import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
 import DeletedImages from '../components/DeletedImages';
 import ImageWithDate from '../components/ImageWithDate';
 import { ImageZoom } from '../components/ImageZoom';
 import Settings from '../components/Settings';
-import { AdminPanelSettingsRounded, SearchRounded } from '@mui/icons-material';
-import { setLoading } from 'reducers/feedback';
-import ModalWithCloseButton from 'components/ModalWithCloseButton';
-import { changeSegmentActivity } from 'apis/process';
-import { AccessLevel } from 'types/auth';
+import DeviceSelect from './DeviceSelect';
+import { setDeviceId } from 'reducers/auth';
+import { CONFIDENCE_COLOURS } from 'constants/activityColors';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -66,25 +63,25 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     );
 };
 
-const CONFIDENCE_COLOURS: { [key: string]: string } = {
-    High: 'success',
-    Medium: 'warning',
-    Low: 'error',
-};
 
 function MainPage() {
     const navigate = useNavigate();
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
+    const device = searchParams.get('device_id');
+    const deviceId = useAppSelector((state) => state.auth.deviceId);
 
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
-    const { username, deviceAccess } = useAppSelector((state) => state.auth);
+    const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
     const [hour, setHour] = React.useState<number | null>(null);
     const [segmentToEdit, setSegmentToEdit] = React.useState<number | null>(
         null
     );
     const [activityEditText, setActivityEditText] = React.useState<string>('');
+
+    useEffect(() => {
+        if (device) dispatch(setDeviceId(device));
+    }, [device]);
 
     const dispatch = useAppDispatch();
     const { data, mutate } = useSWR(
@@ -115,17 +112,20 @@ function MainPage() {
         }
     );
 
-    const { data: devices, isLoading: devicesLoading } = useSWR(
-        'devices-list',
-        getDevices,
-        {
-            revalidateOnFocus: false,
-        }
-    );
-
     const { data: allDates } = useSWR(
-        'all-dates',
-        () => getAllDates(deviceId),
+        ['all-dates', deviceId, date],
+        async () => {
+            const allDates = await getAllDates(deviceId);
+            if (!date || !allDates.includes(date)) {
+                // go to the latest date with images
+                const latestDate: string = allDates[allDates.length - 1];
+                if (!latestDate) return allDates;
+                navigate(
+                    `/?date=${latestDate}${deviceId ? `&device_id=${deviceId}` : ''}`
+                );
+            }
+            return allDates;
+        },
         {
             revalidateOnFocus: false,
         }
@@ -134,6 +134,10 @@ function MainPage() {
     const images = data?.images;
     const segments = data?.segments || [];
     const availableHours = data?.available_hours || [];
+
+    useEffect(() => {
+        setPage(1);
+    }, [date, deviceId]);
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
@@ -147,34 +151,16 @@ function MainPage() {
     return (
         <>
             <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
-                <FormControl fullWidth sx={{ maxWidth: '400px' }}>
-                    <InputLabel id="device-select-label">Device</InputLabel>
-                    <Select
-                        labelId="device-select-label"
-                        value={deviceId || ''}
-                        label="Device"
-                        onChange={(e) => {
-                            const selectedDeviceId = e.target.value;
-                            setPage(1);
-                            navigate(
-                                `/?date=${date || ''}${
-                                    selectedDeviceId
-                                        ? `&device_id=${selectedDeviceId}`
-                                        : ''
-                                }`
-                            );
-                        }}
-                        disabled={devicesLoading}
-                    >
-                        <MenuItem value="">All Devices</MenuItem>
-                        {devices?.map((device) => (
-                            <MenuItem key={device} value={device}>
-                                {device}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-
+                <Divider flexItem />
+                <DeviceSelect
+                    onChange={(device: string) => {
+                        navigate(
+                            `/?date=${date || ''}${
+                                device ? `&device_id=${device}` : ''
+                            }`
+                        );
+                    }}
+                />
                 <Drawer
                     variant="permanent"
                     open
@@ -195,6 +181,20 @@ function MainPage() {
                         sx={{ marginTop: '16px', marginLeft: '8px' }}
                     >
                         <AdminPanelSettingsRounded />
+                    </IconButton>
+                    <IconButton
+                        color="secondary"
+                        onClick={() => navigate('/upload')}
+                        sx={{ marginTop: '16px', marginLeft: '8px' }}
+                    >
+                        <UploadRounded />
+                    </IconButton>
+                    <IconButton
+                        color="secondary"
+                        onClick={() => navigate('/status')}
+                        sx={{ marginTop: '16px', marginLeft: '8px' }}
+                    >
+                        <RotateLeftRounded />
                     </IconButton>
                 </Drawer>
                 <Typography variant="h4" color="primary" fontWeight="bold">
@@ -220,7 +220,7 @@ function MainPage() {
                     }}
                 />
                 <Settings />
-                <DaySummary />
+                <DaySummaryComponent />
                 <Stack
                     direction="row"
                     spacing={1}
@@ -384,4 +384,5 @@ function MainPage() {
         </>
     );
 }
+
 export default MainPage;

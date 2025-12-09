@@ -5,7 +5,6 @@ from constants import DIR
 from database.types import ImageRecord
 
 def remove_physical_image(device_id: str, image_path: str):
-    print(f"Force deleting image: {image_path}")
     records = ImageRecord.find(
         {"image_path": image_path, "device": device_id}
     )
@@ -17,9 +16,20 @@ def remove_physical_image(device_id: str, image_path: str):
         if thumbnail and os.path.exists(thumbnail):
             os.remove(thumbnail)
 
+    ImageRecord.delete_many(
+        {"image_path": image_path, "device": device_id}
+    )
+
 def remove_from_features(app: CustomFastAPI, device_id: str, image_path: str):
-    if image_path in app.image_paths:
-        idx = app.image_paths[device_id].index(image_path)
-        app.image_paths[device_id].pop(idx)
-        app.features[device_id] = np.delete(app.features[device_id], idx, axis=0)
-        print(f"Removed {image_path} from features and image paths.")
+    for model in app.models:
+        if image_path in app.features[device_id][model].image_paths:
+            idx = app.features[device_id][model].image_paths.index(image_path)
+            if app.features[device_id][model].image_paths[idx] != image_path:
+                idx = app.features[device_id][model].image_paths.index(image_path)
+            app.features[device_id][model].image_paths.pop(idx)
+            app.features[device_id][model].features = np.delete(
+                app.features[device_id][model].features,
+                idx,
+                axis=0,
+            )
+            print(f"Removed {image_path} from features and image paths.")

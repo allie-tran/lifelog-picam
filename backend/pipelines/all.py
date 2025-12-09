@@ -2,10 +2,11 @@ from datetime import datetime
 
 from app_types import CustomFastAPI
 from constants import DIR
-from database.types import ImageRecord, ProcessedInfo
+from database.types import ImageRecord
+from app_types import ProcessedInfo
 from preprocess import blur_image, compress_image, encode_image, make_video_thumbnail
 from scripts.object_detection import extract_object_from_image
-
+from scripts.conclip import conclip
 
 def find_segment(device_id: str, timestamp: float) -> int | None:
     # Find the segment ID for the given image path and timestamp
@@ -53,17 +54,23 @@ def find_segment(device_id: str, timestamp: float) -> int | None:
 
 
 def process_image(app: CustomFastAPI, device_id: str, date: str, file_name: str):
-    if f"{date}/{file_name}" not in app.image_paths:
-        _, app.features, app.image_paths = encode_image(
-            device_id, f"{date}/{file_name}", app.features, app.image_paths
-        )
-
+    relative_path = f"{date}/{file_name}"
+    for model in app.models:
+        if relative_path not in app.features[device_id][model].image_paths:
+            _, app.features[device_id][model] = encode_image(
+                device_id, f"{date}/{file_name}", app.features[device_id][model], model
+            )
     try:
         compress_image(f"{DIR}/{device_id}/{date}/{file_name}")
-    except Exception as e:
+    except Exception:
         return app
 
-    relative_path = f"{date}/{file_name}"
+    image_record = ImageRecord.find_one(
+        filter={"device": device_id, "image_path": relative_path}
+    )
+    if image_record:
+        return app
+
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
     objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}")
     if people:
@@ -98,9 +105,9 @@ def process_video(app: CustomFastAPI, device_id: str, date: str, file_name: str)
         is_video=True,
     ).create()
 
-    if output_path not in app.image_paths:
-        _, app.features, app.image_paths = encode_image(
-            device_id, output_path, app.features, app.image_paths
+    for model in app.models:
+        _, app.features[device_id][model] = encode_image(
+            device_id, f"{date}/{file_name}", app.features[device_id][model], model
         )
 
     return app

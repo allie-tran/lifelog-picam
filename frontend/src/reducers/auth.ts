@@ -26,7 +26,7 @@ const authSlice = createSlice({
             state.isAuthenticated = true;
             state.username = action.payload.username;
             state.devices = action.payload.devices;
-            state.deviceAccess = action.payload.devices.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE;
+            state.deviceAccess = action.payload.devices?.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE
         },
         logout(state) {
             state.isAuthenticated = false;
@@ -35,7 +35,7 @@ const authSlice = createSlice({
         },
         setDeviceId(state, action: PayloadAction<string>) {
             state.deviceId = action.payload;
-            state.deviceAccess = state.devices.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE;
+            state.deviceAccess = state.devices?.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE;
         }
     },
 });

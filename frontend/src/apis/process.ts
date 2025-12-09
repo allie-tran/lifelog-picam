@@ -1,10 +1,10 @@
+import { DaySummary } from '@utils/types';
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { SummarySegment } from '@utils/types';
 
-export const processDate = async (deviceId: string, dateString: string) => {
+export const processDate = async (deviceId: string, dateString: string, reset: boolean = false) => {
     const response = await axios.get(
-        `${BACKEND_URL}/process-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/process-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}&reset=${reset}`
     );
     return response.data;
 }
@@ -24,17 +24,5 @@ export const getDaySummary = async (deviceId: string, dateString: string) => {
     const response = await axios.get(
         `${BACKEND_URL}/day-summary?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
     );
-    return response.data as {
-        date: string;
-        segments: SummarySegment[];
-        summaryText: string;
-        aloneMinutes: number;
-        socialMinutes: number;
-        categoryMinutes: {[key: string]: number};
-        foodDrinkMinutes: number;
-        foodDrinkImages: string[];
-        foodDrinkSummary: string;
-        totalImages: number;
-        totalMinutes: number;
-    };
+    return response.data as DaySummary;
 }

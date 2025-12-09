@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from auth.types import CreateUserRequest, LoginRequest, LoginResponse, User, AccessLevel
 from configs import REDIS_HOST, REDIS_PORT
+from settings.utils import create_device
 
 load_dotenv()
 SECRET = os.getenv("JWT_SECRET", "")
@@ -32,6 +33,7 @@ def create_user(request: CreateUserRequest, overwrite=False) -> User:
     if User.find_one({"username": request.username}) and not overwrite:
         raise HTTPException(status_code=400, detail="User already exists")
 
+    create_device(request.username)
     User.update_one(
         {"username": request.username},
         {
@@ -125,8 +127,7 @@ def auth_dependency(request: Request):
         raise HTTPException(status_code=401, detail="User does not exist")
     devices = user.devices or []
     device = request.query_params.get("device")
-    print("Authenticating device:", device, "for user:", user)
-    for d in user.devices:
+    for d in devices:
         if d.device_id == device:
             return d.access_level
     return AccessLevel.NONE

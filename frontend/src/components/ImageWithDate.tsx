@@ -11,11 +11,17 @@ const ImageWithDate = ({
     onClick,
     extra,
     onDelete,
+    height = '350px',
+    fontSize,
+    disableDelete = false,
 }: {
     image: ImageObject;
     onClick?: () => void;
     extra?: React.ReactNode;
     onDelete?: (image: string) => void;
+    height?: number | string;
+    fontSize?: number | string;
+    disableDelete?: boolean;
 }) => {
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const imageUrl = `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`;
@@ -25,7 +31,7 @@ const ImageWithDate = ({
         <Box
             sx={{
                 marginBottom: '20px',
-                height: '350px',
+                height: height,
                 position: 'relative',
                 width: 'auto',
             }}
@@ -64,19 +70,25 @@ const ImageWithDate = ({
                 justifyContent="space-between"
                 sx={{ marginTop: '4px' }}
             >
-                <Typography>{formattedDate}</Typography>
+                <Typography
+                    sx={{ fontSize: fontSize || '14px', userSelect: 'none' }}
+                >
+                    {formattedDate}
+                </Typography>
                 <Stack direction="row" spacing={1} alignItems="center">
-                    <Button
-                        color="error"
-                        size="small"
-                        sx={{ minWidth: 32 }}
-                        onClick={() => {
-                            deleteImage(deviceId, image.imagePath);
-                            onDelete && onDelete(image.imagePath);
-                        }}
-                    >
-                        <DeleteRounded />
-                    </Button>
+                    {!disableDelete && (
+                        <Button
+                            color="error"
+                            size="small"
+                            sx={{ minWidth: 32 }}
+                            onClick={() => {
+                                deleteImage(deviceId, image.imagePath);
+                                onDelete && onDelete(image.imagePath);
+                            }}
+                        >
+                            <DeleteRounded />
+                        </Button>
+                    )}
                     {extra}
                 </Stack>
             </Stack>

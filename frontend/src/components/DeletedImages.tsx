@@ -1,26 +1,29 @@
 import { ArchiveRounded, RestoreRounded } from '@mui/icons-material';
 import { Button, CircularProgress, IconButton, Stack } from '@mui/material';
+import { ImageObject } from '@utils/types';
 import React from 'react';
+import { useAppSelector } from 'reducers/hooks';
+import useSWR from 'swr';
+import { AccessLevel } from 'types/auth';
 import {
     forceDeleteImage,
     getDeletedImages,
     restoreImage,
 } from '../apis/browsing';
-import { ImageObject } from '@utils/types';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
-import { setLoading } from 'reducers/feedback';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
-import useSWR from 'swr';
 
 const DeletedImages = () => {
-    const dispatch = useAppDispatch();
     const [open, setOpen] = React.useState(false);
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const deviceAccess = useAppSelector((state) => state.auth.deviceAccess);
 
     const { data, isLoading, mutate } = useSWR(
         ['deleted-images', deviceId],
-        () => getDeletedImages(deviceId),
+        () =>
+            deviceAccess === AccessLevel.OWNER
+                ? getDeletedImages(deviceId)
+                : Promise.resolve([]),
         {
             revalidateOnFocus: false,
         }

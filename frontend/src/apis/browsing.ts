@@ -74,7 +74,7 @@ export const searchImages = async (deviceId: string, query: string) => {
     const response = await axios.get(
         `${BACKEND_URL}/search-images?query=${query}&device=${encodeURIComponent(deviceId)}`
     );
-    return response.data as ImageObject[];
+    return response.data as ImageObject[][];
 };
 
 export const similarImages = async (deviceId: string, imagePath: string) => {

@@ -1,4 +1,3 @@
-from mongodb_odm import Document, IndexModel
 from typing import (
     Any,
     Dict,
@@ -11,20 +10,11 @@ from typing import (
     Union,
 )
 
+from app_types import DaySummary, LifelogImage
 from bson import ObjectId as _ObjectId
+from mongodb_odm import Document, IndexModel
 from mongodb_odm.models import INHERITANCE_FIELD_NAME, Document
-from pydantic import BaseModel, field_serializer
-from pydantic import BaseModel, computed_field, field_serializer
-from app_types import DaySummary
-from dependencies import CamelCaseModel
-
-
-class ObjectDetection(BaseModel):
-    label: str
-    confidence: float
-    bbox: list[int]  # [x_min, y_min, x_max, y_max]
-    embedding: Optional[list[float]] = None
-
+from pydantic import field_serializer
 
 DICT_TYPE = Dict[str, Any]
 SORT_TYPE = Union[str, Sequence[Tuple[str, Union[int, str, Mapping[str, Any]]]]]
@@ -32,38 +22,7 @@ SORT_TYPE = Union[str, Sequence[Tuple[str, Union[int, str, Mapping[str, Any]]]]]
 DocumentType = TypeVar("DocumentType", bound=Mapping[str, Any])
 
 
-class ProcessedInfo(BaseModel):
-    yolo: bool = False
-    face_recognition: bool = False
-    encoded: bool = False
-
-class ImageRecord(Document, CamelCaseModel):
-    device: str
-    image_path: str # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
-    timestamp: float  # ISO 8601 format
-    thumbnail: str
-    is_video: bool
-
-    objects: list[ObjectDetection] = []
-    people: list[ObjectDetection] = []
-
-    deleted: bool = False
-
-    date: str
-
-    segment_id: Optional[int] = None
-    activity: str = ""
-    activity_description: str = ""
-    activity_confidence: str = ""
-
-    processed: ProcessedInfo = ProcessedInfo()
-
-    @computed_field
-    @property
-    def hour(self) -> str:
-        return self.image_path.split("_")[1][:2]
-
-
+class ImageRecord(Document, LifelogImage):
     @classmethod
     def _get_collection_name(cls) -> str:
         return "images"
@@ -124,6 +83,7 @@ class ImageRecord(Document, CamelCaseModel):
 
         for data in qs:
             yield cls(**data)
+
 
 class DaySummaryRecord(Document, DaySummary):
     class ODMConfig(Document.ODMConfig):

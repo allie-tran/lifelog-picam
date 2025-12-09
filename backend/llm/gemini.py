@@ -117,4 +117,4 @@ def get_visual_content(image_paths: List[str] | List[bytes]) -> List[MixedConten
             continue
     return messages
 
-llm_model = LLM()
+llm = LLM()

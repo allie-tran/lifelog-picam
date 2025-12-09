@@ -22,7 +22,6 @@ export function getCookie(cname: string) {
             c = c.substring(1);
         }
         if (c.indexOf(name) == 0) {
-            console.log('Found cookie:', c.substring(name.length, c.length));
             return c.substring(name.length, c.length);
         }
     }

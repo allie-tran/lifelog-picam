@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
+from app_types import AppFeatures
 
 import cv2
 import numpy as np
@@ -99,9 +101,7 @@ def _covered_rule(
 
 
 # ---------- your-style CSV pass ----------
-
-
-def check_all_files_for_pocket(image_paths: Dict[List[str]]) -> None:
+def check_all_files_for_pocket(image_paths: Dict[str, List[str]]) -> None:
     """
     Scan only new images, compute features + pocket score, and persist to CSV.
     Mirrors your check_all_files(...) pattern.
@@ -115,12 +115,12 @@ def check_all_files_for_pocket(image_paths: Dict[List[str]]) -> None:
         existing_images = set(existing_df["image"].tolist())
 
     # Flatten image_paths
-    image_paths = [
+    paths = [
         f"{device_id}/{path}"
         for device_id, paths in image_paths.items()
         for path in paths
     ]
-    new_paths = [p for p in image_paths if p not in existing_images]
+    new_paths = [p for p in paths if p not in existing_images]
     rows: List[Dict[str, Any]] = []
 
     for p in tqdm(new_paths, disable=not new_paths):
@@ -142,7 +142,8 @@ def check_all_files_for_pocket(image_paths: Dict[List[str]]) -> None:
                 }
             )
         except Exception as e:
-            print(f"Error processing {p}: {e}")
+            pass
+            # print(f"Error processing {p}: {e}")
 
     if rows:
         df = pd.DataFrame(rows)
@@ -155,7 +156,7 @@ def check_all_files_for_pocket(image_paths: Dict[List[str]]) -> None:
 
 
 def get_pocket_indices(
-    image_paths: Dict[str, List[str]],
+    features: AppFeatures,
     score_threshold: float = 3.0,
 ) -> Tuple[Dict[str, np.ndarray], Set[str]]:
     """
@@ -163,10 +164,13 @@ def get_pocket_indices(
       indices_to_delete: np.ndarray[int] of positions in image_paths
       images_set: set[str] of absolute paths slated for deletion
     """
+    image_paths = {}
+    for device_id in features.keys():
+        image_paths[device_id] = features[device_id]["siglip"].image_paths
     check_all_files_for_pocket(image_paths)
 
     if not CSV_PATH.exists():
-        return np.array([], dtype=int), set()
+        return defaultdict(lambda: np.array([], dtype=np.int32)), set()
 
     df = pd.read_csv(CSV_PATH)
     score_map: Dict[str, float] = dict(zip(df["image"], df["score"]))

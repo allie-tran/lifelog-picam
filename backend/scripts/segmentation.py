@@ -1,41 +1,167 @@
+import math
 from datetime import datetime
+from typing import List, Optional
+from scripts.describe_segments import describe_segment
+from preprocess import compress_image
 
 import numpy as np
+from app_types import AppFeatures
 from constants import SEGMENT_THRESHOLD
-from preprocess import compress_image
 from database.types import DaySummaryRecord, ImageRecord
+from sessions.redis import RedisClient
 from tqdm.auto import tqdm
 
-from scripts.describe_segments import describe_segment
+redis_client = RedisClient()
 
 
+def choose_num_thumbnails(
+    num_frames: int,
+    frames_per_thumb: int = 100,
+    min_thumbs: int = 1,
+    max_thumbs: int = 8,
+) -> int:
+    """
+    Decide how many thumbnails to show for a segment, based on how many frames it has.
 
-def segment_images(features, image_paths, deleted_images: set[str], reverse=True):
+    - Roughly 1 thumbnail per `frames_per_thumb` frames.
+    - Always at least `min_thumbs`.
+    - Never more than `max_thumbs`.
+
+    Examples with frames_per_thumb=50, max_thumbs=8:
+        0 frames   -> 0
+        1–100       -> 1
+        101–150     -> 2
+        ...
+        801+       -> 8
+    """
+    if num_frames <= 0:
+        return 0
+
+    estimated = math.ceil(num_frames / frames_per_thumb)
+    estimated = max(min_thumbs, estimated)
+    estimated = min(max_thumbs, estimated)
+    return estimated
+
+
+def ema_features(features, alpha=0.4):
+    weights = (1 - alpha) ** np.arange(features.shape[0])
+    weights = weights[::-1]  # reverse to align powers
+
+    # cumulative weighted sum
+    cum = np.cumsum(features[::-1] * weights[:, None], axis=0)
+    ema_rev = alpha * cum / weights[:, None]
+
+    return ema_rev[::-1]
+
+
+def segment_images(
+    device_id: str, features, image_paths, deleted_images: set[str], reverse=True
+) -> list[list[str]]:
     if len(features) == 0:
         return []
+
+    # Get physical boundaries first (time difference too large)
+    boundaries = set()
+    time_threshold = 15 * 60 * 1000  # 15 minutes in milliseconds
+    min_time = 5 * 60 * 1000  # 5 minutes in milliseconds
+    timestamp = ImageRecord.find(
+        filter={"image_path": {"$in": image_paths}, "device": device_id}
+    )
+    path_to_time = {record.image_path: record.timestamp for record in timestamp}
+    for i in range(1, len(image_paths)):
+        t1 = path_to_time[image_paths[i - 1]]
+        t2 = path_to_time[image_paths[i]]
+        if abs(t2 - t1) > time_threshold:
+            boundaries.add(image_paths[i])
 
     # Sort the features and image paths based on the image_pahts
     sorted_indices = np.argsort(image_paths)
     if reverse:
         sorted_indices = sorted_indices[::-1]
     features = features[sorted_indices]
+    image_paths = [image_paths[i] for i in sorted_indices]
+
+
+    # Smooth the features by exponential moving average
+    features = ema_features(features, alpha=0.3)
+    # Normalise
+    features = features / np.linalg.norm(features, axis=1, keepdims=True)
+    k = SEGMENT_THRESHOLD
+    k = 0.5
+
+    # Calculate all distances
+    distances = np.linalg.norm(features[1:] - features[:-1], axis=1)
+
+    # Dynamic threshold: mean + std
+    mean_dist = np.mean(distances)
+    std_dist = np.std(distances)
+    dynamic_threshold = mean_dist + std_dist
+    k = dynamic_threshold
+    print(f"Dynamic threshold for segmentation: {k}")
 
     # Compare each feature vector with the previous one
-    segments = []
-    current_segment = [image_paths[sorted_indices[0]]]
-    k = SEGMENT_THRESHOLD
+    segments: list[list[int]] = []
+    current_segment = [0]
     for i in range(1, len(features)):
-        if image_paths[sorted_indices[i]] in deleted_images:
+        image_path = image_paths[i]
+
+        if image_path in deleted_images:
             continue
-        distance = np.linalg.norm(features[i] - features[i - 1])
-        if distance < k:
-            current_segment.append(image_paths[sorted_indices[i]])
+
+        start_new_segment = False
+        if image_path in boundaries:
+            start_new_segment = True
         else:
+            distance = distances[i - 1]
+            if distance > k:
+                start_new_segment = True
+
+        if start_new_segment:
             segments.append(current_segment)
-            current_segment = [image_paths[sorted_indices[i]]]
+            current_segment = [i]
+        else:
+            current_segment.append(i)
+
     if current_segment:
         segments.append(current_segment)
-    return segments
+
+    # Merge segments that are too similar
+    merged_segments = []
+    for segment in segments:
+        if merged_segments:
+            prev_segment = merged_segments[-1]
+            prev_feat = np.mean(features[prev_segment], axis=0)
+            curr_feat = np.mean(features[segment], axis=0)
+
+            distance = np.linalg.norm(curr_feat - prev_feat)
+            if distance < k / 2:
+                merged_segments[-1].extend(segment)
+                continue
+
+        merged_segments.append(segment)
+
+    # Merge small segments
+    merged_segments = []
+    for segment in segments:
+        if len(segment) < 3 and merged_segments:
+            # check the time
+            start_image = image_paths[segment[0]]
+            end_image = image_paths[merged_segments[-1][-1]]
+            t1 = path_to_time[start_image]
+            t2 = path_to_time[end_image]
+            if abs(t2 - t1) < min_time:
+                merged_segments[-1].extend(segment)
+                continue
+        merged_segments.append(segment)
+
+    # Convert indices back to image paths
+    image_segments: list[list[str]] = []
+    for segment in merged_segments:
+        segment_paths = [image_paths[i] for i in segment]
+        image_segments.append(segment_paths)
+
+    print(f"Segmented into {len(image_segments)} segments.")
+    return image_segments
 
 
 def reset_all_segments():
@@ -63,7 +189,13 @@ def find_first_unsegmented_timestamp():
     return None
 
 
-def load_all_segments(device_id, features, image_paths, deleted_images: set[str]):
+def load_all_segments(
+    device_id,
+    features: AppFeatures,
+    deleted_images: set[str],
+    *,
+    job_id: Optional[str] = None,
+):
     # reset_all_segments()
     # first_unsegmented_time = find_first_unsegmented_timestamp()
     # if first_unsegmented_time is None:
@@ -79,11 +211,10 @@ def load_all_segments(device_id, features, image_paths, deleted_images: set[str]
     #     data={"$unset": {"segment_id": None}},
     # )
 
-    # Load all old records that have segment IDs
-    print("Loading all segments...")
+    job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
     # Check exisiting segments
     segment_ids = ImageRecord.find(
-        filter={"segment_id": {"$exists": True}},
+        filter={"segment_id": {"$exists": True}, "device": device_id},
         distinct="segment_id",
     )
     # Remove None
@@ -100,29 +231,36 @@ def load_all_segments(device_id, features, image_paths, deleted_images: set[str]
                 {"segment_id": None},
             ],
             "deleted": {"$ne": True},
+            "device": device_id,
         },
         sort=[("image_path", -1)],
     )
 
-    image_to_index = {image_path: idx for idx, image_path in enumerate(image_paths)}
-    image_paths = [
+    image_to_index = features[device_id]["siglip"].image_paths_to_index
+    new_records = list(new_records)
+    print(f"Found {len(new_records)} new images to segment.")
+    paths = [
         record.image_path
         for record in new_records
         if record.image_path in image_to_index
     ]
 
-    if len(image_paths) < 100:
-        print("Not enough new images to segment. Exiting.")
+    if len(paths) < 100:
+        print(f"Not enough new images to segment ({len(paths)}). Exiting.")
         return
 
-    features = np.array(
-        [features[image_to_index[image_path]] for image_path in image_paths]
+    feats = np.array(
+        [features[device_id]["siglip"].features[image_to_index[image_path]] for image_path in paths]
     )
 
-    print(f"Segmenting {len(image_paths)} images...")
-    print(f"Features shape for segmentation: {features.shape}")
-    segments = segment_images(features, image_paths, deleted_images, reverse=False)
+    print(f"Segmenting {len(feats)} images...")
+    print(f"Features shape for segmentation: {feats.shape}")
+    segments = segment_images(device_id, feats, paths, deleted_images, reverse=False)
     print(f"Total segments created: {len(segments)}")
+
+    job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
+    tracked_files = job.get("all_files", []) if job else []
+    tracked_files_set = set(tracked_files)
 
     for i, segment in tqdm(
         enumerate(segments), desc="Updating segments", total=len(segments)
@@ -131,15 +269,84 @@ def load_all_segments(device_id, features, image_paths, deleted_images: set[str]
             filter={"image_path": {"$in": segment}},
             data={"$set": {"segment_id": max_id + i}},
         )
-        describe_segment(
-            device_id,
-            [compress_image(i) for i in segment],
-            segment_idx=max_id + i,
-        )
-        date = segment[0].split("_")[0]
-        date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-        DaySummaryRecord.update_one(
-            {"date": date},
-            {"$set": {"updated": True}},
-            upsert=True,
-        )
+
+        try:
+            describe_segment(
+                device_id,
+                [compress_image(f"{device_id}/{i}") for i in segment],
+                segment_idx=max_id + i,
+            )
+
+            date = segment[0].split("_")[0]
+            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+            DaySummaryRecord.update_one(
+                {"date": date},
+                {"$set": {"updated": True}},
+                upsert=True,
+            )
+        except Exception:
+            pass
+
+        if job is not None and tracked_files_set:
+            if (i + 1) % 10 == 0:
+                job["progress"] = 0.7 + (i / len(segments)) * 0.3
+                job["message"] = (
+                    f"Segmented {i}/{len(tracked_files)} images. Currently processing segment {max_id + i}."
+                )
+                redis_client.set_json(f"processing_job:{job_id}", job)
+
+    if job is not None:
+        job["progress"] = 1.0
+        job["message"] = "Segmentation complete."
+        redis_client.set_json(f"processing_job:{job_id}", job)
+
+
+def pick_representative_index_for_segment(
+    segment_feature_indices: List[int],
+    paths: List[str],
+    feats: np.ndarray,
+    query_embedding: Optional[np.ndarray] = None,
+    alpha_centroid: float = 0.5,
+) -> List[str]:
+    """
+    segment_feature_indices: indices of images belonging to the segment
+    all_features: np.ndarray of shape (N, D) with CLIP features for the whole day
+
+    Returns:
+        index (int) into all_features of the representative image.
+    """
+    if len(segment_feature_indices) == 0:
+        raise ValueError("Segment has no images.")
+
+    seg_feats = feats[segment_feature_indices]  # (N_seg, D)
+
+    # L2-normalise (defensive; CLIP features are often already normalised)
+    seg_feats = seg_feats / np.linalg.norm(seg_feats, axis=1, keepdims=True)
+
+    # Centroid of the segment
+    centroid = seg_feats.mean(axis=0)
+    centroid /= np.linalg.norm(centroid) + 1e-8
+
+    # Cosine similarity to centroid == dot product (after normalisation)
+    sim_centroid = seg_feats @ centroid  # (N_seg,)
+    num_thumbnails = choose_num_thumbnails(len(segment_feature_indices))
+
+    if query_embedding is not None:
+        # Normalise query embedding
+        q = query_embedding.astype(np.float32)
+        q /= np.linalg.norm(q) + 1e-8
+
+        # Similarity to query
+        sim_query = seg_feats @ q  # (N_seg,)
+
+        # Combine both: weighted sum
+        # alpha_centroid * sim_centroid + (1 - alpha_centroid) * sim_query
+        alpha = alpha_centroid
+        combined = alpha * sim_centroid + (1.0 - alpha) * sim_query
+        best_indices = np.argsort(combined)[-num_thumbnails:]
+    else:
+        # No query: just use centroid similarity
+        best_indices = np.argsort(sim_centroid)[-num_thumbnails:]
+
+    best_images = [paths[segment_feature_indices[i]] for i in best_indices]
+    return best_images

@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 import cv2
-from database.types import ObjectDetection
+from app_types import ObjectDetection
 from ultralytics import YOLO
 from deepface import DeepFace
 

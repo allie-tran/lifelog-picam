@@ -10,80 +10,16 @@ from google.genai.errors import ClientError, ServerError
 from partialjson.json_parser import JSONParser
 from rich import print as rprint
 
-from scripts.llm import MixedContent, get_visual_content
-from scripts.openai import openai_llm
+from llm import MixedContent, get_visual_content, llm
+from constants import CATEGORIES
 
 parser = JSONParser()
-
-CATEGORIES = {
-    # Work – Research & Writing
-    "Paper Writing": "#1f618d",
-    "Grant Writing": "#1f618d",
-    "Coding / Experimenting": "#1f618d",
-    "Data Analysis": "#1f618d",
-    "Reading Papers": "#1f618d",
-    "Email & Admin": "#1f618d",
-    "Supervising Students": "#1f618d",
-    "Giving Feedback": "#1f618d",
-    # Meetings & Collaboration
-    "Team Meeting": "#117864",
-    "One-to-One Meeting": "#117864",
-    "Conference Call": "#117864",
-    "Seminar / Talk": "#117864",
-    "Conference / Workshop": "#117864",
-    "Presentation Prep": "#117864",
-    # Teaching & Outreach
-    "Lecturing": "#f39c12",
-    "Lab / Tutorial": "#f39c12",
-    "Grading / Assessment": "#f39c12",
-    "Course Prep": "#f39c12",
-    "Outreach / Public Talk": "#f39c12",
-    # Travel
-    "Commuting": "#7f8c8d",
-    "Walking on Campus": "#7f8c8d",
-    "Travelling (Train)": "#7f8c8d",
-    "Travelling (Plane)": "#7f8c8d",
-    "Conference Travel": "#7f8c8d",
-    "Packing / Unpacking": "#7f8c8d",
-    # Food & Drink
-    "Eating": "#e67e22",
-    "Drinking": "#e67e22",
-    "Making Coffee": "#e67e22",
-    "Making Tea": "#e67e22",
-    "Cooking at Home": "#e67e22",
-    "Eating Out": "#e67e22",
-    # Leisure & Wellbeing
-    "Reading": "#9b59b6",
-    "Watching TV / Series": "#9b59b6",
-    "Listening to Music": "#9b59b6",
-    "Exercise / Gym": "#9b59b6",
-    "Walking for Leisure": "#9b59b6",
-    "Photography / Journaling": "#9b59b6",
-    "Relaxing / Doing Nothing": "#9b59b6",
-    # Social & Personal
-    "Talking with Friends": "#c0392b",
-    "Video Call with Partner": "#c0392b",
-    "Family Time": "#c0392b",
-    "Shopping / Errands": "#c0392b",
-    "House Cleaning": "#c0392b",
-    "Laundry / Chores": "#c0392b",
-    "Organizing Workspace": "#c0392b",
-    # Sleep / Downtime
-    "Sleeping": "#2c3e50",
-    "Resting": "#2c3e50",
-    "Napping": "#2c3e50",
-    # Miscellaneous
-    "Transit / Waiting": "#95a5a6",
-    "Taking Notes": "#95a5a6",
-    "Unclear Activity": "#95a5a6",
-    "No Activity": "#000000",
-}
 
 
 def get_description_from_frames(
     instructions: list[str], image_bytes: list[bytes]
 ) -> dict[str, str] | None:
-    description = openai_llm.generate_from_mixed_media(
+    description = llm.generate_from_mixed_media(
         get_visual_content(image_bytes)
         + [MixedContent(type="text", content=instructions) for instructions in instructions]
     )
@@ -106,7 +42,7 @@ def get_description_from_frames(
 def get_rewritten_description(description, instructions: list[str] = []):
     if len(instructions) >= 2 and instructions[1]:
         prompt = f"Rewrite these sentences:\n{description}.\n\n{instructions[1]}"
-        rewritten_response: str = openai_llm.generate_from_text(prompt)  # type: ignore
+        rewritten_response: str = llm.generate_from_text(prompt)  # type: ignore
         return rewritten_response.strip()
     else:
         # If no instructions are provided, just return the description

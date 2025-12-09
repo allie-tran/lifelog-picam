@@ -4,13 +4,14 @@ import {
     Card,
     CardContent,
     Chip,
+    Divider,
     Grid,
     LinearProgress,
     Stack,
     Tooltip,
     Typography,
 } from '@mui/material';
-import { SummarySegment } from '@utils/types';
+import { DaySummary, SummarySegment } from '@utils/types';
 import { getDaySummary, processDate } from 'apis/process';
 import { useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
@@ -18,6 +19,8 @@ import useSWR from 'swr';
 import 'utils/animation.css';
 import { CategoryPieChart } from './CategoryChart';
 import { CATEGORIES } from 'constants/activityColors';
+import ImageWithDate from './ImageWithDate';
+import React from 'react';
 
 const minutesToHM = (m: number): string => {
     const total = Math.round(m);
@@ -31,14 +34,14 @@ const minutesToHM = (m: number): string => {
 const safePercent = (num: number, denom: number): number =>
     denom > 0 ? (num / denom) * 100 : 0;
 
-const DaySummary = () => {
+const DaySummaryComponent = () => {
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
-    const { data: daySummary, isLoading } = useSWR(
+    const { data: daySummary, isLoading, mutate } = useSWR(
         { date, deviceId },
-        () => (date ? getDaySummary(deviceId, date) : null),
+        () => getDaySummary(deviceId, date || ''),
         {
             revalidateOnFocus: false,
         }
@@ -70,7 +73,8 @@ const DaySummary = () => {
         aloneMinutes,
         categoryMinutes,
         foodDrinkMinutes,
-        foodDrinkImages,
+        foodDrinkSegments,
+        foodDrinkSummary,
         totalImages,
         totalMinutes,
     } = daySummary;
@@ -99,230 +103,41 @@ const DaySummary = () => {
             </Typography>
             <Grid container spacing={2}>
                 {/* Overview */}
-                <Grid size={4}>
-                    <Card variant="outlined">
-                        <CardContent>
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                gutterBottom
-                            >
-                                Overview
-                            </Typography>
-
-                            <Typography variant="h6">
-                                {minutesToHM(totalMinutes)}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                Total captured time
-                            </Typography>
-
-                            <Box mt={2}>
-                                <Typography variant="body2">
-                                    Images: <strong>{totalImages}</strong>
-                                </Typography>
-
-                                <Stack
-                                    direction="row"
-                                    spacing={1}
-                                    mt={1}
-                                    flexWrap="wrap"
-                                >
-                                    <Chip
-                                        size="small"
-                                        label={`Social ${socialPercent.toFixed(0)}%`}
-                                        color="primary"
-                                        variant="outlined"
-                                    />
-                                    <Chip
-                                        size="small"
-                                        label={`Alone ${alonePercent.toFixed(0)}%`}
-                                        variant="outlined"
-                                    />
-                                </Stack>
-                            </Box>
-                        </CardContent>
-                    </Card>
+                <Grid container size={4}>
+                    <Grid size={12}>
+                        <OverviewSummary
+                            totalMinutes={totalMinutes}
+                            totalImages={totalImages}
+                            socialPercent={socialPercent}
+                            alonePercent={alonePercent}
+                        />
+                    </Grid>
+                    <Grid size={12}>{SocialSummary()}</Grid>
+                    <Grid size={12}>
+                        <ActivitySummary
+                            categoryEntries={categoryEntries}
+                            categoryMinutes={categoryMinutes}
+                            totalMinutes={totalMinutes}
+                        />
+                    </Grid>
                 </Grid>
-
-                {/* Social vs alone */}
-                <Grid size={4}>
-                    <Card variant="outlined">
-                        <CardContent>
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                gutterBottom
-                            >
-                                Social vs alone
-                            </Typography>
-
-                            <Stack spacing={1}>
-                                <Stack
-                                    direction="row"
-                                    justifyContent="space-between"
-                                >
-                                    <Typography variant="body2">
-                                        Social
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        {minutesToHM(socialMinutes)} (
-                                        {socialPercent.toFixed(0)}%)
-                                    </Typography>
-                                </Stack>
-                                <LinearProgress
-                                    variant="determinate"
-                                    value={socialPercent}
-                                />
-
-                                <Stack
-                                    direction="row"
-                                    justifyContent="space-between"
-                                >
-                                    <Typography variant="body2">
-                                        Alone
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        {minutesToHM(aloneMinutes)} (
-                                        {alonePercent.toFixed(0)}%)
-                                    </Typography>
-                                </Stack>
-                                <LinearProgress
-                                    variant="determinate"
-                                    value={alonePercent}
-                                />
-                            </Stack>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                {/* Food & drink */}
-                <Grid size={4}>
-                    <Card variant="outlined" sx={{ height: '100%' }}>
-                        <CardContent
-                            sx={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                height: '100%',
-                            }}
-                        >
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                gutterBottom
-                            >
-                                Food & drink
-                            </Typography>
-
-                            <Typography variant="body2">
-                                Time:{' '}
-                                <strong>{minutesToHM(foodDrinkMinutes)}</strong>
-                            </Typography>
-                            <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                mb={2}
-                            >
-                                Images: {foodDrinkImages.length}
-                            </Typography>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                {/* Category breakdown */}
-                {/* Activity categories */}
-                <Grid size={6}>
-                    <Card variant="outlined">
-                        <CardContent>
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                gutterBottom
-                            >
-                                Activity categories
-                            </Typography>
-
-                            {categoryEntries.length === 0 && (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                >
-                                    No category data.
-                                </Typography>
-                            )}
-
-                            <Stack
-                                mt={4}
-                                justifyContent="center"
-                                alignItems="center"
-                            >
-                                <CategoryPieChart
-                                    categoryMinutes={categoryMinutes}
-                                    totalMinutes={totalMinutes}
-                                />
-                            </Stack>
-                        </CardContent>
-                    </Card>
-                </Grid>
-                <Grid size={6}>
-                    <Card variant="outlined">
-                        <CardContent>
-                            {daySummary && (
-                                <Typography variant="body1">
-                                    {daySummary.summaryText ||
-                                        'No summary available for this day.'}
-                                </Typography>
-                            )}
-                        </CardContent>
-                    </Card>
-                </Grid>
-                {/* Timeline */}
-                <Grid size={12}>
-                    <Card variant="outlined">
-                        <CardContent>
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                gutterBottom
-                            >
-                                Timeline
-                            </Typography>
-                            {daySummary && (
-                                <Stack
-                                    direction="row"
-                                    spacing={0}
-                                    sx={{
-                                        overflowX: 'auto',
-                                        width: '100%',
-                                        pt: 1,
-                                    }}
-                                    flexWrap="wrap"
-                                >
-                                    {daySummary.segments.map(
-                                        (
-                                            segment: SummarySegment,
-                                            index: number
-                                        ) => (
-                                            <Tooltip
-                                                title={`${segment.activity}: ${segment.startTime} - ${segment.endTime}`}
-                                                key={index}
-                                            >
-                                                <Box
-                                                    sx={{
-                                                        height: 48,
-                                                        width: 10,
-                                                        backgroundColor:
-                                                            CATEGORIES[
-                                                                segment.activity
-                                                            ] || '#bdc3c7',
-                                                    }}
-                                                    key={index}
-                                                ></Box>
-                                            </Tooltip>
-                                        )
-                                    )}
-                                </Stack>
-                            )}
-                        </CardContent>
-                    </Card>
+                <Grid container size={8}>
+                    <Grid size={12}>
+                        <FoodDrinkSummary
+                            foodDrinkMinutes={foodDrinkMinutes}
+                            foodDrinkSummary={foodDrinkSummary}
+                            foodDrinkSegments={foodDrinkSegments}
+                        />
+                    </Grid>
+                    <Grid size={12}>
+                        {' '}
+                        {daySummary && (
+                            <SummaryText summaryText={daySummary.summaryText} />
+                        )}
+                    </Grid>
+                    <Grid size={12}>
+                        {<Timeline daySummary={daySummary} />}
+                    </Grid>
                 </Grid>
             </Grid>
 
@@ -333,13 +148,289 @@ const DaySummary = () => {
                         alert(
                             'The day is being processed. Please refresh later.'
                         );
+                        mutate();
                     })
                 }
             >
-                Reset
+                Process Unprocessed Images
+            </Button>
+            <Button
+                variant="contained"
+                onClick={() =>
+                    processDate(deviceId, date || '', true).then(() => {
+                        alert(
+                            'The day is being processed. Please refresh later.'
+                        );
+                        mutate();
+                    })
+                }
+            >
+                Re-process Entire Day
             </Button>
         </Stack>
     );
+
+    function SocialSummary() {
+        return (
+            <Card variant="outlined">
+                <CardContent>
+                    <Typography
+                        variant="subtitle2"
+                        color="text.secondary"
+                        gutterBottom
+                    >
+                        Social vs alone
+                    </Typography>
+
+                    <Stack spacing={1}>
+                        <Stack direction="row" justifyContent="space-between">
+                            <Typography variant="body2">Social</Typography>
+                            <Typography variant="body2">
+                                {minutesToHM(socialMinutes)} (
+                                {socialPercent.toFixed(0)}%)
+                            </Typography>
+                        </Stack>
+                        <LinearProgress
+                            variant="determinate"
+                            value={socialPercent}
+                        />
+
+                        <Stack direction="row" justifyContent="space-between">
+                            <Typography variant="body2">Alone</Typography>
+                            <Typography variant="body2">
+                                {minutesToHM(aloneMinutes)} (
+                                {alonePercent.toFixed(0)}%)
+                            </Typography>
+                        </Stack>
+                        <LinearProgress
+                            variant="determinate"
+                            value={alonePercent}
+                        />
+                    </Stack>
+                </CardContent>
+            </Card>
+        );
+    }
 };
 
-export default DaySummary;
+export default DaySummaryComponent;
+
+function SummaryText({ summaryText }: { summaryText: string }) {
+    return (
+        <Card variant="outlined">
+            <CardContent>
+                <Typography variant="body2" fontStyle="italic" sx={{ whiteSpace: 'pre-line' }}>
+                    {summaryText || 'No summary available for this day.'}
+                </Typography>
+            </CardContent>
+        </Card>
+    );
+}
+
+const OverviewSummary = ({
+    totalMinutes,
+    totalImages,
+    socialPercent,
+    alonePercent,
+}: {
+    totalMinutes: number;
+    totalImages: number;
+    socialPercent: number;
+    alonePercent: number;
+}) => {
+    return (
+        <Card variant="outlined">
+            <CardContent>
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Overview
+                </Typography>
+
+                <Typography variant="h6">
+                    {minutesToHM(totalMinutes)}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                    Total captured time
+                </Typography>
+
+                <Box mt={2}>
+                    <Typography variant="body2">
+                        Images: <strong>{totalImages}</strong>
+                    </Typography>
+
+                    <Stack direction="row" spacing={1} mt={1} flexWrap="wrap">
+                        <Chip
+                            size="small"
+                            label={`Social ${socialPercent.toFixed(0)}%`}
+                            color="primary"
+                            variant="outlined"
+                        />
+                        <Chip
+                            size="small"
+                            label={`Alone ${alonePercent.toFixed(0)}%`}
+                            variant="outlined"
+                        />
+                    </Stack>
+                </Box>
+            </CardContent>
+        </Card>
+    );
+};
+
+function Timeline({ daySummary }: { daySummary: DaySummary }) {
+    return (
+        <Card variant="outlined">
+            <CardContent>
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Timeline
+                </Typography>
+                {daySummary && (
+                    <Stack
+                        direction="row"
+                        spacing={0}
+                        sx={{
+                            overflowX: 'auto',
+                            width: '100%',
+                            pt: 1,
+                        }}
+                        flexWrap="wrap"
+                    >
+                        {daySummary.segments.map(
+                            (segment: SummarySegment, index: number) => (
+                                <Tooltip
+                                    title={`${segment.activity}: ${segment.startTime} - ${segment.endTime}`}
+                                    key={index}
+                                    followCursor
+                                >
+                                    <Box
+                                        sx={{
+                                            height: 48,
+                                            width: segment.duration / 3600 / 20,
+                                            backgroundColor:
+                                                CATEGORIES[segment.activity] ||
+                                                '#bdc3c7',
+                                        }}
+                                        key={index}
+                                    ></Box>
+                                </Tooltip>
+                            )
+                        )}
+                    </Stack>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+const ActivitySummary = ({
+    categoryEntries,
+    categoryMinutes,
+    totalMinutes,
+}: {
+    categoryEntries: [string, number][];
+    categoryMinutes: { [key: string]: number };
+    totalMinutes: number;
+}) => {
+    return (
+        <Card variant="outlined">
+            <CardContent>
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Activity categories
+                </Typography>
+
+                {categoryEntries.length === 0 && (
+                    <Typography variant="body2" color="text.secondary">
+                        No category data.
+                    </Typography>
+                )}
+
+                <Stack mt={4} justifyContent="center" alignItems="center">
+                    <CategoryPieChart
+                        categoryMinutes={categoryMinutes}
+                        totalMinutes={totalMinutes}
+                    />
+                </Stack>
+            </CardContent>
+        </Card>
+    );
+};
+
+function FoodDrinkSummary({
+    foodDrinkMinutes,
+    foodDrinkSummary,
+    foodDrinkSegments,
+}: {
+    foodDrinkMinutes: number;
+    foodDrinkSummary: string;
+    foodDrinkSegments: SummarySegment[];
+}) {
+    return (
+        <Card variant="outlined" sx={{ height: '100%' }}>
+            <CardContent
+                sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    height: '100%',
+                }}
+            >
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Food & drink
+                </Typography>
+
+                <Typography variant="body2">
+                    Time: <strong>{minutesToHM(foodDrinkMinutes)}</strong>
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 1, mb: 2, whiteSpace: 'pre-line' }}>
+                    {foodDrinkSummary ||
+                        'No food or drink activities detected.'}
+                </Typography>
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                        overflow: 'auto',
+                        maxWidth: '70dvw',
+                        mb: 2,
+                        pb: 2,
+                        flexGrow: 1,
+                    }}
+                >
+                    {foodDrinkSegments.map((segment, index) => (
+                        <React.Fragment key={index}>
+                            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
+                                {segment.startTime} {segment.endTime}
+                            </Typography>
+                            {segment.representativeImages?.map(
+                                (image, imgIndex) => (
+                                    <ImageWithDate
+                                        key={`${index}-${imgIndex}`}
+                                        image={image}
+                                        height={'220px'}
+                                        fontSize={'12px'}
+                                        disableDelete
+                                    />
+                                )
+                            )}
+                            <Divider orientation="vertical" flexItem />
+                        </React.Fragment>
+                    ))}
+                </Stack>
+            </CardContent>
+        </Card>
+    );
+}

@@ -64,6 +64,21 @@ class SIGLIP:
                     outputs = outputs / outputs.norm(dim=-1, keepdim=True)
         return outputs.cpu().float().numpy()
 
+    def encode_texts(self, texts: list[str], normalize=False) -> torch.Tensor:
+        inputs = self.processor(
+            text=texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
+        inputs.to(device)
+        with torch.no_grad():
+            with torch.autocast(device):
+                outputs = self.model.get_text_features(**inputs)
+                if normalize:
+                    outputs = outputs / outputs.norm(dim=-1, keepdim=True)
+        return outputs.cpu().float()
+
     def encode_image(self, image_path: str) -> Array1D[np.float32]:
         image_read = PILImage.open(image_path).convert("RGB")
         inputs = self.processor(

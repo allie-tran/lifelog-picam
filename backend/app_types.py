@@ -1,12 +1,16 @@
-from typing import Annotated, Dict, Literal, TypeVar
-from fastapi import FastAPI
+from collections import defaultdict
 from datetime import datetime
+from typing import Annotated, Dict, List, Literal, Optional, TypeVar, Any, Generic
+
 import numpy as np
 import numpy.typing as npt
-from collections import defaultdict
+from fastapi import FastAPI
+from pydantic import BaseModel, RootModel, computed_field, GetPydanticSchema, InstanceOf
+from typing_extensions import TypeAlias
+from typing import TypeVar, Generic, Callable, ClassVar, Dict
+from pydantic import BaseModel, Field
 
 from dependencies import CamelCaseModel
-
 
 DType = TypeVar("DType", bound=np.generic)
 
@@ -16,19 +20,115 @@ Array4 = Annotated[npt.NDArray[DType], Literal[4]]
 Array3x3 = Annotated[npt.NDArray[DType], Literal[3, 3]]
 ArrayNxNx3 = Annotated[npt.NDArray[DType], Literal["N", "N", 3]]
 
-class CustomFastAPI(FastAPI):
-    features: Dict[str, Array2D[np.float64 | np.float32]]
-    image_paths: Dict[str, list[str]]
+RootDictType = TypeVar("RootDictType", bound=BaseModel)
+class DictRootModel(BaseModel, Generic[RootDictType]):
+    root: Dict[str, RootDictType] = Field(default_factory=dict)
+    _default_factory: ClassVar[Callable[[], RootDictType]]
 
-    retrieved_videos: Dict[str, np.ndarray]  # Indices of retrieved videos for QB norm
-    normalizing_sum: Dict[str, np.ndarray]  # Normalizing sum for QB norm
-    low_visual_indices: Dict[str, np.ndarray]  # Indices of low visual density images
+    def __init__(self):
+        super().__init__(root={})
+
+    def __getitem__(self, key: str) -> RootDictType:
+        if key not in self.root:
+            # create and store default
+            return self._default_factory()
+        return self.root[key]
+
+    def __setitem__(self, key: str, value: RootDictType) -> None:
+        self.root[key] = value
+
+    def keys(self):
+        return self.root.keys()
+
+    def values(self):
+        return self.root.values()
+
+    def items(self):
+        return self.root.items()
+
+PydanticNDArray: TypeAlias = Annotated[
+    Array2D[np.float32],
+    GetPydanticSchema(
+        lambda _s, h: h(InstanceOf[np.ndarray]), lambda _s, h: h(InstanceOf[np.ndarray])
+    ),
+]
+
+class CLIPFeatures(BaseModel):
+    features: PydanticNDArray = Field(
+        default_factory=lambda: np.empty((0, 512), dtype=np.float32)
+    )
+    image_paths: list[str] = []
+    image_paths_to_index: Dict[str, int] = {}
+
+class DeviceFeatures(DictRootModel[CLIPFeatures]):
+    _default_factory: ClassVar[Callable[[], CLIPFeatures]] = CLIPFeatures
+
+class AppFeatures(DictRootModel[DeviceFeatures]):
+    _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
+
+class CustomFastAPI(FastAPI):
+    models: List[str] = ["siglip", "conclip"]
+    features: AppFeatures = AppFeatures.model_validate({})
+
+    retrieved_videos: Dict[str, np.ndarray] = defaultdict(
+        lambda: np.array([], dtype=np.float32)
+    )
+    normalizing_sum: Dict[str, np.ndarray] = defaultdict(
+        lambda: np.array([], dtype=np.float32)
+    )
+    low_visual_indices: Dict[str, np.ndarray] = defaultdict(
+        lambda: np.array([], dtype=np.int32)
+    )
     images_with_low_density: set[str] = set()
 
-    segments: Dict[str, list[list[str]]] = defaultdict(list)
-    image_to_segment: Dict[str, dict[str, int]] = defaultdict(dict)
+    segments: Dict[str, list[list[str]]] = defaultdict(
+        list
+    )  # device_id -> list of segments (each segment is a list of image paths)
+    image_to_segment: Dict[str, dict[str, int]] = defaultdict(
+        dict
+    )  # device_id -> (image_path -> segment_index)
 
     last_saved: datetime = datetime.now()
+
+
+class ObjectDetection(BaseModel):
+    label: str
+    confidence: float
+    bbox: list[int]  # [x_min, y_min, x_max, y_max]
+    embedding: Optional[list[float]] = None
+
+
+class ProcessedInfo(BaseModel):
+    yolo: bool = False
+    face_recognition: bool = False
+    encoded: bool = False
+
+
+class LifelogImage(CamelCaseModel):
+    device: str
+    image_path: str  # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
+    timestamp: float  # ISO 8601 format
+    thumbnail: str
+    is_video: bool
+
+    objects: list[ObjectDetection] = []
+    people: list[ObjectDetection] = []
+
+    deleted: bool = False
+
+    date: str
+
+    segment_id: Optional[int] = None
+    activity: str = ""
+    activity_description: str = ""
+    activity_confidence: str = ""
+
+    processed: ProcessedInfo = ProcessedInfo()
+
+    @computed_field
+    @property
+    def hour(self) -> str:
+        return self.image_path.split("_")[1][:2]
 
 
 class SummarySegment(CamelCaseModel):
@@ -37,6 +137,9 @@ class SummarySegment(CamelCaseModel):
     start_time: str
     end_time: str
     duration: int
+    representative_image: LifelogImage | None = None
+    representative_images: list[LifelogImage] = []
+
 
 class DaySummary(CamelCaseModel):
     date: str
@@ -44,3 +147,19 @@ class DaySummary(CamelCaseModel):
     summary_text: str = ""
     updated: bool = False
     device: str = ""
+
+    # Social vs Alone
+    social_minutes: float = 0.0
+    alone_minutes: float = 0.0
+
+    # Time Distribution
+    category_minutes: Dict[str, float] = {}
+
+    # Food / Drink Patterns
+    food_drink_minutes: float = 0.0
+    food_drink_segments: list[SummarySegment] = []
+    food_drink_summary: str = ""
+
+    # Optional: bookkeeping fields
+    total_images: int = 0
+    total_minutes: float = 0.0
