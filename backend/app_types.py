@@ -67,7 +67,7 @@ class AppFeatures(DictRootModel[DeviceFeatures]):
     _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
 
 class CustomFastAPI(FastAPI):
-    models: List[str] = ["siglip", "conclip"]
+    models: List[str] = ["conclip"]
     features: AppFeatures = AppFeatures.model_validate({})
 
     retrieved_videos: Dict[str, np.ndarray] = defaultdict(

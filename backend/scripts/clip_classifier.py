@@ -2,7 +2,7 @@
 import torch
 import numpy as np
 from typing import List
-from visual import siglip_model
+from visual import clip_model
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -42,7 +42,7 @@ class ClipPromptClassifier:
         all_class_embs = []
         with torch.no_grad():
             for cname in self.class_names:
-                text_feat = siglip_model.encode_texts([template.format(cname) for template in self.prompt_templates], normalize=True)
+                text_feat = clip_model.encode_texts([template.format(cname) for template in self.prompt_templates], normalize=True)
                 mean_feat = text_feat.mean(dim=0)
                 mean_feat = mean_feat / mean_feat.norm()
                 all_class_embs.append(mean_feat)

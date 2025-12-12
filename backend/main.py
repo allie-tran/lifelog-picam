@@ -22,7 +22,7 @@ from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel
 from scripts.segmentation import load_all_segments
-from constants import DIR, LOCAL_PORT
+from constants import DIR, LOCAL_PORT, SEARCH_MODEL
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
@@ -73,8 +73,8 @@ async def lifespan(app: CustomFastAPI):
             )
     redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
     await FastAPILimiter.init(redis_connection)
-    app.features = load_features()
-    update_app(app)
+    app.features = load_features(app)
+    # update_app(app)
     yield
     await FastAPILimiter.close()
     save_features(app.features)
@@ -478,8 +478,8 @@ def search(
     results = retrieve_image(
         device,
         query,
-        app.features[device]["siglip"].features,
-        app.features[device]["siglip"].image_paths,
+        app.features[device][SEARCH_MODEL].features,
+        app.features[device][SEARCH_MODEL].image_paths,
         deleted_set,
         k=100,
         retrieved_videos=app.retrieved_videos[device],
@@ -506,8 +506,8 @@ def similar_images(
     results = get_similar_images(
         device,
         image,
-        app.features[device]["siglip"].features,
-        app.features[device]["siglip"].image_paths,
+        app.features[device][SEARCH_MODEL].features,
+        app.features[device][SEARCH_MODEL].image_paths,
         delete_set,
         k=100,
         retrieved_videos=app.retrieved_videos[device],

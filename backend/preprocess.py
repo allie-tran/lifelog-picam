@@ -2,21 +2,27 @@ import os
 from typing import List
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageDraw
 
-from app_types import AppFeatures, CLIPFeatures, DeviceFeatures, ObjectDetection
-from constants import DIR, THUMBNAIL_DIR
+from app_types import AppFeatures, CLIPFeatures, CustomFastAPI, DeviceFeatures, ObjectDetection
+from constants import DIR, SEARCH_MODEL, THUMBNAIL_DIR
+import cv2
 from database.types import ImageRecord
-from scripts.conclip import conclip
+from visual import clip_model
 from scripts.querybank_norm import BETA, apply_qb_norm_to_query
-from visual import siglip_model
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
-def compress_image(image_path, quality=85):
+def get_thumbnail_path(image_path: str) -> tuple[str, bool]:
     rel_path = image_path.replace(DIR + "/", "")
     output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     if os.path.exists(output_path):
+        return output_path, True
+    return output_path, False
+
+def compress_image(image_path, quality=85):
+    output_path, exists = get_thumbnail_path(image_path)
+    if exists:
         return output_path
 
     img = Image.open(image_path)
@@ -31,6 +37,7 @@ def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_streng
     image = Image.open(image_path)
     for box in boxes:
         x1, y1, x2, y2 = box.bbox
+
         # expand box by 10%
         box_width = x2 - x1
         box_height = y2 - y1
@@ -38,6 +45,7 @@ def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_streng
         y1 = max(0, int(y1 - box_height * 0.1))
         x2 = min(image.width, int(x2 + box_width * 0.1))
         y2 = min(image.height, int(y2 + box_height * 0.1))
+
         try:
             # adjusting the strength of the blur based on box size
             box_area = (x2 - x1) * (y2 - y1)
@@ -49,7 +57,15 @@ def get_blurred_image(image_path: str, boxes: List[ObjectDetection], blur_streng
             blurred_region = region.filter(
                 ImageFilter.GaussianBlur(radius=adjusted_blur_strength)
             )
-            image.paste(blurred_region, (x1, y1))
+
+            # Paste in an oval
+            mask = Image.new("L", (x2 - x1, y2 - y1), 0)
+            draw = ImageDraw.Draw(mask)
+            draw.ellipse(
+                [(0, 0), (x2 - x1, y2 - y1)],
+                fill=255,
+            )
+            image.paste(blurred_region, (x1, y1), mask)
         except Exception as e:
             print(f"Error blurring region ({x1}, {y1}, {x2}, {y2}): {e}")
             continue
@@ -88,26 +104,19 @@ feature_path = "siglip_features.npz"
 DIM = 1152
 
 
-def load_features() -> AppFeatures:
+def load_features(app: CustomFastAPI) -> AppFeatures:
     app_features = AppFeatures()
     try:
         for device in os.listdir(feature_dir):
             device_features = DeviceFeatures()
-            models = [
-                f.split(".")[0]
-                for f in os.listdir(f"{feature_dir}/{device}")
-                if f.endswith(".features.npz")
-            ]
-            for model in models:
+            for model in app.models:
                 data = np.load(
                     f"{feature_dir}/{device}/{model}.features.npz", allow_pickle=True
                 )
                 features = data["features"]
                 image_paths = data["image_paths"].tolist()
 
-
                 # Check if files exist: !TODO
-
                 print(
                     f"Loaded {len(image_paths)} features for device {device}, model {model}"
                 )
@@ -150,9 +159,7 @@ def encode_image(
     device_id: str,
     image_path: str,
     features: CLIPFeatures,
-    model_name="siglip",
 ):
-    model = siglip_model if model_name == "siglip" else conclip
     features.image_paths = features.image_paths[: len(features.features)]
     try:
         path = f"{DIR}/{device_id}/{image_path}"
@@ -162,7 +169,7 @@ def encode_image(
             if new_path:
                 path = new_path
 
-        vector = model.encode_image(path)
+        vector = clip_model.encode_image(path)
         features.image_paths.append(image_path)
         if len(vector.shape) == 0:
             vector = vector.reshape(1, -1)
@@ -197,7 +204,7 @@ def retrieve_image(
         return {}
 
     feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
-    query_vector = siglip_model.encode_text(text, normalize=True)
+    query_vector = clip_model.encode_text(text, normalize=True)
 
     # Apply query bank normalization
     if retrieved_videos is not None and normalizing_sum is not None:
@@ -224,14 +231,14 @@ def retrieve_image(
     top_indices = np.argsort(similarities)[-k:][::-1]
     top_images = np.array(paths)[top_indices]
 
-    sort_by_timestamp = true
+    sort_by_timestamp = True
     if sort_by_timestamp:
         image_records = ImageRecord.find(
             filter={
                 "device": device_id,
                 "image_path": {"$in": top_images.tolist()},
             },
-            sort=[("timestamp", 1)],
+            sort=[("timestamp", -1)],
         )
         # group by segment id
         segments: dict[str, List[ImageRecord]] = {}
@@ -289,7 +296,7 @@ def get_similar_images(
                 if new_path:
                     path = new_path
 
-            query_vector = siglip_model.encode_image(path)
+            query_vector = clip_model.encode_image(path)
             query_vector = query_vector / np.linalg.norm(query_vector)
         except Exception as e:
             print(f"Error encoding image {image}: {e}")

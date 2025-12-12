@@ -6,7 +6,7 @@ from preprocess import compress_image
 
 import numpy as np
 from app_types import AppFeatures
-from constants import SEGMENT_THRESHOLD
+from constants import SEARCH_MODEL, SEGMENT_THRESHOLD
 from database.types import DaySummaryRecord, ImageRecord
 from sessions.redis import RedisClient
 from tqdm.auto import tqdm
@@ -81,13 +81,12 @@ def segment_images(
     features = features[sorted_indices]
     image_paths = [image_paths[i] for i in sorted_indices]
 
-
     # Smooth the features by exponential moving average
     features = ema_features(features, alpha=0.3)
     # Normalise
     features = features / np.linalg.norm(features, axis=1, keepdims=True)
     k = SEGMENT_THRESHOLD
-    k = 0.5
+    # k = 0.5
 
     # Calculate all distances
     distances = np.linalg.norm(features[1:] - features[:-1], axis=1)
@@ -236,7 +235,7 @@ def load_all_segments(
         sort=[("image_path", -1)],
     )
 
-    image_to_index = features[device_id]["siglip"].image_paths_to_index
+    image_to_index = features[device_id][SEARCH_MODEL].image_paths_to_index
     new_records = list(new_records)
     print(f"Found {len(new_records)} new images to segment.")
     paths = [
@@ -250,7 +249,7 @@ def load_all_segments(
         return
 
     feats = np.array(
-        [features[device_id]["siglip"].features[image_to_index[image_path]] for image_path in paths]
+        [features[device_id][SEARCH_MODEL].features[image_to_index[image_path]] for image_path in paths]
     )
 
     print(f"Segmenting {len(feats)} images...")

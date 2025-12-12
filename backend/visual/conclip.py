@@ -2,17 +2,13 @@ import clip
 from PIL import Image as PILImage
 import numpy as np
 import torch
-from visual import SIGLIP, _split_text
+from visual.siglip import SIGLIP, _split_text
 from PIL import Image
 from app_types import Array1D, Array2D
 
 # the .pt file downloaded from the links above
 device = "cuda"
 checkpoint_path = "files/conclip_vit_l14.pt"
-
-# the .pt file downloaded from the links above
-device = "cpu"
-
 
 def load_checkpoint(model, checkpoint_path):
     ckpt = torch.load(checkpoint_path, weights_only=False)
@@ -24,13 +20,20 @@ def load_checkpoint(model, checkpoint_path):
 class ConCLIPBinaryClassifier(SIGLIP):
     def __init__(self, model_path="conclip_vit_l14.pt", device="cuda"):
         self.device = device
-        self.model, self.preprocess =clip.load("ViT-L/14", device=device)
-        self.model = load_checkpoint(self.model, model_path)
+        self.model_path = model_path
+        self.loaded = False
+
+    def load_model(self):
+        self.model, self.preprocess = clip.load("ViT-L/14", device=device)
+        self.model = load_checkpoint(self.model, self.model_path)
         self.model = self.model.to(device)
+        self.loaded = True
 
     def predict(
         self, positive_query: str, negative_query: str, image_features: Array2D[np.float32]
     ):
+        if not self.loaded:
+            self.load_model()
         texts = [positive_query, negative_query]
         texts_tokenized = clip.tokenize(texts).to(self.device)
 
@@ -47,6 +50,8 @@ class ConCLIPBinaryClassifier(SIGLIP):
         return sim[:, 0].cpu().numpy()
 
     def encode_text(self, main_query: str, normalize=False) -> Array1D[np.float32]:
+        if not self.loaded:
+            self.load_model()
         sentences = _split_text(main_query, 77)
         tokens = clip.tokenize(sentences).to(device)
         with torch.no_grad():
@@ -57,6 +62,8 @@ class ConCLIPBinaryClassifier(SIGLIP):
         return outputs.cpu().float().numpy()
 
     def encode_texts(self, texts: list[str], normalize=False) -> torch.Tensor:
+        if not self.loaded:
+            self.load_model()
         tokens = clip.tokenize(texts).to(device)
         with torch.no_grad():
             with torch.autocast(device):
@@ -66,6 +73,8 @@ class ConCLIPBinaryClassifier(SIGLIP):
         return outputs.cpu().float()
 
     def encode_image(self, image_path: str) -> Array1D[np.float32]:
+        if not self.loaded:
+            self.load_model()
         image_read = PILImage.open(image_path).convert("RGB")
         inputs = self.preprocess(image_read).unsqueeze(0).to(device)
         with torch.no_grad():
@@ -75,6 +84,8 @@ class ConCLIPBinaryClassifier(SIGLIP):
         return outputs.cpu().float().numpy()
 
     def compute_clip_features(self, photo_batches: list[str]):
+        if not self.loaded:
+            self.load_model()
         # Load all the photos from the files
         photos = []
         okay_files = []
@@ -103,4 +114,4 @@ class ConCLIPBinaryClassifier(SIGLIP):
         return okay_files, photos_features.cpu().numpy()
 
 
-conclip = ConCLIPBinaryClassifier(model_path=checkpoint_path, device=device)
+conclip_model = ConCLIPBinaryClassifier(model_path=checkpoint_path, device=device)

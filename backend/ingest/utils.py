@@ -1,4 +1,3 @@
-import json
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -34,35 +33,9 @@ def process_zip_job(job_id: str, UPLOAD_DIR: Path):
                 return
 
             for i, member in enumerate(namelist, start=1):
-                with zf.open(member) as f:
-                    # Decide where to save each file
-                    # e.g., per device in uploads/device/YYYY-MM-DD/...
-                    out_dir = UPLOAD_DIR / device
-                    out_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Keep original filename
-                    filename = Path(member).name
-
-                    # Parse timestamp from filename (without extension)
-                    stem = Path(filename).stem
-                    try:
-                        dt = datetime.strptime(stem, date_format)
-                    except ValueError:
-                        # Could log or mark as failed; for now, skip
-                        dt = None
-                        print(f"Failed to parse date from filename: {filename}")
-                        continue
-
-                    date = dt.strftime("%Y-%m-%d")
-                    new_filename = dt.strftime("%Y%m%d_%H%M%S") + Path(filename).suffix
-                    out_path = out_dir / date / new_filename
-                    if not out_path.parent.exists():
-                        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    with open(out_path, "wb") as out_f:
-                        out_f.write(f.read())
-
-                    all_files.append(f"{device}/{date}/{new_filename}")
+                new_filename = process_file(member, zf, device, date_format, UPLOAD_DIR)
+                if new_filename:
+                    all_files.append(new_filename)
 
                 # Update progress
                 if i % 5000 == 0 or i == total_files:
@@ -91,3 +64,40 @@ def process_zip_job(job_id: str, UPLOAD_DIR: Path):
     # Cleanup parts
     if zip_path.with_suffix(".part").exists():
         zip_path.with_suffix(".part").unlink()
+
+
+def process_file(
+    member: str, zf: zipfile.ZipFile, device: str, date_format: str, UPLOAD_DIR: Path
+):
+    with zf.open(member) as f:
+        # Decide where to save each file
+        # e.g., per device in uploads/device/YYYY-MM-DD/...
+        out_dir = UPLOAD_DIR / device
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Keep original filename
+        filename = Path(member).name
+
+        # Parse timestamp from filename (without extension)
+        stem = Path(filename).stem
+        try:
+            dt = datetime.strptime(stem, date_format)
+        except ValueError as e:
+            # Could log or mark as failed; for now, skip
+            print(e)
+            dt = None
+            print(
+                f"Failed to parse date from filename: {filename} with format {date_format}"
+            )
+            return None
+
+        date = dt.strftime("%Y-%m-%d")
+        new_filename = dt.strftime("%Y%m%d_%H%M%S") + Path(filename).suffix
+        out_path = out_dir / date / new_filename
+        if not out_path.parent.exists():
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(out_path, "wb") as out_f:
+            out_f.write(f.read())
+
+        return f"{device}/{date}/{new_filename}"

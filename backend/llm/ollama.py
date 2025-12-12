@@ -28,7 +28,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # MODEL_NAME = "deepseek-r1:8b" # Too long
 MODEL_NAME = "llama3.2:3b"
 # VLLM_NAME = "qwen3-vl:8b"
-VLLM_NAME = "qwen3-vl:30b"
+VLLM_NAME = "qwen3-vl:32b"
 
 
 class MixedContent(BaseModel):

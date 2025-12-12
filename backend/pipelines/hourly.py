@@ -3,9 +3,9 @@ from datetime import datetime
 
 import numpy as np
 from app_types import CustomFastAPI
-from constants import DIR
+from constants import DIR, SEARCH_MODEL
 from database.types import ImageRecord
-from preprocess import save_features
+from preprocess import get_thumbnail_path, save_features
 from scripts.low_texture import get_pocket_indices
 from scripts.low_visual_semantic import get_low_visual_density_indices
 from scripts.querybank_norm import load_qb_norm_features
@@ -92,6 +92,8 @@ def process_saved_images(job_id: str | None, app: CustomFastAPI):
     tracked_files_set = set(tracked_files)
 
     to_process = set()
+    model = SEARCH_MODEL
+
     for device in os.listdir(DIR):
         for root, _, files in os.walk(os.path.join(DIR, device)):
             for file in files:
@@ -106,13 +108,15 @@ def process_saved_images(job_id: str | None, app: CustomFastAPI):
                     )
                 else:
                     continue
+                if relative_path not in app.features[device][model].image_paths:
+                    to_process.add(f"{device}/{relative_path}")
+                    continue
 
-                for model in app.models:
-                    if relative_path not in app.features[device][model].image_paths:
-                        to_process.add(f"{device}/{relative_path}")
-
-#                 if len(to_process) > 100:
-#                     break
+                thumbnail_path, thumbnail_exists = get_thumbnail_path(
+                    os.path.join(DIR, device, relative_path)
+                )
+                if not thumbnail_exists:
+                    to_process.add(f"{device}/{relative_path}")
 
     if to_process:
         print(f"Processing {len(to_process)} new images...")

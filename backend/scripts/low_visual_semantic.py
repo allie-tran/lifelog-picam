@@ -3,7 +3,7 @@ import numpy as np
 import os
 from typing import Dict, List
 from PIL import Image
-from constants import DIR
+from constants import DIR, SEARCH_MODEL
 from app_types import AppFeatures
 
 import torch
@@ -110,7 +110,7 @@ def get_low_visual_density_indices(features: AppFeatures):
     image_paths = {}
     all_paths = []
     for device_id in features.keys():
-        paths = features[device_id]["siglip"].image_paths
+        paths = features[device_id][SEARCH_MODEL].image_paths
         image_paths[device_id] = paths
         all_paths.extend(
             [f"{device_id}/{path}" for path in paths]

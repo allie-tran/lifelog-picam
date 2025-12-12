@@ -3,9 +3,8 @@ from collections import defaultdict
 DIR = "/mnt/ssd0/LifelogPicam"  # Directory to store images
 THUMBNAIL_DIR = "/mnt/ssd0/Images/LifelogPicam"  # Directory to store thumbnails
 LOCAL_PORT = 8082
-
-SEGMENT_THRESHOLD = 0.7  # Threshold for segmentation, lower means more segments
-
+SEARCH_MODEL = "conclip"
+SEGMENT_THRESHOLD = 0.9  # Threshold for segmentation, lower means more segments
 
 CATEGORIES_WITH_GROUPS = {
     "Work – Research & Writing": {

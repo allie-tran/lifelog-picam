@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import webp
 from PIL import Image as PILImage
 from transformers.models.auto.modeling_auto import AutoModel
 from transformers.models.auto.processing_auto import AutoProcessor
@@ -32,6 +31,9 @@ def _split_text(text: str, max_length: int):
 class SIGLIP:
     def __init__(self):
         self.name = "siglip"
+        self.loaded = False
+
+    def load_model(self):
         model = AutoModel.from_pretrained(
             "google/siglip-so400m-patch14-384",
             device_map=device,
@@ -47,8 +49,11 @@ class SIGLIP:
 
         self.model.eval()
         self.model.to(device)
+        self.loaded = True
 
     def encode_text(self, main_query: str, normalize=False) -> Array1D[np.float32]:
+        if not self.loaded:
+            self.load_model()
         sentences = _split_text(main_query, 77)
         inputs = self.processor(
             text=sentences,
@@ -65,6 +70,8 @@ class SIGLIP:
         return outputs.cpu().float().numpy()
 
     def encode_texts(self, texts: list[str], normalize=False) -> torch.Tensor:
+        if not self.loaded:
+            self.load_model()
         inputs = self.processor(
             text=texts,
             return_tensors="pt",
@@ -80,6 +87,8 @@ class SIGLIP:
         return outputs.cpu().float()
 
     def encode_image(self, image_path: str) -> Array1D[np.float32]:
+        if not self.loaded:
+            self.load_model()
         image_read = PILImage.open(image_path).convert("RGB")
         inputs = self.processor(
             images=image_read,

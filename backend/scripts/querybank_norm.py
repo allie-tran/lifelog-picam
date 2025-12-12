@@ -3,7 +3,8 @@ import os
 import numpy as np
 from app_types import AppFeatures, Array1D
 from tqdm.auto import tqdm
-from visual import siglip_model
+from constants import SEARCH_MODEL
+from visual import clip_model
 
 os.makedirs("files/QB_norm", exist_ok=True)
 
@@ -25,11 +26,12 @@ def get_index_to_normalize(sims, videos):
 
 
 def load_query_features():
-    if os.path.exists("files/QB_norm/query_features.npy"):
-        return np.load("files/QB_norm/query_features.npy")
+    if os.path.exists(f"files/QB_norm/{SEARCH_MODEL}/query_features.npy"):
+        print(f"Loading precomputed query features for QB-Norm from files/QB_norm/{SEARCH_MODEL}/query_features.npy")
+        return np.load(f"files/QB_norm/{SEARCH_MODEL}/query_features.npy")
 
     # Load training queries
-    print("Loading training queries...")
+    print("Computing query features for QB-Norm...")
     queries = []
     queries = [line.strip() for line in open("files/queries.txt").readlines()]
 
@@ -39,10 +41,10 @@ def load_query_features():
     ]
     query_features = []
     for text in tqdm(queries, desc="Encoding queries"):
-        query_vector = siglip_model.encode_text(text, normalize=True)
+        query_vector = clip_model.encode_text(text, normalize=True)
         query_features.append(query_vector)
     query_features = np.array(query_features)
-    np.save(f"files/QB_norm/query_features.npy", query_features)
+    np.save(f"files/QB_norm/{SEARCH_MODEL}/query_features.npy", query_features)
     return query_features
 
 
@@ -62,7 +64,7 @@ def load_qb_norm_features(features: AppFeatures):
     # Step 1: Precompute with training queries and dataset features
     features_list = []
     for device in features.keys():
-        feat = features[device]["siglip"].features
+        feat = features[device][SEARCH_MODEL].features
         if len(feat) == 0:
             continue
         features_list.append(feat)
@@ -73,13 +75,12 @@ def load_qb_norm_features(features: AppFeatures):
     all_normalizing_sum = np.sum(a=train_test_exp, axis=0)
 
     print(f"Loaded QB-Norm features with retrieved videos.")
-
     # split per devices
     retrieved_videos = {}
     normalizing_sum = {}
     start_idx = 0
     for device_id in features.keys():
-        device_features = features[device_id]["siglip"].features
+        device_features = features[device_id][SEARCH_MODEL].features
         end_idx = start_idx + device_features.shape[0]
         device_retrieved_videos = (
             all_retrieved_videos[

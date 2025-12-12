@@ -6,9 +6,9 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 from app_types import CLIPFeatures, CustomFastAPI, DaySummary, SummarySegment
-from constants import DIR, GROUPED_CATEGORIES
+from constants import DIR, GROUPED_CATEGORIES, SEARCH_MODEL
 from database.types import ImageRecord
-from visual import siglip_model
+from visual import clip_model
 
 from scripts.clip_classifier import ClipPromptClassifier
 from llm import llm, MixedContent, get_visual_content
@@ -19,7 +19,7 @@ ActivityClassifier = Callable[[np.ndarray], str]  # returns a category label
 FoodDrinkClassifier = Callable[[np.ndarray], bool]
 WorkBreakClassifier = Callable[[np.ndarray], str]  # returns "work", "break" or "other"
 
-encoded_activities = siglip_model.encode_texts(
+encoded_activities = clip_model.encode_texts(
     list(GROUPED_CATEGORIES.keys()),
 )
 encoded_activities_dict = {
@@ -102,7 +102,7 @@ def summarize_lifelog_by_day(
     summary.food_drink_minutes = sum(
         segment.duration / 60.0 for segment in eating_segments
     )
-    encoded_query = siglip_model.encode_text(
+    encoded_query = clip_model.encode_text(
         "a first-person photo of someone eating or drinking",
     )
     merged_segments = []
@@ -321,7 +321,7 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
                 slot_activities.append(segment["activity"] or "Unclear")
                 indices.extend(
                     [
-                        app.features[device]["siglip"].image_paths_to_index.get(img_path)
+                        app.features[device][SEARCH_MODEL].image_paths_to_index.get(img_path)
                         for img_path in segment["image_paths"]
                     ]
                 )
@@ -342,8 +342,8 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
         if indices:
             representative_image_paths = pick_representative_index_for_segment(
                 indices,
-                app.features[device]["siglip"].image_paths,
-                app.features[device]["siglip"].features,
+                app.features[device][SEARCH_MODEL].image_paths,
+                app.features[device][SEARCH_MODEL].features,
                 encoded_activities_dict.get(activity),
             )
             representative_image = ImageRecord.find_one(

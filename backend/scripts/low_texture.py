@@ -8,7 +8,7 @@ from app_types import AppFeatures
 import cv2
 import numpy as np
 import pandas as pd
-from constants import DIR
+from constants import DIR, SEARCH_MODEL
 from PIL import ExifTags, Image
 from tqdm import tqdm
 
@@ -166,7 +166,7 @@ def get_pocket_indices(
     """
     image_paths = {}
     for device_id in features.keys():
-        image_paths[device_id] = features[device_id]["siglip"].image_paths
+        image_paths[device_id] = features[device_id][SEARCH_MODEL].image_paths
     check_all_files_for_pocket(image_paths)
 
     if not CSV_PATH.exists():
