@@ -220,7 +220,7 @@ social_class_names = [
     "with friends",
     "with family",
 ]
-alone_class_names = ["alone", "by myself"]
+alone_class_names = ["alone", "by myself", "no other people", "solo", "no one else"]
 
 # For a binary decision, it's convenient to group prompts into two logical labels:
 social_vs_alone_labels = ["social", "alone"]

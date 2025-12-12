@@ -1,7 +1,8 @@
 from collections import defaultdict
+import os
 
-DIR = "/mnt/ssd0/LifelogPicam"  # Directory to store images
-THUMBNAIL_DIR = "/mnt/ssd0/Images/LifelogPicam"  # Directory to store thumbnails
+DIR = os.getenv("DIR", "/mnt/ssd0/LifelogPicam")  # Directory to store images
+THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "/mnt/ssd0/Images/LifelogPicam")  # Directory to store thumbnails
 LOCAL_PORT = 8082
 SEARCH_MODEL = "conclip"
 SEGMENT_THRESHOLD = 0.9  # Threshold for segmentation, lower means more segments

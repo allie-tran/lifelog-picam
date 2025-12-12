@@ -58,9 +58,9 @@ Return with the following format:
 
 ```json
 {{
+    "description": "A brief description of the activity."
     "category": "Category Name",
     "confidence": "High / Medium / Low",
-    "description": "A brief description of the activity."
 }}
 ```
 """

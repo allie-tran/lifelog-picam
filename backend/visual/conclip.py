@@ -7,11 +7,11 @@ from PIL import Image
 from app_types import Array1D, Array2D
 
 # the .pt file downloaded from the links above
-device = "cuda"
+device = "cpu"
 checkpoint_path = "files/conclip_vit_l14.pt"
 
 def load_checkpoint(model, checkpoint_path):
-    ckpt = torch.load(checkpoint_path, weights_only=False)
+    ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
     model = model.float()
     model.load_state_dict(ckpt["model"])
     return model

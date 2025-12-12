@@ -86,7 +86,6 @@ def segment_images(
     # Normalise
     features = features / np.linalg.norm(features, axis=1, keepdims=True)
     k = SEGMENT_THRESHOLD
-    # k = 0.5
 
     # Calculate all distances
     distances = np.linalg.norm(features[1:] - features[:-1], axis=1)
@@ -94,7 +93,7 @@ def segment_images(
     # Dynamic threshold: mean + std
     mean_dist = np.mean(distances)
     std_dist = np.std(distances)
-    dynamic_threshold = mean_dist + std_dist
+    dynamic_threshold = mean_dist + std_dist * 1.5
     k = dynamic_threshold
     print(f"Dynamic threshold for segmentation: {k}")
 
@@ -269,22 +268,22 @@ def load_all_segments(
             data={"$set": {"segment_id": max_id + i}},
         )
 
-        try:
-            describe_segment(
-                device_id,
-                [compress_image(f"{device_id}/{i}") for i in segment],
-                segment_idx=max_id + i,
-            )
+        # try:
+        #     describe_segment(
+        #         device_id,
+        #         [compress_image(f"{device_id}/{i}") for i in segment],
+        #         segment_idx=max_id + i,
+        #     )
 
-            date = segment[0].split("_")[0]
-            date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-            DaySummaryRecord.update_one(
-                {"date": date},
-                {"$set": {"updated": True}},
-                upsert=True,
-            )
-        except Exception:
-            pass
+        #     date = segment[0].split("_")[0]
+        #     date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        #     DaySummaryRecord.update_one(
+        #         {"date": date},
+        #         {"$set": {"updated": True}},
+        #         upsert=True,
+        #     )
+        # except Exception:
+        #     pass
 
         if job is not None and tracked_files_set:
             if (i + 1) % 10 == 0:

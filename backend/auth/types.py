@@ -1,6 +1,11 @@
 from dependencies import CamelCaseModel
 from mongodb_odm import Document
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    import enum
+    class StrEnum(str, enum.Enum):
+        pass
 
 class AccessLevel(StrEnum):
     OWNER = "owner"
