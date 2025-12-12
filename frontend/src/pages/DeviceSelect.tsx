@@ -6,12 +6,14 @@ import useSWR from 'swr';
 import { getDevices } from '../apis/browsing';
 import '../App.css';
 import { useEffect } from 'react';
+import { useSearchParams } from 'react-router';
 
 const DeviceSelect = ({
     onChange,
 }: {
     onChange?: (deviceId: string) => void;
 }) => {
+    const searchParams = useSearchParams();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const dispatch = useAppDispatch();
 
@@ -30,6 +32,7 @@ const DeviceSelect = ({
             }
             console.log('Auto-selecting device:', devices[0]);
             dispatch(setDeviceId(devices[0]));
+            searchParams[0].set('device', devices[0]);
             onChange?.(devices[0]);
         }
     }, [devices, deviceId, onChange]);

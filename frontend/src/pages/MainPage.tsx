@@ -14,6 +14,7 @@ import {
     Pagination,
     Stack,
     TextField,
+    Tooltip,
     Typography,
 } from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
@@ -62,7 +63,6 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
         </Badge>
     );
 };
-
 
 function MainPage() {
     const navigate = useNavigate();
@@ -167,35 +167,45 @@ function MainPage() {
                     sx={{ zIndex: (theme) => theme.zIndex.appBar - 1 }}
                 >
                     <Box sx={{ height: '48px' }} />
-                    <DeletedImages />
-                    <IconButton
-                        color="secondary"
-                        onClick={() => navigate('/search')}
-                        sx={{ marginTop: '16px', marginLeft: '8px' }}
-                    >
-                        <SearchRounded />
-                    </IconButton>
-                    <IconButton
-                        color="secondary"
-                        onClick={() => navigate('/admin')}
-                        sx={{ marginTop: '16px', marginLeft: '8px' }}
-                    >
-                        <AdminPanelSettingsRounded />
-                    </IconButton>
-                    <IconButton
-                        color="secondary"
-                        onClick={() => navigate('/upload')}
-                        sx={{ marginTop: '16px', marginLeft: '8px' }}
-                    >
-                        <UploadRounded />
-                    </IconButton>
-                    <IconButton
-                        color="secondary"
-                        onClick={() => navigate('/status')}
-                        sx={{ marginTop: '16px', marginLeft: '8px' }}
-                    >
-                        <RotateLeftRounded />
-                    </IconButton>
+                    <Tooltip title="Deleted Images">
+                        <DeletedImages />
+                    </Tooltip>
+                    <Tooltip title="Search Images">
+                        <IconButton
+                            color="secondary"
+                            onClick={() => navigate('/search')}
+                            sx={{ marginTop: '16px', marginLeft: '8px' }}
+                        >
+                            <SearchRounded />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Admin Panel">
+                        <IconButton
+                            color="secondary"
+                            onClick={() => navigate('/admin')}
+                            sx={{ marginTop: '16px', marginLeft: '8px' }}
+                        >
+                            <AdminPanelSettingsRounded />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Upload Images/Videos">
+                        <IconButton
+                            color="secondary"
+                            onClick={() => navigate('/upload')}
+                            sx={{ marginTop: '16px', marginLeft: '8px' }}
+                        >
+                            <UploadRounded />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Upload Status">
+                        <IconButton
+                            color="secondary"
+                            onClick={() => navigate('/status')}
+                            sx={{ marginTop: '16px', marginLeft: '8px' }}
+                        >
+                            <RotateLeftRounded />
+                        </IconButton>
+                    </Tooltip>
                 </Drawer>
                 <Typography variant="h4" color="primary" fontWeight="bold">
                     {data?.date || 'All Dates'}

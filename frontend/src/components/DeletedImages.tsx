@@ -1,5 +1,11 @@
 import { ArchiveRounded, RestoreRounded } from '@mui/icons-material';
-import { Button, CircularProgress, IconButton, Stack } from '@mui/material';
+import {
+    Button,
+    CircularProgress,
+    IconButton,
+    Stack,
+    Tooltip,
+} from '@mui/material';
 import { ImageObject } from '@utils/types';
 import React from 'react';
 import { useAppSelector } from 'reducers/hooks';
@@ -31,16 +37,18 @@ const DeletedImages = () => {
 
     return (
         <Stack direction="row" spacing={2} alignItems="center">
-            <IconButton
-                size="large"
-                color="secondary"
-                onClick={() => {
-                    setOpen(true);
-                    mutate();
-                }}
-            >
-                <ArchiveRounded />
-            </IconButton>
+            <Tooltip title="Deleted Images">
+                <IconButton
+                    size="large"
+                    color="secondary"
+                    onClick={() => {
+                        setOpen(true);
+                        mutate();
+                    }}
+                >
+                    <ArchiveRounded />
+                </IconButton>
+            </Tooltip>
             <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
                 {isLoading ? <CircularProgress /> : null}
                 {!isLoading && data && data.length === 0 && (

@@ -4,6 +4,7 @@ import {
     Card,
     CardContent,
     Chip,
+    CircularProgress,
     Divider,
     Grid,
     LinearProgress,
@@ -39,16 +40,21 @@ const DaySummaryComponent = () => {
     const date = searchParams.get('date');
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
-    const { data: daySummary, isLoading, mutate } = useSWR(
-        { date, deviceId },
-        () => getDaySummary(deviceId, date || ''),
-        {
-            revalidateOnFocus: false,
-        }
-    );
+    const {
+        data: daySummary,
+        isLoading,
+        mutate,
+    } = useSWR({ date, deviceId }, () => getDaySummary(deviceId, date || ''), {
+        revalidateOnFocus: false,
+    });
 
     if (isLoading) {
-        return <LinearProgress />;
+        return (
+            <Stack spacing={2} alignItems="center" padding={2}>
+                <Typography variant="body2"> <i>Loading day summary...</i></Typography>
+                <CircularProgress />
+            </Stack>
+        );
     }
 
     if (!daySummary) {
@@ -219,7 +225,11 @@ function SummaryText({ summaryText }: { summaryText: string }) {
     return (
         <Card variant="outlined">
             <CardContent>
-                <Typography variant="body2" fontStyle="italic" sx={{ whiteSpace: 'pre-line' }}>
+                <Typography
+                    variant="body2"
+                    fontStyle="italic"
+                    sx={{ whiteSpace: 'pre-line' }}
+                >
                     {summaryText || 'No summary available for this day.'}
                 </Typography>
             </CardContent>
@@ -395,7 +405,10 @@ function FoodDrinkSummary({
                 <Typography variant="body2">
                     Time: <strong>{minutesToHM(foodDrinkMinutes)}</strong>
                 </Typography>
-                <Typography variant="body2" sx={{ mt: 1, mb: 2, whiteSpace: 'pre-line' }}>
+                <Typography
+                    variant="body2"
+                    sx={{ mt: 1, mb: 2, whiteSpace: 'pre-line' }}
+                >
                     {foodDrinkSummary ||
                         'No food or drink activities detected.'}
                 </Typography>
@@ -412,7 +425,10 @@ function FoodDrinkSummary({
                 >
                     {foodDrinkSegments.map((segment, index) => (
                         <React.Fragment key={index}>
-                            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
+                            <Typography
+                                variant="body2"
+                                sx={{ alignSelf: 'center' }}
+                            >
                                 {segment.startTime} {segment.endTime}
                             </Typography>
                             {segment.representativeImages?.map(

@@ -1,9 +1,9 @@
-import { Button, Stack, TextField, Typography } from '@mui/material';
+import { Button, Stack, TextField, Typography, Link } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { loginRequest } from '../apis/auth';
 import { parseErrorResponse } from '../utils/misc';
 import { useCookies } from 'react-cookie';
-import { Link, useNavigate } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import { useAppDispatch } from 'reducers/hooks';
 import { login, logout } from 'reducers/auth';
 import axios from 'axios';
@@ -29,12 +29,15 @@ const Login = () => {
                 const token = response.data.token;
                 // Save to cookie
                 setCookie('token', token, { path: '/', maxAge: 3600 });
-                axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+                axios.defaults.headers.common['Authorization'] =
+                    `Bearer ${token}`;
                 navigate('/');
-                dispatch(login({
-                    username: response.data.username,
-                    devices: response.data.devices,
-                }));
+                dispatch(
+                    login({
+                        username: response.data.username,
+                        devices: response.data.devices,
+                    })
+                );
             })
             .catch((error: any) => {
                 console.error('There was an error loging in!', error);
@@ -51,6 +54,17 @@ const Login = () => {
                 Login
             </Typography>
             <Stack spacing={2} alignItems="center" marginTop={4}>
+                <Typography>
+                    Learn More about this project on{' '}
+                    <Link
+                        href="https://allietran.com/projects/selfhealth/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        allietran.com
+                    </Link>
+                    .
+                </Typography>
                 <TextField
                     label="Username"
                     value={username}
@@ -64,14 +78,12 @@ const Login = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     sx={{ width: '300px' }}
                 />
-                <Button
-                    variant="contained"
-                    onClick={handleRegister}
-                >
+                <Button variant="contained" onClick={handleRegister}>
                     Login
                 </Button>
                 <Typography variant="body2" sx={{ mt: 2 }}>
-                    Don't have an account? Register <Link to="/register">here</Link>.
+                    Don't have an account? Register{' '}
+                    <RouterLink to="/register">here</RouterLink>.
                 </Typography>
             </Stack>
         </>
