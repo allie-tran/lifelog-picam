@@ -46,7 +46,8 @@ from scripts.summary import (
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
-
+from redis import asyncio as aioredis
+from fastapi_limiter import FastAPILimiter
 
 class CheckFilesRequest(BaseModel):
     date: str
@@ -71,8 +72,12 @@ async def lifespan(app: CustomFastAPI):
                 },
                 upsert=True,
             )
-    redis_connection = redis.from_url("redis://localhost:6379", encoding="utf8")
-    await FastAPILimiter.init(redis_connection)
+    redis = aioredis.from_url(
+        "redis://localhost:6379",
+        encoding="utf8",
+        decode_responses=True
+    )
+    await FastAPILimiter.init(redis)
     app.features = load_features()
     update_app(app)
     yield

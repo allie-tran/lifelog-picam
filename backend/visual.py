@@ -94,8 +94,4 @@ class SIGLIP:
                 outputs = outputs / outputs.norm(dim=-1, keepdim=True)
         return outputs.cpu().float().numpy()
 
-
 siglip_model = SIGLIP()
-
-
-
