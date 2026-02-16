@@ -119,6 +119,16 @@ export const deleteImage = async (deviceId: string, imagePath: string) => {
     return response.data;
 };
 
+export const deleteImages = async (deviceId: string, imagePaths: string[]) => {
+    const response = await axios.delete(
+        `${BACKEND_URL}/delete-images?device=${encodeURIComponent(deviceId)}`,
+        {
+            data: { imagePaths },
+        }
+    );
+    return response.data;
+};
+
 export const getDeletedImages = async (deviceId: string) => {
     const response = await axios.get(
         `${BACKEND_URL}/get-deleted-images?device=${encodeURIComponent(deviceId)}`
@@ -141,6 +151,16 @@ export const forceDeleteImage = async (deviceId: string, imagePath: string) => {
         `${BACKEND_URL}/force-delete-image?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePath },
+        }
+    );
+    return response.data;
+};
+
+export const forceDeleteImages = async (deviceId: string, imagePaths: string[]) => {
+    const response = await axios.delete(
+        `${BACKEND_URL}/force-delete-images?device=${encodeURIComponent(deviceId)}`,
+        {
+            data: { imagePaths },
         }
     );
     return response.data;

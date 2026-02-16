@@ -87,10 +87,7 @@ const ImageWithDate = ({
             <Stack
                 direction="row"
                 spacing={1}
-                alignItems="flex-end"
-                justifyContent="space-between"
                 sx={{
-                    transform: 'translateY(-100%) translateY(-12px)',
                     px: 0.5,
                 }}
             >
@@ -106,22 +103,22 @@ const ImageWithDate = ({
                 >
                     {formattedDate}
                 </Typography>
-                <Stack direction="row" spacing={1} alignItems="center">
-                    {!disableDelete && (
-                        <Button
-                            color="error"
-                            size="small"
-                            sx={{
-                                minWidth: 32,
-                                backgroundColor: 'rgba(0, 0, 0, 0.6)'
-                            }}
-                            onClick={handleDelete}
-                        >
-                            <DeleteRounded />
-                        </Button>
-                    )}
-                    {extra}
-                </Stack>
+            </Stack>
+            <Stack direction="row" spacing={0} alignItems="center">
+                {!disableDelete && (
+                    <Button
+                        color="error"
+                        size="small"
+                        sx={{
+                            fontSize: '12px',
+                            minWidth: 24,
+                        }}
+                        onClick={handleDelete}
+                    >
+                        <DeleteRounded />
+                    </Button>
+                )}
+                {extra}
             </Stack>
         </Box>
     );

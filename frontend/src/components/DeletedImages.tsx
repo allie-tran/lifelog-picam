@@ -64,28 +64,8 @@ const DeletedImages = () => {
                         >
                             <Button
                                 variant="outlined"
-                                sx={{ mb: 2 }}
-                                onClick={() => {
-                                    data.forEach(
-                                        (image: ImageObject, index: number) => {
-                                            restoreImage(
-                                                deviceId,
-                                                image.imagePath
-                                            ).then(() => {
-                                                if (index === data.length - 1) {
-                                                    mutate();
-                                                }
-                                            });
-                                        }
-                                    );
-                                }}
-                            >
-                                Restore All
-                            </Button>
-                            <Button
-                                variant="outlined"
                                 color="error"
-                                sx={{ mb: 2, ml: 2 }}
+                                sx={{ mb: 2 }}
                                 onClick={() => {
                                     data.forEach(
                                         (image: ImageObject, index: number) => {
@@ -103,6 +83,26 @@ const DeletedImages = () => {
                             >
                                 Delete All
                             </Button>
+                            <Button
+                                variant="outlined"
+                                sx={{ mb: 2, ml: 2 }}
+                                onClick={() => {
+                                    data.forEach(
+                                        (image: ImageObject, index: number) => {
+                                            restoreImage(
+                                                deviceId,
+                                                image.imagePath
+                                            ).then(() => {
+                                                if (index === data.length - 1) {
+                                                    mutate();
+                                                }
+                                            });
+                                        }
+                                    );
+                                }}
+                            >
+                                Restore All
+                            </Button>
                         </Stack>
                         <Stack
                             spacing={2}
@@ -113,10 +113,11 @@ const DeletedImages = () => {
                         >
                             {data?.map((image) => (
                                 <ImageWithDate
+                                    height={200}
+                                    fontSize="12px"
                                     image={image}
                                     extra={
                                         <Button
-                                            color="error"
                                             size="small"
                                             sx={{ minWidth: 32 }}
                                             onClick={() => {

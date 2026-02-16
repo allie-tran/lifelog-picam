@@ -1,6 +1,7 @@
 import {
     Box,
     Button,
+    Checkbox,
     Container,
     Divider,
     Drawer,
@@ -16,7 +17,13 @@ import {
     Typography,
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
-import { deleteImage, searchImages, similarImages, similarImagesPost } from 'apis/browsing';
+import {
+    deleteImage,
+    deleteImages,
+    searchImages,
+    similarImages,
+    similarImagesPost,
+} from 'apis/browsing';
 import ImageIdSearch from 'components/ImageIdSearch';
 import LifelogEvent from 'components/LifelogEvent';
 import SearchBar from 'components/SearchBar';
@@ -31,7 +38,7 @@ import DeviceSelect from './DeviceSelect';
 import ImageDropSearch from 'components/ImageDropSearch';
 import ImageWithDate from 'components/ImageWithDate';
 import { setZoomedImage } from 'reducers/zoomedImage';
-import { DeleteRounded } from '@mui/icons-material';
+import { CheckBox, DeleteRounded } from '@mui/icons-material';
 
 const PAGE_SIZE = 10;
 
@@ -44,8 +51,10 @@ const SearchPage = () => {
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-    const [viewMode, setViewMode] = useState<'images' | 'events'>('events');
+    const [viewMode, setViewMode] = useState<'images' | 'events'>('images');
     const [tempMode, setTempMode] = useState(mode);
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectedImages, setSelectedImages] = useState<string[]>([]);
     const [page, setPage] = useState(1);
 
     const {
@@ -129,11 +138,10 @@ const SearchPage = () => {
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
-        Promise.all(imagePaths.map((path) => deleteImage(deviceId, path))).then(
-            () => {
-                mutate().then(() => dispatch(setLoading(false)));
-            }
-        );
+        deleteImages(deviceId, imagePaths).then(() => {
+            setDeleted((prev) => [...prev, ...imagePaths]);
+            dispatch(setLoading(false));
+        });
     };
 
     useEffect(() => {
@@ -143,13 +151,7 @@ const SearchPage = () => {
     const currentPageResults =
         results?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) || [];
 
-    const currentPageImages =
-        images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || [];
-
-    const deletePage = () => {
-        const imagePaths = currentPageImages.map((img) => img.imagePath);
-        deleteRow(imagePaths);
-    };
+    const currentPageImages = (images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || []).filter((img) => !deleted.includes(img.imagePath));
 
     return (
         <>
@@ -321,16 +323,52 @@ const SearchPage = () => {
                     </>
                 ) : (
                     <>
+                        {currentPageImages.length == 0 && images.length > 0 && (
+                            <Typography>
+                                No images on this page.
+                            </Typography>
+                        )}
                         <Button
                             color="error"
-                            onClick={deletePage}
+                            onClick={() => {
+                                setSelectedImages(
+                                    currentPageImages.map((img) => img.imagePath)
+                                );
+                                setIsSelecting(true);
+                            }}
                             sx={{ textTransform: 'none', marginBottom: 2 }}
                         >
                             <DeleteRounded sx={{ marginRight: 1 }} />
                             Delete All on This Page
                         </Button>
+                        {isSelecting && (
+                            <Stack direction="row" spacing={2} marginBottom={2}>
+                                <Button
+                                    variant="contained"
+                                    color="error"
+                                    onClick={() => {
+                                        deleteRow(selectedImages);
+                                        setIsSelecting(false);
+                                        setSelectedImages([]);
+                                    }}
+                                    sx={{ textTransform: 'none' }}
+                                >
+                                    Confirm Delete ({selectedImages.length})
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    onClick={() => {
+                                        setIsSelecting(false);
+                                        setSelectedImages([]);
+                                    }}
+                                    sx={{ textTransform: 'none' }}
+                                >
+                                    Cancel
+                                </Button>
+                            </Stack>
+                        )}
                         <Stack
-                            spacing={2}
+                            spacing={1}
                             sx={{ flexWrap: 'wrap' }}
                             direction="row"
                             useFlexGap
@@ -339,8 +377,8 @@ const SearchPage = () => {
                             {currentPageImages?.map((image) =>
                                 deleted.includes(image.imagePath) ? null : (
                                     <ImageWithDate
-                                        fontSize={'12px'}
-                                        height={'250px'}
+                                        fontSize={'10px'}
+                                        height={'200px'}
                                         image={image}
                                         onClick={() => {
                                             dispatch(
@@ -355,6 +393,36 @@ const SearchPage = () => {
                                                 ...deleted,
                                                 image.imagePath,
                                             ])
+                                        }
+                                        extra={
+                                            isSelecting && (
+                                                <Checkbox
+                                                    checked={selectedImages.includes(
+                                                        image.imagePath
+                                                    )}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setSelectedImages(
+                                                                (prev) => [
+                                                                    ...prev,
+                                                                    image.imagePath,
+                                                                ]
+                                                            );
+                                                        } else {
+                                                            setSelectedImages(
+                                                                (prev) =>
+                                                                    prev.filter(
+                                                                        (
+                                                                            path
+                                                                        ) =>
+                                                                            path !==
+                                                                            image.imagePath
+                                                                    )
+                                                            );
+                                                        }
+                                                    }}
+                                                />
+                                            )
                                         }
                                     />
                                 )
