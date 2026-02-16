@@ -1,10 +1,15 @@
 from datetime import datetime
-import os
 
 from app_types import CustomFastAPI, ProcessedInfo
-from constants import DIR, SEARCH_MODEL, THUMBNAIL_DIR
+from constants import DIR, SEARCH_MODEL
 from database.types import ImageRecord
-from preprocess import blur_image, compress_image, encode_image, get_thumbnail_path, make_video_thumbnail
+from preprocess import (
+    blur_image,
+    compress_image,
+    encode_image,
+    get_thumbnail_path,
+    make_video_thumbnail,
+)
 from scripts.object_detection import extract_object_from_image
 
 
@@ -52,54 +57,68 @@ def find_segment(device_id: str, timestamp: float) -> int | None:
     )
     return None
 
-def process_image(app: CustomFastAPI, device_id: str, date: str, file_name: str):
-    relative_path = f"{date}/{file_name}"
-    model = SEARCH_MODEL
 
-    # Check if features already exist
-    if relative_path not in app.features[device_id][model].image_paths:
-        feature_exists = True
-        _, app.features[device_id][model] = encode_image(
-            device_id, f"{date}/{file_name}", app.features[device_id][model]
-        )
+def process_image(
+    app: CustomFastAPI,
+    device_id: str,
+    date: str,
+    file_name: str,
+    image_record: ImageRecord | None = None,
+    to_encode: bool = True,
+):
 
-    # Other checks
-    thumbnail_exists = False
-    record_exists = False
+    try:
+        relative_path = f"{date}/{file_name}"
+        model = SEARCH_MODEL
 
-    _, exists = get_thumbnail_path(f"{DIR}/{device_id}/{date}/{file_name}")
-    image_record = ImageRecord.find_one(
-        filter={"device": device_id, "image_path": relative_path}
-    )
+        # Check if features already exist
+        if to_encode or relative_path not in app.features[device_id][model].image_paths:
+            _, app.features[device_id][model] = encode_image(
+                device_id, f"{date}/{file_name}", app.features[device_id][model]
+            )
 
-    # Perform necessary processing
-    if image_record is not None:
-        people = image_record.people
-    else:
-        timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
-        objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}")
+        # Other checks
+        thumbnail_exists = False
+        get_thumbnail_path(f"{DIR}/{device_id}/{date}/{file_name}")
 
-    if not thumbnail_exists:
-        if people:
-            blur_image(image_path=f"{DIR}/{device_id}/{relative_path}", boxes=people)
+        # Perform necessary processing
+        if image_record is not None:
+            people = image_record.people
         else:
-            compress_image(f"{DIR}/{device_id}/{date}/{file_name}")
+            timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+            objects, people = extract_object_from_image(
+                f"{DIR}/{device_id}/{relative_path}"
+            )
 
-    if image_record is None:
-        ImageRecord(
-            date=date,
-            device=device_id,
-            image_path=relative_path,
-            thumbnail=relative_path.replace(".jpg", ".webp"),
-            timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-            is_video=False,
-            objects=objects,
-            people=people,
-            processed=ProcessedInfo(yolo=True, encoded=True),
-            segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
-        ).create()
+        if not thumbnail_exists:
+            if people:
+                blur_image(
+                    image_path=f"{DIR}/{device_id}/{relative_path}", boxes=people
+                )
+            else:
+                compress_image(f"{DIR}/{device_id}/{date}/{file_name}")
 
-    return app
+        if image_record is None:
+            ImageRecord(
+                date=date,
+                device=device_id,
+                image_path=relative_path,
+                thumbnail=relative_path.replace(".jpg", ".webp"),
+                timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+                is_video=False,
+                objects=objects,
+                people=people,
+                processed=ProcessedInfo(yolo=True, encoded=True),
+                segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
+            ).create()
+
+        return app
+
+    except FileNotFoundError as e:
+        print(
+            f"Error processing image {file_name} for device {device_id} on date {date}: {e}"
+        )
+        return app
 
 
 def process_video(app: CustomFastAPI, device_id: str, date: str, file_name: str):

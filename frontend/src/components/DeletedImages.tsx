@@ -27,23 +27,24 @@ const DeletedImages = () => {
     const { data, isLoading, mutate } = useSWR(
         ['deleted-images', deviceId],
         () =>
-            deviceAccess === AccessLevel.OWNER
+            deviceAccess === AccessLevel.OWNER || deviceAccess === AccessLevel.ADMIN
                 ? getDeletedImages(deviceId)
                 : Promise.resolve([]),
         {
-            revalidateOnFocus: false,
+            revalidateOnFocus: true,
         }
     );
 
     return (
-        <Stack direction="row" spacing={2} alignItems="center">
+        <>
             <Tooltip title="Deleted Images">
                 <IconButton
                     size="large"
                     color="secondary"
                     onClick={() => {
-                        setOpen(true);
-                        mutate();
+                        mutate().then(() => {
+                            setOpen(true);
+                        })
                     }}
                 >
                     <ArchiveRounded />
@@ -139,7 +140,7 @@ const DeletedImages = () => {
                     </>
                 )}
             </ModalWithCloseButton>
-        </Stack>
+        </>
     );
 };
 export default DeletedImages;

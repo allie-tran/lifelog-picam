@@ -2,11 +2,31 @@ import React, { useEffect } from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate } from 'react-router';
 import { verifyTokenRequest } from '../apis/auth';
-import { AppBar, Button, Container, Stack } from '@mui/material';
+import {
+    AppBar,
+    Box,
+    Button,
+    Container,
+    Drawer,
+    IconButton,
+    Stack,
+    Tooltip,
+    Typography,
+} from '@mui/material';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { login, logout } from 'reducers/auth';
 import axios from 'axios';
 import { useSWRConfig } from 'swr';
+import DeletedImages from './DeletedImages';
+import {
+    AdminPanelSettingsRounded,
+    HomeRounded,
+    LogoutOutlined,
+    LogoutRounded,
+    RotateLeftRounded,
+    SearchRounded,
+    UploadRounded,
+} from '@mui/icons-material';
 
 const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
@@ -58,27 +78,86 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     if (isAuthenticated) {
         return (
             <>
-                <AppBar
-                    sx={{ position: 'fixed', backgroundColor: 'primary.main' }}
-                    elevation={0}
-                >
-                    <Stack
-                        direction="row"
-                        justifyContent="flex-end"
-                        alignItems="center"
+                <AppBar position="static" color="transparent" elevation={0}>
+                    <Typography
+                        variant="h5"
+                        margin={2}
+                        pl={4}
+                        color="primary"
+                        fontWeight="bold"
                     >
-                        <Button
-                            onClick={clearAuthentication}
-                            sx={{
-                                color: 'primary.contrastText',
-                                fontWeight: 'bold',
-                            }}
-                        >
-                            Logout
-                        </Button>
-                    </Stack>
+                        SelfHealth
+                    </Typography>
                 </AppBar>
-                <Container sx={{ pt: 8 }}>{children}</Container>
+                <Drawer
+                    variant="permanent"
+                    open
+                    sx={{ zIndex: (theme) => theme.zIndex.appBar - 1 }}
+                >
+                    <Stack spacing={2} alignItems="center" mt={2}>
+                        <Tooltip title="Home">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => navigate('/')}
+                            >
+                                <HomeRounded />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Deleted Images">
+                            <DeletedImages />
+                        </Tooltip>
+                        <Tooltip title="Search Images">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => navigate('/search?mode=text')}
+                            >
+                                <SearchRounded />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Admin Panel">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => navigate('/admin')}
+                            >
+                                <AdminPanelSettingsRounded />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Upload Images/Videos">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => navigate('/upload')}
+                            >
+                                <UploadRounded />
+                            </IconButton>
+                        </Tooltip>
+                        {/* <Tooltip title="Upload Status"> */}
+                        {/*     <IconButton */}
+                        {/*         color="secondary" */}
+                        {/*         onClick={() => navigate('/status')} */}
+                        {/*         sx={{ marginTop: '16px' }} */}
+                        {/*     > */}
+                        {/*         <RotateLeftRounded /> */}
+                        {/*     </IconButton> */}
+                        {/* </Tooltip> */}
+                        <Tooltip title="Logout">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={clearAuthentication}
+                            >
+                                <LogoutRounded />
+                            </IconButton>
+                        </Tooltip>
+                    </Stack>
+                </Drawer>
+                {/* Main Content */}
+                <Container maxWidth={false} sx={{ ml: 3, mt: 4 }}>
+                    {children}
+                </Container>
             </>
         );
     }

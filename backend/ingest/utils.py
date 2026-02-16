@@ -14,7 +14,8 @@ def process_zip_job(job_id: str, UPLOAD_DIR: Path):
     if not job:
         return
 
-    max_percentage = 0.3
+    # max_percentage = 0.3
+    max_percentage = 1.0
     job["status"] = "processing"
     zip_path = Path(job["zip_path"])
     device = job["device"]
@@ -49,7 +50,7 @@ def process_zip_job(job_id: str, UPLOAD_DIR: Path):
         redis_client.set_json(f"processing_job:{job_id}", job)
 
         # Send a request to upadte app
-        requests.post(f"http://localhost:{LOCAL_PORT}/update-app?job_id={job_id}")
+        # requests.post(f"http://localhost:{LOCAL_PORT}/update-app?job_id={job_id}")
 
     except Exception as e:
         job["status"] = "error"

@@ -39,7 +39,7 @@ const DeviceSelect = ({
 
 
     return (
-        <FormControl fullWidth sx={{ maxWidth: '250px' }}>
+        <FormControl fullWidth sx={{ width: '200px', pt: 1 }}>
             <InputLabel id="device-select-label">Device</InputLabel>
             <CameraAltRounded
                 sx={{
@@ -47,6 +47,8 @@ const DeviceSelect = ({
                     left: '12px',
                     top: '50%',
                     transform: 'translateY(-50%)',
+                    zIndex: 1,
+                    mt: '4px',
                 }}
             />
             <Select

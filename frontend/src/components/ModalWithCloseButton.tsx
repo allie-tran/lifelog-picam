@@ -1,9 +1,5 @@
 import CloseIcon from '@mui/icons-material/Close';
-import {
-    Box,
-    Button,
-    Modal
-} from '@mui/material';
+import { Box, Button, Modal, Stack } from '@mui/material';
 import React from 'react';
 
 const ModalWithCloseButton = ({
@@ -17,7 +13,7 @@ const ModalWithCloseButton = ({
 }) => {
     return (
         <Modal open={open} onClose={onClose}>
-            <Box
+            <Stack
                 sx={{
                     position: 'absolute',
                     top: '50%',
@@ -26,10 +22,11 @@ const ModalWithCloseButton = ({
                     bgcolor: 'background.paper',
                     boxShadow: 24,
                     p: 4,
-                    maxHeight: '80vh',
-                    maxWidth: '80vw',
+                    height: '90dvh',
+                    width: '90dvw',
                     overflowY: 'auto',
                     borderRadius: '8px',
+                    alignItems: 'center',
                 }}
             >
                 <Button
@@ -39,7 +36,7 @@ const ModalWithCloseButton = ({
                     <CloseIcon />
                 </Button>
                 {children}
-            </Box>
+            </Stack>
         </Modal>
     );
 };

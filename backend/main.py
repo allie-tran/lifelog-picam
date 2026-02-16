@@ -79,7 +79,7 @@ async def lifespan(app: CustomFastAPI):
     )
     await FastAPILimiter.init(redis)
     app.features = load_features(app)
-    update_app(app)
+    # update_app(app)
     yield
     await FastAPILimiter.close()
     save_features(app.features)
@@ -200,8 +200,8 @@ async def upload_image(
         background_tasks.add_task(process_image, app, device, date, file_name)
 
     now = datetime.now()
-    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-        background_tasks.add_task(update_app, app)
+    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+    #     background_tasks.add_task(update_app, app)
     return get_mode()
 
 
@@ -462,6 +462,7 @@ def get_all_dates(
 def search(
     query: str,
     device: str,
+    sort_by: str = "relevance",
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
@@ -483,10 +484,11 @@ def search(
     results = retrieve_image(
         device,
         query,
+        sort_by,
         app.features[device][SEARCH_MODEL].features,
         app.features[device][SEARCH_MODEL].image_paths,
         deleted_set,
-        k=100,
+        k=1000,
         retrieved_videos=app.retrieved_videos[device],
         normalizing_sum=app.normalizing_sum[device],
         remove=app.low_visual_indices[device],
@@ -508,6 +510,10 @@ def similar_images(
             filter={"deleted": True, "device": device}, distinct="image_path"
         )
     )
+    now = datetime.now()
+    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+    #     update_app(app)
+
     results = get_similar_images(
         device,
         image,
@@ -519,6 +525,46 @@ def similar_images(
         normalizing_sum=app.normalizing_sum[device],
         remove=app.low_visual_indices[device],
     )
+    return list(results)
+
+@app.post("/similar-images")
+def similar_images_by_upload(
+    file: UploadFile,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    delete_set = set(
+        ImageRecord.find(
+            filter={"deleted": True, "device": device}, distinct="image_path"
+        )
+    )
+    now = datetime.now()
+    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+    #     update_app(app)
+
+    # save in temp
+    temp_path = f"{DIR}/{device}/temp_{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(file.file.read())
+    try:
+        results = get_similar_images(
+            device,
+            temp_path,
+            app.features[device][SEARCH_MODEL].features,
+            app.features[device][SEARCH_MODEL].image_paths,
+            delete_set,
+            k=100,
+            retrieved_videos=app.retrieved_videos[device],
+            normalizing_sum=app.normalizing_sum[device],
+            remove=app.low_visual_indices[device],
+        )
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Invalid image file.")
+    finally:
+        os.remove(temp_path)
     return list(results)
 
 
@@ -552,9 +598,10 @@ def delete_image(
         original = image_path
 
     print(f"Deleting image: {original}")
+    timestamp_now = datetime.now().timestamp() * 1000
     ImageRecord.update_many(
         {"image_path": original, "device": device},
-        {"$set": {"deleted": True}},
+        {"$set": {"deleted": True, "delete_time": timestamp_now}},
     )
 
 
@@ -582,7 +629,7 @@ def get_deleted_images(
         if os.path.exists(f"{DIR}/{device}/{image.image_path}"):
             final_list.append(image)
 
-        if image.timestamp < threshold:
+        if image.delete_time and image.delete_time < threshold:
             # Delete image permanently
             full_path = os.path.join(DIR, device, image.image_path)
             print(f"Permanently deleting image: {full_path}")
@@ -684,7 +731,6 @@ def process_segments(date: str, device: str):
             upsert=True,
         )
 
-
 @app.get("/process-date")
 def process_date(
     date: str,
@@ -724,7 +770,7 @@ def process_date(
         ).union(app.images_with_low_density)
     )
 
-    background_tasks.add_task(process_segments, date, device)
+    # background_tasks.add_task(process_segments, date, device)
     return {"message": f"Processing segments for date {date} in background."}
 
 
@@ -742,6 +788,7 @@ def get_day_summary(
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
+
     # Check if there are changes in the segments
     day_summary_record = DaySummaryRecord.find_one({"date": date, "device": device})
     if day_summary_record and not day_summary_record.updated:
@@ -751,6 +798,9 @@ def get_day_summary(
         device=device, date=date, segments=[], summary_text="", updated=False
     )
     summary.segments = create_day_timeline(app, device, date)
+    if not summary.segments:
+        raise HTTPException(status_code=404, detail="No segments found for this date.")
+
     summary = summarize_day_by_text(summary)
     summary = summarize_lifelog_by_day(
         summary,

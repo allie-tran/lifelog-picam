@@ -1,17 +1,24 @@
+import glob
 import os
 from typing import List
 
 import numpy as np
-from PIL import Image, ImageFilter, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
-from app_types import AppFeatures, CLIPFeatures, CustomFastAPI, DeviceFeatures, ObjectDetection
-from constants import DIR, SEARCH_MODEL, THUMBNAIL_DIR
-import cv2
+from app_types import (
+    AppFeatures,
+    CLIPFeatures,
+    CustomFastAPI,
+    DeviceFeatures,
+    ObjectDetection,
+)
+from constants import DIR, THUMBNAIL_DIR
 from database.types import ImageRecord
+from database.vector_database import create_collection, insert_batch_embeddings
 from visual import clip_model
-from scripts.querybank_norm import BETA, apply_qb_norm_to_query
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+
 
 def get_thumbnail_path(image_path: str) -> tuple[str, bool]:
     rel_path = image_path.replace(DIR + "/", "")
@@ -19,6 +26,7 @@ def get_thumbnail_path(image_path: str) -> tuple[str, bool]:
     if os.path.exists(output_path):
         return output_path, True
     return output_path, False
+
 
 def compress_image(image_path, quality=85):
     output_path, exists = get_thumbnail_path(image_path)
@@ -110,13 +118,18 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
         for device in os.listdir(feature_dir):
             device_features = DeviceFeatures()
             for model in app.models:
-                data = np.load(
-                    f"{feature_dir}/{device}/{model}.features.npz", allow_pickle=True
-                )
-                features = data["features"]
-                image_paths = data["image_paths"].tolist()
-
-                # Check if files exist: !TODO
+                features = None
+                image_paths = []
+                matches = glob.glob(f"{feature_dir}/{device}/{model}*.features.npz")
+                for match in sorted(matches):
+                    data = np.load(match, allow_pickle=True)
+                    feats = data["features"]
+                    paths = data["image_paths"].tolist()
+                    if features is None:
+                        features = feats
+                    else:
+                        features = np.vstack([features, feats])
+                    image_paths.extend(paths)
                 print(
                     f"Loaded {len(image_paths)} features for device {device}, model {model}"
                 )
@@ -130,10 +143,32 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
             app_features[device] = device_features
     except FileNotFoundError:
         print("No existing features found.")
+
+    # save to zvec
+    batch_size = 50000
+    for device in app_features:
+        for model in app_features[device]:
+            print(
+                f"Indexing features for device {device}, model {model} into vector database."
+            )
+            feats = app_features[device][model].features
+            paths = app_features[device][model].image_paths
+
+            collection = create_collection(device, model)
+            size = len(paths)
+            for i in tqdm(
+                range(0, size, batch_size),
+                desc=f"Indexing features for {device} {model}",
+            ):
+                batch_feats = feats[i : i + batch_size]
+                batch_paths = paths[i : i + batch_size]
+                insert_batch_embeddings(collection, batch_feats, batch_paths)
+
     return app_features
 
 
 def save_features(features: AppFeatures):
+    return
     for device in features.keys():
         for model in features[device].keys():
             feats = features[device][model]
@@ -146,12 +181,22 @@ def save_features(features: AppFeatures):
             sorted_indices = np.argsort(feats.image_paths)
             feats.features = feats.features[sorted_indices]
             feats.image_paths = [feats.image_paths[i] for i in sorted_indices]
-
-            np.savez_compressed(
-                f"{feature_dir}/{device}/{model}.features.npz",
-                features=feats.features,
-                image_paths=feats.image_paths,
-            )
+            print("Sorted features and image paths.")
+            chunk_size = 50000
+            for i in range(0, len(feats.image_paths), chunk_size):
+                batch_features = feats.features[i : i + chunk_size]
+                batch_image_paths = feats.image_paths[i : i + chunk_size]
+                np.savez_compressed(
+                    f"{feature_dir}/{device}/{model}_{i//chunk_size}.features.npz",
+                    features=batch_features,
+                    image_paths=batch_image_paths,
+                )
+            # np.savez_compressed(
+            #     f"{feature_dir}/{device}/{model}.features.npz",
+            #     features=feats.features,
+            #     image_paths=feats.image_paths,
+            # )
+            print(f"Saved features for device {device}, model {model} to disk.")
     return features
 
 
@@ -191,6 +236,7 @@ def encode_image(
 def retrieve_image(
     device_id: str,
     text: str,
+    sort_by,
     feats,
     paths,
     deleted_images: set[str],
@@ -206,17 +252,22 @@ def retrieve_image(
     feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
     query_vector = clip_model.encode_text(text, normalize=True)
 
-    # Apply query bank normalization
-    if retrieved_videos is not None and normalizing_sum is not None:
-        similarities = apply_qb_norm_to_query(
-            query_vector,
-            feats,
-            retrieved_videos,
-            normalizing_sum,
-            BETA,
-        )
-    else:
-        similarities = feats @ query_vector
+    # # Apply query bank normalization
+    # if retrieved_videos is not None and normalizing_sum is not None:
+    #     try:
+    #         similarities = apply_qb_norm_to_query( query_vector,
+    #             feats,
+    #             retrieved_videos,
+    #             normalizing_sum,
+    #             BETA,
+    #         )
+    #     except Exception as e:
+    #         print(f"Error applying QB-Norm: {e}")
+    #         similarities = feats @ query_vector
+    # else:
+    # similarities = feats @ query_vector
+
+    similarities = feats @ query_vector
 
     # Exclude deleted images
     for i, path in enumerate(paths):
@@ -231,7 +282,7 @@ def retrieve_image(
     top_indices = np.argsort(similarities)[-k:][::-1]
     top_images = np.array(paths)[top_indices]
 
-    sort_by_timestamp = True
+    sort_by_timestamp = sort_by == "time"
     if sort_by_timestamp:
         image_records = ImageRecord.find(
             filter={
@@ -249,24 +300,27 @@ def retrieve_image(
                 segments[image_record.segment_id] = [image_record]
         return list(segments.values())
     else:
-        image_records =  ImageRecord.find(
+        # sort by relevance
+        image_records = ImageRecord.find(
             filter={
                 "device": device_id,
                 "image_path": {"$in": top_images.tolist()},
-            },
-            sort=[("timestamp", -1)],
+            }
         )
+        print(top_images)
         image_to_image_record = {img.image_path: img for img in image_records}
-
         segments: dict[str, List[ImageRecord]] = {}
         for image in top_images:
             image_record = image_to_image_record.get(image)
             if image_record:
-                if image_record.segment_id in segments:
-                    segments[image_record.segment_id].append(image_record)
+                segment_id = image_record.segment_id
+                if segment_id in segments:
+                    segments[segment_id].append(image_record)
                 else:
-                    segments[image_record.segment_id] = [image_record]
+                    segments[segment_id] = [image_record]
+
         return list(segments.values())
+
 
 def get_similar_images(
     device_id: str,
@@ -289,7 +343,7 @@ def get_similar_images(
     else:
         # query_vector, *_ = encode_image(device_id, image, np.empty((0, DIM)), [])
         try:
-            path = f"{DIR}/{device_id}/{image}"
+            path = image
             if path.endswith(".mp4") or path.endswith(".h264"):
                 # use video thumbnail
                 new_path = make_video_thumbnail(f"{DIR}/{device_id}/{image}")
@@ -298,21 +352,12 @@ def get_similar_images(
 
             query_vector = clip_model.encode_image(path)
             query_vector = query_vector / np.linalg.norm(query_vector)
+            query_vector = query_vector.reshape(-1, 1)
         except Exception as e:
             print(f"Error encoding image {image}: {e}")
             return []
 
-    # Apply query bank normalization
-    if retrieved_videos is not None and normalizing_sum is not None:
-        similarities = apply_qb_norm_to_query(
-            query_vector,
-            feats,
-            retrieved_videos,
-            normalizing_sum,
-            BETA,
-        )
-    else:
-        similarities = feats @ query_vector
+    similarities = feats @ query_vector
 
     # Exclude deleted images
     for i, path in enumerate(paths):
@@ -324,6 +369,7 @@ def get_similar_images(
 
     top_indices = np.argsort(similarities)[-k:][::-1]
     top_images = np.array(paths)[top_indices]
+    print("Similar images:", top_images)
     return ImageRecord.find(
         filter={
             "device": device_id,

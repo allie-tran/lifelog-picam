@@ -29,13 +29,27 @@ import { UploadPage } from 'pages/UploadPage';
 import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
-let theme = createTheme({
+/**
+ * Material UI Theme configuration matching the ActivityTracker aesthetic.
+ * Incorporates the dark purple palette, Inter typography, and rounded components.
+ */
+const activityTrackerTheme = createTheme({
     palette: {
+        mode: 'dark',
         primary: {
-            main: '#BD93F9',
+            main: '#b085f5', // The light purple accent
+            contrastText: '#000000',
         },
         secondary: {
             main: '#FF79C6',
+        },
+        background: {
+            default: '#2d2d3d', // Main background
+            paper: '#36364a', // Surface/Card background
+        },
+        text: {
+            primary: '#F8F8F2',
+            secondary: '#BFBFC4',
         },
         error: {
             main: '#FF5555',
@@ -43,22 +57,99 @@ let theme = createTheme({
         success: {
             main: '#50FA7B',
         },
-        mode: 'dark',
-        background: {
-            default: '#282A36',
-            paper: '#343746',
-        },
         divider: '#6272A4',
-        text: {
-            primary: '#F8F8F2',
-            secondary: '#BFBFC4',
-        },
     },
     typography: {
-        fontFamily: 'Roboto, Arial, sans-serif',
+        fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+        h1: {
+            fontSize: '2rem',
+            fontWeight: 700,
+            color: '#b085f5',
+            textAlign: 'center',
+        },
+        h2: {
+            fontSize: '1.125rem',
+            fontWeight: 600,
+        },
+        body1: {
+            fontSize: '0.875rem',
+        },
+        button: {
+            textTransform: 'none',
+            fontWeight: 600,
+        },
+    },
+    shape: {
+        borderRadius: 8,
+    },
+    components: {
+        // Styling the search inputs to match the custom border/bg
+        MuiOutlinedInput: {
+            styleOverrides: {
+                root: {
+                    '& .MuiOutlinedInput-notchedOutline': {
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                    },
+                    '&:hover .MuiOutlinedInput-notchedOutline': {
+                        borderColor: '#b085f5',
+                    },
+                },
+            },
+        },
+        // Styling buttons to match the outlined purple look
+        MuiButton: {
+            styleOverrides: {
+                outlinedPrimary: {
+                    borderWidth: '1px',
+                    '&:hover': {
+                        borderWidth: '1px',
+                        backgroundColor: '#b085f5',
+                        color: '#000000',
+                    },
+                },
+                containedPrimary: {
+                    backgroundColor: '#b085f5',
+                    color: '#000000',
+                    '&:hover': {
+                        backgroundColor: '#9969f3',
+                    },
+                },
+            },
+        },
+        // Sidebar / Paper items
+        MuiCard: {
+            styleOverrides: {
+                root: {
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    '&:hover': {
+                        borderColor: '#b085f5',
+                    },
+                },
+            },
+        },
+        // List styling for the "Sort By" pills
+        MuiListItemButton: {
+            styleOverrides: {
+                root: {
+                    borderRadius: 6,
+                    marginBottom: 4,
+                    '&.Mui-selected': {
+                        backgroundColor: '#b085f5',
+                        color: '#000000',
+                        '&:hover': {
+                            backgroundColor: '#9969f3',
+                        },
+                        '& .MuiListItemIcon-root': {
+                            color: '#000000',
+                        },
+                    },
+                },
+            },
+        },
     },
 });
-theme = responsiveFontSizes(theme);
+
+const theme = responsiveFontSizes(activityTrackerTheme);
 dayjs.extend(localizedFormat);
 
 const App = () => {
@@ -68,37 +159,9 @@ const App = () => {
                 <ThemeProvider theme={theme}>
                     <CssBaseline />
                     <LocalizationProvider dateAdapter={AdapterDayjs}>
-                        <AppBar
-                            sx={{
-                                position: 'fixed',
-                                backgroundColor: 'transparent',
-                                zIndex: 1101,
-                                // allow clicks to pass through
-                                pointerEvents: 'none',
-                            }}
-                            elevation={0}
-                        >
-                            <Typography
-                                margin={1}
-                                fontWeight="bold"
-                                onClick={() => {
-                                    window.location.href = '/selfhealth/';
-                                }}
-                                sx={{
-                                    pointerEvents: 'auto',
-                                    cursor: 'pointer',
-                                    color: 'primary.contrastText',
-                                    width: 'fit-content',
-                                }}
-                            >
-                                <ArrowLeftRounded
-                                    sx={{ verticalAlign: 'middle', mt: '-4px' }}
-                                />
-                                Back to Home
-                            </Typography>
-                        </AppBar>
                         <FeedbackComponents />
                         <Container
+                            maxWidth={false}
                             sx={{ marginTop: '0px', marginBottom: '40px' }}
                         >
                             <BrowserRouter basename={'/selfhealth/'}>

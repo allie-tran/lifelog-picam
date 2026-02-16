@@ -54,6 +54,11 @@ const Login = () => {
                 Login
             </Typography>
             <Stack spacing={2} alignItems="center" marginTop={4}>
+                {/* <Typography variant="subtitle1" color="warning.main" align="center"> */}
+                {/*     Under Maintenance. */}
+                {/*     <br /> */}
+                {/*     Will be back on Tuesday, 15 December 2025, at 15:00 GMT+1. */}
+                {/* </Typography> */}
                 <Typography>
                     Learn More about this project on{' '}
                     <Link

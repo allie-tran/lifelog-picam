@@ -45,7 +45,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
 
     const handleSimilarImages = () => {
         dispatch(clearZoomedImage());
-        navigate('/similar?image=' + encodeURIComponent(imagePath || ''));
+        navigate('/search?mode=id&&query=' + encodeURIComponent(imagePath || ''));
     };
 
     if (!imagePath) {
@@ -107,7 +107,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                     alt="Zoomed"
                     style={{
                         maxWidth: '100%',
-                        maxHeight: 'calc(80vh - 64px)',
+                        maxHeight: 'calc(90dvh - 112px)',
                         borderRadius: '8px',
                     }}
                 />

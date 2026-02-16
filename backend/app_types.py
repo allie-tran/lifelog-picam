@@ -115,6 +115,7 @@ class LifelogImage(CamelCaseModel):
     people: list[ObjectDetection] = []
 
     deleted: bool = False
+    delete_time: Optional[float] = None
 
     date: str
 

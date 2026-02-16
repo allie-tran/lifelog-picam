@@ -5,15 +5,17 @@ import dayjs from 'dayjs';
 import { deleteImage } from 'apis/browsing';
 import { ImageObject } from '@utils/types';
 import { useAppSelector } from 'reducers/hooks';
+import { useEffect, useState } from 'react';
 
 const ImageWithDate = ({
     image,
     onClick,
     extra,
     onDelete,
-    height = '350px',
+    height = '300px',
     fontSize,
     disableDelete = false,
+    timeOnly = false,
 }: {
     image: ImageObject;
     onClick?: () => void;
@@ -22,10 +24,26 @@ const ImageWithDate = ({
     height?: number | string;
     fontSize?: number | string;
     disableDelete?: boolean;
+    timeOnly?: boolean;
 }) => {
+    const [deleted, setDeleted] = useState(false);
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const imageUrl = `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`;
-    const formattedDate = dayjs(image.timestamp).format('lll');
+    const formattedDate = timeOnly
+        ? dayjs(image.timestamp).format('HH:mm')
+        : dayjs(image.timestamp).format('DD MMM YYYY HH:mm');
+
+    const handleDelete = async () => {
+        setDeleted(true);
+        await deleteImage(deviceId, image.imagePath);
+        onDelete && onDelete(image.imagePath);
+    };
+
+    useEffect(() => {
+        return () => {
+            setDeleted(false);
+        };
+    }, [image.imagePath]);
 
     return (
         <Box
@@ -34,6 +52,9 @@ const ImageWithDate = ({
                 height: height,
                 position: 'relative',
                 width: 'auto',
+                opacity: deleted ? 0 : 1,
+                transition: 'all .2s',
+                visibility: deleted ? 'hidden' : 'visible',
             }}
         >
             <Box
@@ -66,12 +87,22 @@ const ImageWithDate = ({
             <Stack
                 direction="row"
                 spacing={1}
-                alignItems="center"
+                alignItems="flex-end"
                 justifyContent="space-between"
-                sx={{ marginTop: '4px' }}
+                sx={{
+                    transform: 'translateY(-100%) translateY(-12px)',
+                    px: 0.5,
+                }}
             >
                 <Typography
-                    sx={{ fontSize: fontSize || '14px', userSelect: 'none' }}
+                    sx={{
+                        fontSize: fontSize || '14px',
+                        userSelect: 'none',
+                        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                        color: 'white',
+                        px: 1,
+                        borderRadius: '4px',
+                    }}
                 >
                     {formattedDate}
                 </Typography>
@@ -80,11 +111,11 @@ const ImageWithDate = ({
                         <Button
                             color="error"
                             size="small"
-                            sx={{ minWidth: 32 }}
-                            onClick={() => {
-                                deleteImage(deviceId, image.imagePath);
-                                onDelete && onDelete(image.imagePath);
+                            sx={{
+                                minWidth: 32,
+                                backgroundColor: 'rgba(0, 0, 0, 0.6)'
                             }}
+                            onClick={handleDelete}
                         >
                             <DeleteRounded />
                         </Button>

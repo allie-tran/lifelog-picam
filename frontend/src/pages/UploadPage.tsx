@@ -1,19 +1,17 @@
-import React, { useState } from 'react';
 import {
     Box,
     Button,
     Container,
     LinearProgress,
-    MenuItem,
-    Select,
     Stack,
     TextField,
     Typography,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
 import { api } from 'constants/urls';
-import DeviceSelect from './DeviceSelect';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppSelector } from 'reducers/hooks';
+import DeviceSelect from './DeviceSelect';
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -119,7 +117,12 @@ export const UploadPage: React.FC = () => {
                     />
 
                     {/* ZIP file chooser */}
-                    <Button variant="outlined" component="label" sx={{ width: 'fit-content' }}>
+                    <Button
+                        size="large"
+                        variant="outlined"
+                        component="label"
+                        sx={{ width: '200px', py: 1.5, my: 2 }}
+                    >
                         {file ? file.name : 'Choose ZIP file'}
                         <input
                             type="file"
@@ -131,11 +134,12 @@ export const UploadPage: React.FC = () => {
 
                     {/* Upload button */}
                     <Button
+                        size="large"
                         variant="contained"
                         disabled={!file || isUploading}
                         onClick={handleUpload}
                     >
-                        {isUploading ? 'Uploading...' : 'Upload'}
+                        {isUploading ? 'Uploading...' : 'Upload to Server'}
                     </Button>
 
                     {/* Progress bar */}
@@ -151,11 +155,7 @@ export const UploadPage: React.FC = () => {
                         </Box>
                     )}
 
-                    {error && (
-                        <Typography color="error">
-                            {error}
-                        </Typography>
-                    )}
+                    {error && <Typography color="error">{error}</Typography>}
                 </Box>
             </Stack>
         </Container>

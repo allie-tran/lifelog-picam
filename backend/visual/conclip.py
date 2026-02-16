@@ -7,7 +7,7 @@ from PIL import Image
 from app_types import Array1D, Array2D
 
 # the .pt file downloaded from the links above
-device = "cpu"
+device = "cuda"
 checkpoint_path = "files/conclip_vit_l14.pt"
 
 def load_checkpoint(model, checkpoint_path):

@@ -232,7 +232,7 @@ def load_all_segments(
             "device": device_id,
         },
         sort=[("image_path", -1)],
-    )
+    ).limit(10000)
 
     image_to_index = features[device_id][SEARCH_MODEL].image_paths_to_index
     new_records = list(new_records)

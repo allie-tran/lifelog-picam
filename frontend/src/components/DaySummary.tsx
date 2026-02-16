@@ -5,6 +5,7 @@ import {
     CardContent,
     Chip,
     CircularProgress,
+    Container,
     Divider,
     Grid,
     LinearProgress,
@@ -22,6 +23,7 @@ import { CategoryPieChart } from './CategoryChart';
 import { CATEGORIES } from 'constants/activityColors';
 import ImageWithDate from './ImageWithDate';
 import React from 'react';
+import { HistoryRounded, RefreshRounded } from '@mui/icons-material';
 
 const minutesToHM = (m: number): string => {
     const total = Math.round(m);
@@ -43,32 +45,42 @@ const DaySummaryComponent = () => {
     const {
         data: daySummary,
         isLoading,
+        error: isError,
         mutate,
     } = useSWR({ date, deviceId }, () => getDaySummary(deviceId, date || ''), {
         revalidateOnFocus: false,
     });
 
+    const handleProcess = (reprocess: boolean) => {
+        return processDate(deviceId, date || '', reprocess).then(() => {
+            alert('The day is being processed. Please refresh later.');
+            mutate();
+        });
+    };
+
     if (isLoading) {
         return (
             <Stack spacing={2} alignItems="center" padding={2}>
-                <Typography variant="body2"> <i>Loading day summary...</i></Typography>
+                <Typography variant="body2">
+                    {' '}
+                    <i>Loading day summary...</i>
+                </Typography>
                 <CircularProgress />
             </Stack>
         );
     }
 
+    if (isError) {
+        return (
+            <Typography variant="body2" color="error" pl={2} pt={2}>
+                No data.
+            </Typography>
+        );
+    }
+
     if (!daySummary) {
         return (
-            <Button
-                variant="contained"
-                onClick={() =>
-                    processDate(deviceId, date || '').then(() => {
-                        alert(
-                            'The day is being processed. Please refresh later.'
-                        );
-                    })
-                }
-            >
+            <Button variant="contained" onClick={() => handleProcess(false)}>
                 Process Activities for This Day
             </Button>
         );
@@ -99,18 +111,46 @@ const DaySummaryComponent = () => {
     );
 
     return (
-        <Stack spacing={2} alignItems="center" padding={2}>
-            <Typography variant="h6" fontWeight="bold">
-                Day Summary
-            </Typography>
-            <Typography variant="body1">
-                Minutes: {daySummary.totalMinutes.toPrecision(3)} | Images:{' '}
-                {daySummary.totalImages}
-            </Typography>
-            <Grid container spacing={2}>
-                {/* Overview */}
-                <Grid container size={4}>
-                    <Grid size={12}>
+        <>
+            <Stack spacing={2} alignItems="center" padding={2}>
+                <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="flex-end"
+                    width="100%"
+                >
+                    <Box>
+                        {/* Header Section */}
+                        <Typography variant="h6" fontWeight="bold">
+                            Day Summary
+                        </Typography>
+                        <Typography variant="subtitle1" color="text.secondary">
+                            {date
+                                ? new Date(date).toLocaleDateString(undefined, {
+                                      dateStyle: 'full',
+                                  })
+                                : 'Overview'}
+                        </Typography>
+                    </Box>
+                    <Stack direction="row" alignItems="flex-end" spacing={1}>
+                        <Button
+                            startIcon={<RefreshRounded />}
+                            variant="outlined"
+                            onClick={() => handleProcess(false)}
+                        >
+                            Sync Images
+                        </Button>
+                        <Button
+                            startIcon={<HistoryRounded />}
+                            variant="outlined"
+                            onClick={() => handleProcess(true)}
+                        >
+                            Reprocess
+                        </Button>
+                    </Stack>
+                </Stack>
+                <Grid container spacing={2}>
+                    <Grid size={4}>
                         <OverviewSummary
                             totalMinutes={totalMinutes}
                             totalImages={totalImages}
@@ -118,67 +158,41 @@ const DaySummaryComponent = () => {
                             alonePercent={alonePercent}
                         />
                     </Grid>
-                    <Grid size={12}>{SocialSummary()}</Grid>
-                    <Grid size={12}>
-                        <ActivitySummary
-                            categoryEntries={categoryEntries}
-                            categoryMinutes={categoryMinutes}
-                            totalMinutes={totalMinutes}
-                        />
-                    </Grid>
-                </Grid>
-                <Grid container size={8}>
-                    <Grid size={12}>
-                        <FoodDrinkSummary
-                            foodDrinkMinutes={foodDrinkMinutes}
-                            foodDrinkSummary={foodDrinkSummary}
-                            foodDrinkSegments={foodDrinkSegments}
-                        />
-                    </Grid>
-                    <Grid size={12}>
-                        {' '}
+                    <Grid size={8}>
                         {daySummary && (
                             <SummaryText summaryText={daySummary.summaryText} />
                         )}
                     </Grid>
-                    <Grid size={12}>
-                        {<Timeline daySummary={daySummary} />}
+                    <Grid container size={4}>
+                        <Grid size={12}>{SocialSummary()}</Grid>
+                        <Grid size={12}>
+                            <ActivitySummary
+                                categoryEntries={categoryEntries}
+                                categoryMinutes={categoryMinutes}
+                                totalMinutes={totalMinutes}
+                            />
+                        </Grid>
+                    </Grid>
+                    <Grid container size={8}>
+                        <Grid size={12}>
+                            <FoodDrinkSummary
+                                foodDrinkMinutes={foodDrinkMinutes}
+                                foodDrinkSummary={foodDrinkSummary}
+                                foodDrinkSegments={foodDrinkSegments}
+                            />
+                        </Grid>
+                        <Grid size={12}>
+                            {<Timeline daySummary={daySummary} />}
+                        </Grid>
                     </Grid>
                 </Grid>
-            </Grid>
-
-            <Button
-                variant="contained"
-                onClick={() =>
-                    processDate(deviceId, date || '').then(() => {
-                        alert(
-                            'The day is being processed. Please refresh later.'
-                        );
-                        mutate();
-                    })
-                }
-            >
-                Process Unprocessed Images
-            </Button>
-            <Button
-                variant="contained"
-                onClick={() =>
-                    processDate(deviceId, date || '', true).then(() => {
-                        alert(
-                            'The day is being processed. Please refresh later.'
-                        );
-                        mutate();
-                    })
-                }
-            >
-                Re-process Entire Day
-            </Button>
-        </Stack>
+            </Stack>
+        </>
     );
 
     function SocialSummary() {
         return (
-            <Card variant="outlined">
+            <Card variant="outlined" sx={{ height: '100%' }}>
                 <CardContent>
                     <Typography
                         variant="subtitle2"
@@ -223,8 +237,15 @@ export default DaySummaryComponent;
 
 function SummaryText({ summaryText }: { summaryText: string }) {
     return (
-        <Card variant="outlined">
+        <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Day Overview
+                </Typography>
                 <Typography
                     variant="body2"
                     fontStyle="italic"
@@ -292,7 +313,7 @@ const OverviewSummary = ({
 
 function Timeline({ daySummary }: { daySummary: DaySummary }) {
     return (
-        <Card variant="outlined">
+        <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
                 <Typography
                     variant="subtitle2"
@@ -349,7 +370,7 @@ const ActivitySummary = ({
     totalMinutes: number;
 }) => {
     return (
-        <Card variant="outlined">
+        <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
                 <Typography
                     variant="subtitle2"
@@ -427,13 +448,15 @@ function FoodDrinkSummary({
                         <React.Fragment key={index}>
                             <Typography
                                 variant="body2"
-                                sx={{ alignSelf: 'center' }}
+                                sx={{ alignSelf: 'center', minWidth: '50px' }}
                             >
-                                {segment.startTime} {segment.endTime}
+                                {segment.startTime.slice(0, 5)} -{' '}
+                                {segment.endTime.slice(0, 5)}
                             </Typography>
                             {segment.representativeImages?.map(
                                 (image, imgIndex) => (
                                     <ImageWithDate
+                                        timeOnly
                                         key={`${index}-${imgIndex}`}
                                         image={image}
                                         height={'220px'}

@@ -1,6 +1,10 @@
-import { changeUserAccess, getUsers } from 'apis/auth';
 import {
-    Box,
+    AddRounded,
+    CameraAltRounded,
+    PersonRounded,
+    VerifiedUserRounded,
+} from '@mui/icons-material';
+import {
     Button,
     Divider,
     FormControl,
@@ -11,20 +15,14 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
+import { changeUserAccess, getUsers } from 'apis/auth';
+import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React from 'react';
+import { useCookies } from 'react-cookie';
 import { useNavigate } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel, DeviceAccess, UserInfo } from 'types/auth';
-import { useCookies } from 'react-cookie';
-import {
-    AddRounded,
-    CameraAltRounded,
-    DevicesRounded,
-    PersonRounded,
-    VerifiedUserRounded,
-} from '@mui/icons-material';
-import ModalWithCloseButton from 'components/ModalWithCloseButton';
 
 const Admin = () => {
     const { isAuthenticated } = useAppSelector((state) => state.auth);
@@ -69,52 +67,85 @@ const Admin = () => {
 
     return (
         <Stack
-            sx={{ width: '100%' }}
+            sx={{ width: '100%', px: 6 }}
             alignItems="flex-start"
-            padding={4}
             spacing={2}
         >
-            <Typography
-                variant="h4"
-                align="center"
-                marginBottom={4}
-                width="100%"
-            >
+            <Typography variant="h4" marginBottom={4} width="100%">
                 Admin Panel - User List
             </Typography>
             <Divider flexItem />
             {users?.map((user: UserInfo) => (
                 <React.Fragment key={user.username}>
-                    <Typography
-                        key={user.username}
-                        variant="h6"
-                        align="center"
-                        marginTop={2}
-                        color="primary.main"
+                    <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
+                        width="100%"
                     >
-                        <PersonRounded
-                            sx={{ mr: 1, verticalAlign: 'middle' }}
-                        />
-                        {user.username}
-                    </Typography>
-                    <Stack alignItems="flex-start" paddingLeft={4} spacing={1}>
+                        <Typography
+                            key={user.username}
+                            variant="h6"
+                            align="center"
+                            marginTop={2}
+                            color="primary.main"
+                        >
+                            <PersonRounded
+                                sx={{ mr: 1, verticalAlign: 'middle' }}
+                            />
+                            {user.username}
+                        </Typography>
+                        <Button
+                            variant="outlined"
+                            sx={{ mt: 2, textTransform: 'none' }}
+                            onClick={() => {
+                                setUserForAccess(user.username);
+                                setDeviceId('');
+                                setAccessLevel(AccessLevel.NONE);
+                                setOpen(true);
+                            }}
+                        >
+                            Add Device Access <AddRounded sx={{ ml: 1 }} />
+                        </Button>
+                    </Stack>
+                    <Stack
+                        alignItems="flex-start"
+                        spacing={1}
+                        sx={{ width: '100%', mt: 1 }}
+                    >
                         {user.devices ? (
                             user.devices.map((device: DeviceAccess) => (
                                 <Stack
                                     direction="row"
                                     key={device.deviceId}
                                     alignItems="center"
+                                    justifyContent="space-between"
+                                    sx={{
+                                        width: '100%',
+                                        backgroundColor: 'background.paper',
+                                        borderRadius: 1,
+                                        border: '1px solid #424352',
+                                        p: 1,
+                                        px: 2,
+                                    }}
                                 >
-                                    <CameraAltRounded
-                                        sx={{ mr: 1, verticalAlign: 'middle' }}
-                                    />
-                                    <Typography
-                                        variant="body2"
-                                        align="center"
-                                    >
-                                        {device.deviceId} -{' '}
-                                        {device.accessLevel.toUpperCase()}
-                                    </Typography>
+                                    <Stack direction="row" alignItems="center">
+                                        <CameraAltRounded
+                                            sx={{
+                                                mr: 1,
+                                                verticalAlign: 'middle',
+                                            }}
+                                        />
+                                        <Typography
+                                            variant="body2"
+                                            align="center"
+                                        >
+                                            {device.deviceId} -{' '}
+                                            <strong>
+                                                {device.accessLevel.toUpperCase()}
+                                            </strong>
+                                        </Typography>
+                                    </Stack>
                                     <Button
                                         variant="text"
                                         color="error"
@@ -139,20 +170,7 @@ const Admin = () => {
                                 No device access assigned.
                             </Typography>
                         )}
-                        <Button
-                            variant="outlined"
-                            sx={{ mt: 2, textTransform: 'none' }}
-                            onClick={() => {
-                                setUserForAccess(user.username);
-                                setDeviceId('');
-                                setAccessLevel(AccessLevel.NONE);
-                                setOpen(true);
-                            }}
-                        >
-                            Add Device Access <AddRounded sx={{ ml: 1 }} />
-                        </Button>
                     </Stack>
-                    <Divider flexItem />
                 </React.Fragment>
             ))}
             <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>

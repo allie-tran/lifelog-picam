@@ -109,6 +109,8 @@ def apply_qb_norm_to_query(
     # expand normalizing_sum to match the shape of test_test_exp
     # (currently (N,)) -> (N + n, 1)
     max_norm = max(normalizing_sum)
+    assert test_test_exp.shape[1] >= normalizing_sum.shape[0], f"{test_test_exp.shape[1]} needs to be >= {normalizing_sum.shape[0]}"
+
     normalizing_sum = np.concatenate(
         [
             normalizing_sum,

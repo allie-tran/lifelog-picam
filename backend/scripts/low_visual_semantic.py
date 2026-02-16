@@ -115,7 +115,7 @@ def get_low_visual_density_indices(features: AppFeatures):
         all_paths.extend(
             [f"{device_id}/{path}" for path in paths]
         )
-    check_all_files(all_paths)
+    # check_all_files(all_paths)
 
     # return the indices of the images with lowest visual density scores
     if not os.path.exists(f"files/visual_density.csv"):

@@ -8,10 +8,10 @@ import numpy as np
 from app_types import CLIPFeatures, CustomFastAPI, DaySummary, SummarySegment
 from constants import DIR, GROUPED_CATEGORIES, SEARCH_MODEL
 from database.types import ImageRecord
+from llm import MixedContent, get_visual_content, llm
 from visual import clip_model
 
 from scripts.clip_classifier import ClipPromptClassifier
-from llm import llm, MixedContent, get_visual_content
 from scripts.segmentation import pick_representative_index_for_segment
 
 SocialClassifier = Callable[[np.ndarray], bool]
@@ -262,6 +262,8 @@ def social_classifier(vec: np.ndarray) -> bool:
     label = social_alone_clf.class_names[probs.argmax()]
     return label == "social"
 
+# Create classifier for other aspects as needed
+# 1. Activity classifier
 
 def create_day_timeline(app: CustomFastAPI, device: str, date: str):
     activities = ImageRecord.aggregate(
@@ -289,6 +291,10 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
 
     print("Aggregated activities for day summary.")
     activities = list(activities)
+
+    if not activities:
+        print("No activities found for the day.")
+        return []
 
     # Predefine a grid of time slots (e.g., every 30 minutes)
     earliest_hour = 0

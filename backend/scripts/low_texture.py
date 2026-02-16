@@ -167,7 +167,7 @@ def get_pocket_indices(
     image_paths = {}
     for device_id in features.keys():
         image_paths[device_id] = features[device_id][SEARCH_MODEL].image_paths
-    check_all_files_for_pocket(image_paths)
+    # check_all_files_for_pocket(image_paths)
 
     if not CSV_PATH.exists():
         return defaultdict(lambda: np.array([], dtype=np.int32)), set()
