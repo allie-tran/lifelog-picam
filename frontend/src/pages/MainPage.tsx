@@ -43,6 +43,7 @@ function MainPage() {
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
+                setHour(hour || 0);
                 return await getImagesByHour(
                     deviceId,
                     date || '',
@@ -84,10 +85,10 @@ function MainPage() {
     }, [date, deviceId]);
 
     useEffect(() => {
-        if (availableHours.length > 0) {
+        if (availableHours.length > 0 && !availableHours.includes(hour || 0)) {
             setHour(availableHours[0]);
         }
-    }, [data, availableHours]);
+    }, [data, availableHours, hour]);
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));

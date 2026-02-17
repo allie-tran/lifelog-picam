@@ -42,6 +42,7 @@ const LifelogEvent = ({
                     justifyContent: 'space-between',
                 }}
             >
+                <Divider />
                 <Stack
                     direction="row"
                     justifyContent="space-between"

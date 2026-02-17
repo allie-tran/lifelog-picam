@@ -40,7 +40,7 @@ import ImageWithDate from 'components/ImageWithDate';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import { CheckBox, DeleteRounded } from '@mui/icons-material';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();
