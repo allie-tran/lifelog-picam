@@ -1,6 +1,7 @@
 import math
 from datetime import datetime
 from typing import List, Optional
+from database.vector_database import fetch_embeddings
 from scripts.describe_segments import describe_segment
 from preprocess import compress_image
 
@@ -232,9 +233,9 @@ def load_all_segments(
             "device": device_id,
         },
         sort=[("image_path", -1)],
-    ).limit(10000)
+        limit=10000,
+    )
 
-    image_to_index = features[device_id][SEARCH_MODEL].image_paths_to_index
     new_records = list(new_records)
     print(f"Found {len(new_records)} new images to segment.")
     paths = [
@@ -247,9 +248,8 @@ def load_all_segments(
         print(f"Not enough new images to segment ({len(paths)}). Exiting.")
         return
 
-    feats = np.array(
-        [features[device_id][SEARCH_MODEL].features[image_to_index[image_path]] for image_path in paths]
-    )
+    collection = features.collection
+    feats = fetch_embeddings(collection, paths)
 
     print(f"Segmenting {len(feats)} images...")
     print(f"Features shape for segmentation: {feats.shape}")
@@ -300,9 +300,8 @@ def load_all_segments(
 
 
 def pick_representative_index_for_segment(
-    segment_feature_indices: List[int],
-    paths: List[str],
-    feats: np.ndarray,
+    seg_paths: List[str],
+    seg_feats: np.ndarray,
     query_embedding: Optional[np.ndarray] = None,
     alpha_centroid: float = 0.5,
 ) -> List[str]:
@@ -313,10 +312,8 @@ def pick_representative_index_for_segment(
     Returns:
         index (int) into all_features of the representative image.
     """
-    if len(segment_feature_indices) == 0:
-        raise ValueError("Segment has no images.")
-
-    seg_feats = feats[segment_feature_indices]  # (N_seg, D)
+    if len(seg_paths) == 0:
+        raise ValueError("Segment has no images")
 
     # L2-normalise (defensive; CLIP features are often already normalised)
     seg_feats = seg_feats / np.linalg.norm(seg_feats, axis=1, keepdims=True)
@@ -327,7 +324,7 @@ def pick_representative_index_for_segment(
 
     # Cosine similarity to centroid == dot product (after normalisation)
     sim_centroid = seg_feats @ centroid  # (N_seg,)
-    num_thumbnails = choose_num_thumbnails(len(segment_feature_indices))
+    num_thumbnails = choose_num_thumbnails(len(seg_paths))
 
     if query_embedding is not None:
         # Normalise query embedding
@@ -346,5 +343,5 @@ def pick_representative_index_for_segment(
         # No query: just use centroid similarity
         best_indices = np.argsort(sim_centroid)[-num_thumbnails:]
 
-    best_images = [paths[segment_feature_indices[i]] for i in best_indices]
+    best_images = [seg_paths[i] for i in best_indices]
     return best_images

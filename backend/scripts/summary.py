@@ -8,6 +8,7 @@ import numpy as np
 from app_types import CLIPFeatures, CustomFastAPI, DaySummary, SummarySegment
 from constants import DIR, GROUPED_CATEGORIES, SEARCH_MODEL
 from database.types import ImageRecord
+from database.vector_database import fetch_embeddings
 from llm import MixedContent, get_visual_content, llm
 from visual import clip_model
 
@@ -60,11 +61,14 @@ def summarize_lifelog_by_day(
     -------
     Dict[date_str, DailySummary]
     """
-    feats = features.features
-    paths = features.image_paths
-    image_paths_to_index = features.image_paths_to_index
-
+    collection = features.collection
     minutes_per_image = seconds_per_image / 60.0
+
+    paths = [record.image_path for record in ImageRecord.find(filter={"device": summary.device, "date": summary.date, "deleted": False})]
+    feats = fetch_embeddings(
+        collection,
+        paths,
+    )
 
     for vec, path in zip(feats, paths):
         date_str: Optional[str] = path.split("/")[0]
@@ -105,6 +109,7 @@ def summarize_lifelog_by_day(
     encoded_query = clip_model.encode_text(
         "a first-person photo of someone eating or drinking",
     )
+
     merged_segments = []
     if eating_segments:
         eating_segments.sort(key=lambda seg: seg.start_time)
@@ -141,18 +146,18 @@ def summarize_lifelog_by_day(
             },
             sort=[("timestamp", 1)],
         )
-        indices = [
-            image_paths_to_index[img.image_path]
-            for img in image_paths
-            if img.image_path in image_paths_to_index
-        ]
-        if not indices:
+
+        seg_paths = [record.image_path for record in image_paths]
+        seg_feats = fetch_embeddings(
+            collection,
+            image_paths=seg_paths,
+        )
+        if len(seg_feats) == 0:
             continue
 
         representative_image_paths = pick_representative_index_for_segment(
-            indices,
-            paths,
-            feats,
+            seg_paths,
+            seg_feats,
             query_embedding=encoded_query,
         )
         representative_image = ImageRecord.find_one(
@@ -258,7 +263,8 @@ def social_classifier(vec: np.ndarray) -> bool:
     vec: shape (D,)
     Returns True if 'social', False if 'alone'.
     """
-    probs = social_alone_clf.predict_proba_from_features(vec[None, :])[0]
+    vec = np.array(vec).reshape(1, -1)  # shape (1, D)
+    probs = social_alone_clf.predict_proba_from_features(vec)[0]
     label = social_alone_clf.class_names[probs.argmax()]
     return label == "social"
 
@@ -315,7 +321,8 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
     summary = []
     for slot_start, slot_end in time_slots:
         slot_activities = []
-        indices = []
+
+        seg_paths = []
         for segment in activities:
             segment = segment.dict()
             if (
@@ -325,12 +332,7 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
                 < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
             ):
                 slot_activities.append(segment["activity"] or "Unclear")
-                indices.extend(
-                    [
-                        app.features[device][SEARCH_MODEL].image_paths_to_index.get(img_path)
-                        for img_path in segment["image_paths"]
-                    ]
-                )
+                seg_paths.extend(segment["image_paths"])
 
         if slot_activities:
             # Choose the most frequent activity in the slot
@@ -345,11 +347,11 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
             datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_end)
         ).strftime("%H:%M:%S")
 
-        if indices:
+        if seg_paths:
+            seg_feats = fetch_embeddings(app.features[device][SEARCH_MODEL].collection, seg_paths)
             representative_image_paths = pick_representative_index_for_segment(
-                indices,
-                app.features[device][SEARCH_MODEL].image_paths,
-                app.features[device][SEARCH_MODEL].features,
+                seg_paths,
+                seg_feats,
                 encoded_activities_dict.get(activity),
             )
             representative_image = ImageRecord.find_one(

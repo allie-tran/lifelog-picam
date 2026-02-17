@@ -54,17 +54,19 @@ PydanticNDArray: TypeAlias = Annotated[
 ]
 
 class CLIPFeatures(BaseModel):
-    features: PydanticNDArray = Field(
-        default_factory=lambda: np.empty((0, 512), dtype=np.float32)
-    )
-    image_paths: list[str] = []
-    image_paths_to_index: Dict[str, int] = {}
+    # features: PydanticNDArray = Field(
+    #     default_factory=lambda: np.empty((0, 512), dtype=np.float32)
+    # )
+    # image_paths: list[str] = []
+    # image_paths_to_index: Dict[str, int] = {}
+    collection: Optional[Any] = None  # Placeholder for the zvec collection object
 
 class DeviceFeatures(DictRootModel[CLIPFeatures]):
     _default_factory: ClassVar[Callable[[], CLIPFeatures]] = CLIPFeatures
 
 class AppFeatures(DictRootModel[DeviceFeatures]):
     _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
+
 
 class CustomFastAPI(FastAPI):
     models: List[str] = ["conclip"]

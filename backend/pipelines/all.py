@@ -10,6 +10,7 @@ from preprocess import (
     get_thumbnail_path,
     make_video_thumbnail,
 )
+from scripts.anonymise import anonymise_image
 from scripts.object_detection import extract_object_from_image
 
 
@@ -66,24 +67,25 @@ def process_image(
     image_record: ImageRecord | None = None,
     to_encode: bool = True,
 ):
-
     try:
         relative_path = f"{date}/{file_name}"
         model = SEARCH_MODEL
 
         # Check if features already exist
-        if to_encode or relative_path not in app.features[device_id][model].image_paths:
-            _, app.features[device_id][model] = encode_image(
+        if to_encode:
+            encode_image(
                 device_id, f"{date}/{file_name}", app.features[device_id][model]
             )
 
         # Other checks
         thumbnail_exists = False
-        get_thumbnail_path(f"{DIR}/{device_id}/{date}/{file_name}")
+        thumbnail_path, thumbnail_exists = get_thumbnail_path(f"{DIR}/{device_id}/{date}/{file_name}")
 
         # Perform necessary processing
         if image_record is not None:
             people = image_record.people
+            objects = image_record.objects
+            timestamp = datetime.fromtimestamp(image_record.timestamp / 1000)  # Convert from milliseconds
         else:
             timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
             objects, people = extract_object_from_image(
@@ -91,12 +93,7 @@ def process_image(
             )
 
         if not thumbnail_exists:
-            if people:
-                blur_image(
-                    image_path=f"{DIR}/{device_id}/{relative_path}", boxes=people
-                )
-            else:
-                compress_image(f"{DIR}/{device_id}/{date}/{file_name}")
+            anonymise_image = anonymise_image(f"{DIR}/{device_id}/{relative_path}", thumbnail_path)
 
         if image_record is None:
             ImageRecord(
@@ -108,7 +105,7 @@ def process_image(
                 is_video=False,
                 objects=objects,
                 people=people,
-                processed=ProcessedInfo(yolo=True, encoded=True),
+                processed=ProcessedInfo(yolo=True, encoded=True, sam3=sam3),
                 segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
             ).create()
 

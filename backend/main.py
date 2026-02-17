@@ -3,7 +3,7 @@ import io
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, List
 
 import redis
 import uvicorn
@@ -22,7 +22,7 @@ from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel
 from scripts.segmentation import load_all_segments
-from constants import DIR, LOCAL_PORT, SEARCH_MODEL
+from constants import DIR, LOCAL_PORT, SEARCH_MODEL, THUMBNAIL_DIR
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
@@ -33,9 +33,9 @@ from pipelines.hourly import update_app
 from preprocess import (
     get_blurred_image,
     get_similar_images,
+    get_thumbnail_path,
     load_features,
     retrieve_image,
-    save_features,
 )
 from scripts.describe_segments import describe_segment
 from scripts.summary import (
@@ -82,7 +82,6 @@ async def lifespan(app: CustomFastAPI):
     # update_app(app)
     yield
     await FastAPILimiter.close()
-    save_features(app.features)
 
 
 app = CustomFastAPI(lifespan=lifespan)
@@ -109,12 +108,6 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Hello, World!"}
-
-
-@app.get("/save-features")
-async def save_features_endpoint():
-    save_features(app.features)
-    return {"message": "Features saved successfully."}
 
 
 # =================================================================================== #
@@ -199,7 +192,7 @@ async def upload_image(
         image.save(output_path, exif=exif)
         background_tasks.add_task(process_image, app, device, date, file_name)
 
-    now = datetime.now()
+    # now = datetime.now()
     # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
     #     background_tasks.add_task(update_app, app)
     return get_mode()
@@ -249,7 +242,7 @@ async def update_app_endpoint(
 
 @app.post("/check-all-images-uploaded")
 def check_all_files_exist(
-    request: CheckFilesRequest = Body(...),
+    request: CheckFilesRequest = Body(...),  # type: ignore
     device: str = Depends(get_device_from_headers),
 ):
     print(request.date, len(request.all_files), request.all_files[:5])
@@ -332,10 +325,15 @@ def get_image(
     # Read the image file and return as base64
     image_path = os.path.join(DIR, device, filename)
     if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="Image file not found.")
+        raise HTTPException(status_code=404, detail=f"Image file not found at {image_path}.")
 
-    # Censor if needed (for example, blur faces)
-    img = get_blurred_image(image_path, image.people)
+    thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
+    if not thumbnail_exists:
+        raise HTTPException(status_code=404, detail="Thumbnail not found.")
+    img = Image.open(thumbnail_path)
+
+    # # Censor if needed (for example, blur faces)
+    # img = get_blurred_image(image_path, image.people)
 
     # Return
     buf = io.BytesIO()
@@ -484,9 +482,8 @@ def search(
     results = retrieve_image(
         device,
         query,
+        app.features[device][SEARCH_MODEL],
         sort_by,
-        app.features[device][SEARCH_MODEL].features,
-        app.features[device][SEARCH_MODEL].image_paths,
         deleted_set,
         k=1000,
         retrieved_videos=app.retrieved_videos[device],
@@ -517,8 +514,7 @@ def similar_images(
     results = get_similar_images(
         device,
         image,
-        app.features[device][SEARCH_MODEL].features,
-        app.features[device][SEARCH_MODEL].image_paths,
+        app.features[device][SEARCH_MODEL],
         delete_set,
         k=100,
         retrieved_videos=app.retrieved_videos[device],
@@ -553,8 +549,7 @@ def similar_images_by_upload(
         results = get_similar_images(
             device,
             temp_path,
-            app.features[device][SEARCH_MODEL].features,
-            app.features[device][SEARCH_MODEL].image_paths,
+            app.features[device][SEARCH_MODEL],
             delete_set,
             k=100,
             retrieved_videos=app.retrieved_videos[device],
@@ -576,6 +571,8 @@ def similar_images_by_upload(
 class DeleteImageRequest(CamelCaseModel):
     image_path: str
 
+class DeleteImagesRequest(CamelCaseModel):
+    image_paths: List[str]
 
 @app.delete("/delete-image")
 def delete_image(
@@ -603,6 +600,34 @@ def delete_image(
         {"image_path": original, "device": device},
         {"$set": {"deleted": True, "delete_time": timestamp_now}},
     )
+
+@app.delete("/delete-images")
+def delete_images(
+    request: DeleteImagesRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to delete images.")
+
+    image_paths = request.image_paths
+    for image_path in image_paths:
+        if not (image_path.endswith(".jpg") or image_path.endswith(".mp4")):
+            if os.path.exists(f"{DIR}/{device}/{image_path}.jpg"):
+                original = f"{image_path}.jpg"
+            elif os.path.exists(f"{DIR}/{device}/{image_path}.mp4"):
+                original = f"{image_path}.mp4"
+            else:
+                raise HTTPException(status_code=404, detail="Image not found")
+        else:
+            original = image_path
+
+        print(f"Deleting image: {original}")
+        timestamp_now = datetime.now().timestamp() * 1000
+        ImageRecord.update_many(
+            {"image_path": original, "device": device},
+            {"$set": {"deleted": True, "delete_time": timestamp_now}},
+        )
 
 
 @app.get("/get-deleted-images")
@@ -666,6 +691,19 @@ def force_delete_image(
     image_path = request.image_path
     remove_physical_image(device, image_path)
     remove_from_features(app, device, image_path)
+
+@app.delete("/force-delete-image")
+def force_delete_images(
+    request: DeleteImagesRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to delete images.")
+    image_paths = request.image_paths
+    for image_path in image_paths:
+        remove_physical_image(device, image_path)
+        remove_from_features(app, device, image_path)
 
 
 def process_segments(date: str, device: str):
@@ -804,7 +842,7 @@ def get_day_summary(
     summary = summarize_day_by_text(summary)
     summary = summarize_lifelog_by_day(
         summary,
-        app.features[device]["siglip"]
+        app.features[device][SEARCH_MODEL]
     )
 
     DaySummaryRecord.update_one(
