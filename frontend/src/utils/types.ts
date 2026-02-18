@@ -33,16 +33,39 @@ type SummarySegment = {
     duration: number;
 };
 
+// Define the enum to match your backend ActionType
+export enum ActionType {
+    BURST = 'burst',
+    PERIOD = 'period',
+    BINARY = 'binary',
+}
+
+export interface CustomGoal {
+    name: string;
+    type: ActionType;
+    query_prompt?: string; // Optional field for additional details
+}
+
 type DaySummary = {
     date: string;
     segments: SummarySegment[];
     summaryText: string;
-    aloneMinutes: number;
-    socialMinutes: number;
-    categoryMinutes: { [key: string]: number };
-    foodDrinkMinutes: number;
-    foodDrinkSegments: SummarySegment[];
-    foodDrinkSummary: string;
+    updated: boolean;
+    device: string;
+
+    // 1. Binary: e.g., {"Social": 120.5, "Focus": 45.0}
+    binaryMetrics: Record<string, number>;
+
+    // 2. Periods: e.g., {"Eating": [segment1, segment2]}
+    periodMetrics: Record<string, SummarySegment[]>;
+
+    // 3. Bursts: e.g., {"Drinking Water": [1715200000, 1715200500]}
+    burstMetrics: Record<string, number[]>;
+
+    // Summaries: e.g., {"Eating": "Healthy lunch at desk"}
+    customSummaries: Record<string, string>;
+
+    categoryMinutes: Record<string, number>;
     totalImages: number;
     totalMinutes: number;
 };

@@ -45,4 +45,3 @@ export const changeUserAccess = async (token: string, username: string, deviceId
     return response.data;
 }
 
-

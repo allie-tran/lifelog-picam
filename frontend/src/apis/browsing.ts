@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { ImageObject } from '@utils/types';
+import { ActionType, CustomGoal, ImageObject } from 'utils/types';
 import { getCookie, parseErrorResponse } from 'utils/misc';
 
 axios.defaults.headers.common['Authorization'] = `Bearer ${getCookie('token')}`;
@@ -56,6 +56,23 @@ export const getImagesByHour = async (
         available_hours: number[];
         total_pages: number;
     };
+};
+
+export const getImagesByRange = async (
+    device: string,
+    date: string,
+    startTime: number,
+    endTime: number
+) => {
+    const response = await axios.post(
+        `${BACKEND_URL}/get-images-by-range?device=${encodeURIComponent(device)}`,
+        {
+            start_time: startTime,
+            date: date,
+            end_time: endTime,
+        }
+    );
+    return response.data as ImageObject[];
 };
 
 export const getImage = async (deviceId: string, filename: string) => {
@@ -156,12 +173,41 @@ export const forceDeleteImage = async (deviceId: string, imagePath: string) => {
     return response.data;
 };
 
-export const forceDeleteImages = async (deviceId: string, imagePaths: string[]) => {
+export const forceDeleteImages = async (
+    deviceId: string,
+    imagePaths: string[]
+) => {
     const response = await axios.delete(
         `${BACKEND_URL}/force-delete-images?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePaths },
         }
+    );
+    return response.data;
+};
+
+export const getUserGoals = async (deviceId: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-targets?device=${encodeURIComponent(deviceId)}`
+    );
+    let goals: CustomGoal[] = [];
+    for (const goal of response.data) {
+        goals.push({
+            name: goal[0],
+            type: goal[1] as ActionType,
+            query_prompt: goal[2] || '',
+        });
+    }
+    return goals;
+};
+
+export const updateUserGoals = async (
+    goals: CustomGoal[],
+    deviceId: string
+) => {
+    const response = await axios.post(
+        `${BACKEND_URL}/update-targets?device=${encodeURIComponent(deviceId)}`,
+        goals.map((goal) => [goal.name, goal.type, goal.query_prompt || ''])
     );
     return response.data;
 };

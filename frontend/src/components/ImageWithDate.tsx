@@ -12,7 +12,7 @@ const ImageWithDate = ({
     onClick,
     extra,
     onDelete,
-    height = '300px',
+    height = '220px',
     fontSize,
     disableDelete = false,
     timeOnly = false,
@@ -28,7 +28,9 @@ const ImageWithDate = ({
 }) => {
     const [deleted, setDeleted] = useState(false);
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
-    const imageUrl = `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`;
+    const imageUrl = image.thumbnail
+        ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
+        : '';
     const formattedDate = timeOnly
         ? dayjs(image.timestamp).format('HH:mm')
         : dayjs(image.timestamp).format('DD MMM YYYY HH:mm');
@@ -57,19 +59,38 @@ const ImageWithDate = ({
                 visibility: deleted ? 'hidden' : 'visible',
             }}
         >
-            <Box
-                component="img"
-                sx={{
-                    position: 'relative',
-                    cursor: onClick ? 'pointer' : 'default',
-                    height: 'calc(100% - 24px)',
-                    width: 'auto',
-                    borderRadius: '8px',
-                }}
-                onClick={onClick}
-                src={imageUrl}
-                alt={image.imagePath}
-            />
+            {imageUrl ? (
+                <Box
+                    component="img"
+                    sx={{
+                        position: 'relative',
+                        cursor: onClick ? 'pointer' : 'default',
+                        height: 'calc(100% - 24px)',
+                        width: 'auto',
+                        borderRadius: '8px',
+                    }}
+                    onClick={onClick}
+                    src={imageUrl}
+                    alt={image.imagePath}
+                />
+            ) : (
+                <Box
+                    sx={{
+                        position: 'relative',
+                        height: 'calc(100% - 24px)',
+                        width: 'auto',
+                        aspectRatio: '9 / 16',
+                        borderRadius: '8px',
+                        backgroundColor: '#ccc',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#666',
+                    }}
+                >
+                    Not processed
+                </Box>
+            )}
             <VideocamRounded
                 sx={{
                     position: 'absolute',

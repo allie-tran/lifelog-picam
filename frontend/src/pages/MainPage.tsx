@@ -19,6 +19,8 @@ import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
+import GoalConfig from 'components/GoalConfig';
+import DeleteRange from 'components/DeleteRange';
 
 function MainPage() {
     const navigate = useNavigate();
@@ -158,6 +160,7 @@ function MainPage() {
                         </Button>
                     ))}
                 </Stack>
+                <DeleteRange onDelete={() => mutate()} date={date || ''} />
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&

@@ -6,10 +6,12 @@ const ModalWithCloseButton = ({
     children,
     open,
     onClose,
+    fitContent = false,
 }: {
     children: React.ReactNode;
     onClose: () => void;
     open: boolean;
+    fitContent?: boolean;
 }) => {
     return (
         <Modal open={open} onClose={onClose}>
@@ -22,8 +24,8 @@ const ModalWithCloseButton = ({
                     bgcolor: 'background.paper',
                     boxShadow: 24,
                     p: 4,
-                    height: '90dvh',
-                    width: '90dvw',
+                    height: fitContent ? 'fit-content' : '90dvh',
+                    width: fitContent ? 'fit-content' : '90dvw',
                     overflowY: 'auto',
                     borderRadius: '8px',
                     alignItems: 'center',
