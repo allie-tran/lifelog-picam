@@ -78,10 +78,14 @@ def describe_segment(device: str, segment: list[str], segment_idx: int, extra_in
         # image_bytes.append(img)
         if THUMBNAIL_DIR not in image_path:
             image_path = f"{THUMBNAIL_DIR}/{device}/{image_path}"
-        image = Image.open(image_path).convert("RGB")
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG")
-        image_bytes.append(buf.getvalue())
+        try:
+            image = Image.open(image_path).convert("RGB")
+            buf = io.BytesIO()
+            image.save(buf, format="JPEG")
+            image_bytes.append(buf.getvalue())
+        except Exception as e:
+            rprint(f"Failed to process image {image_path}. Skipping. Error: {e}")
+            traceback.print_exc()
 
     category = "Unclear"
     description = ""

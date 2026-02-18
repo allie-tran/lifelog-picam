@@ -1,21 +1,11 @@
-import os
-import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
-import numpy as np
-from app_types import CustomFastAPI, DeviceFeatures
-from constants import DIR, SEARCH_MODEL
+from app_types import CustomFastAPI
+from constants import SEARCH_MODEL
 from database.types import ImageRecord
-from database.vector_database import check_if_exists
-from preprocess import get_thumbnail_path
-from scripts.low_texture import get_pocket_indices
-from scripts.low_visual_semantic import get_low_visual_density_indices
-from scripts.querybank_norm import load_qb_norm_features
 from scripts.segmentation import load_all_segments
+from scripts.sync import sync_images
 from sessions.redis import RedisClient
-from tqdm.auto import tqdm
-
-from pipelines.all import process_image
 
 redis_client = RedisClient()
 
@@ -23,130 +13,112 @@ redis_client = RedisClient()
 def update_app(app: CustomFastAPI, job_id: str | None = None):
     print(f"Starting hourly update at {datetime.now()} with job_id: {job_id}")
     # Process newly saved images
-    process_saved_images(job_id, app)
-
-    # Load query bank normalization features
-    app.retrieved_videos, app.normalizing_sum = load_qb_norm_features(app.features)
-
-    ## Get low visual density images
-    app.low_visual_indices, app.images_with_low_density = (
-        get_low_visual_density_indices(app.features)
-    )
-
-    low_pocket_indices, images_with_pocket = get_pocket_indices(app.features)
-
-    for device_id in app.features.keys():
-        app.low_visual_indices[device_id] = np.unique(
-            np.concatenate(
-                [app.low_visual_indices[device_id], low_pocket_indices[device_id]]
-            )
-        )
-        app.low_visual_indices[device_id] = app.low_visual_indices[device_id].astype(
-            np.int32
-        )
-
-    app.images_with_low_density = app.images_with_low_density.union(images_with_pocket)
+    # process_saved_images(job_id, app)
+    if app.last_saved < datetime.now() - timedelta(minutes=24 * 60):
+        for device in app.features.keys():
+            sync_images(device, app.features[device][SEARCH_MODEL].collection)
 
     # Segment images excluding deleted and low visual density images
     for device_id in app.features.keys():
-        load_all_segments(
-            device_id,
-            app.features,
-            set(
-                ImageRecord.find(filter={"deleted": True}, distinct="image_path")
-            ).union(app.images_with_low_density),
-            job_id=job_id,
-        )
+        # Let's do day-based
+        for date in os.listdir(os.path.join(DIR, device_id)):
+            load_all_segments(
+                device_id,
+                app.features,
+                set(
+                    ImageRecord.find(
+                        filter={"deleted": True, "device": device_id, "date": date}
+                    ).distinct("image_path")
+                ),
+                job_id=job_id,
+                date=date,
+            )
     app.last_saved = datetime.now()
     return app
 
-def process_saved_images(job_id: str | None, app: CustomFastAPI):
-    changed = False
-    job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
-    tracked_files = job.get("all_files", []) if job else []
-    tracked_files_set = set(tracked_files)
 
-    for device in os.listdir(DIR):
-        all_dates = os.listdir(os.path.join(DIR, device))
-        all_dates = [
-            date for date in all_dates if os.path.isdir(os.path.join(DIR, device, date))
-        ]
+# def process_saved_images(job_id: str | None, app: CustomFastAPI):
+#     changed = False
+#     job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
+#     tracked_files = job.get("all_files", []) if job else []
+#     tracked_files_set = set(tracked_files)
 
-        print("Checking device:", device)
-        to_process = set()
+#     for device in os.listdir(DIR):
+#         all_dates = os.listdir(os.path.join(DIR, device))
+#         all_dates = [
+#             date for date in all_dates if os.path.isdir(os.path.join(DIR, device, date))
+#         ]
 
-        _collection = ImageRecord._get_collection()
-        all_indexed = _collection.aggregate([ { "$match": { "device": device } }, { "$group": { "_id": "$image_path" } } ])
-        all_indexed = set(record["_id"] for record in all_indexed)
+#         print("Checking device:", device)
+#         to_process = set()
 
-        all_processed = all_indexed
+#         _collection = ImageRecord._get_collection()
+#         all_indexed = _collection.aggregate([ { "$match": { "device": device } }, { "$group": { "_id": "$image_path" } } ])
+#         all_indexed = set(record["_id"] for record in all_indexed)
 
-        for date in all_dates:
-            for file in os.listdir(os.path.join(DIR, device, date)):
-                relative_path = f"{date}/{file}"
-                if relative_path not in all_processed:
-                    to_process.add(relative_path)
-                    continue
-                _, thumbnail_exists = get_thumbnail_path(
-                    os.path.join(DIR, device, relative_path)
-                )
-                if not thumbnail_exists:
-                    to_process.add(relative_path)
+#         all_processed = all_indexed
 
-                if not check_if_exists(
-                    app.features[device][SEARCH_MODEL].collection,
-                    relative_path,
-                ):
-                    to_process.add(relative_path)
+#         for date in all_dates:
+#             for file in os.listdir(os.path.join(DIR, device, date)):
+#                 relative_path = f"{date}/{file}"
+#                 if relative_path not in all_processed:
+#                     to_process.add(relative_path)
+#                     continue
+#                 _, thumbnail_exists = get_thumbnail_path(
+#                     os.path.join(DIR, device, relative_path)
+#                 )
+#                 if not thumbnail_exists:
+#                     to_process.add(relative_path)
 
-        if to_process:
-            if device not in app.features.keys():
-                app.features[device] = DeviceFeatures()
-            print(f"Processing {len(to_process)} new images...")
+#                 if not check_if_exists(
+#                     app.features[device][SEARCH_MODEL].collection,
+#                     relative_path,
+#                 ):
+#                     to_process.add(relative_path)
 
-            # split it into batches of 1000 and process each batch
-            batch_size = 10000
+#         if to_process:
+#             if device not in app.features.keys():
+#                 app.features[device] = DeviceFeatures()
+#             print(f"Processing {len(to_process)} new images...")
 
-            # randomize the order of to_process to ensure a good mix of images if the processes are parallelized
-            to_process = random.sample(list(to_process), len(to_process))
+#             # split it into batches of 1000 and process each batch
+#             batch_size = 10000
 
-            for i in range(0, len(to_process), batch_size):
-                batch = to_process[i : i + batch_size]
-                all_records = ImageRecord.find(
-                    filter={"device": device, "image_path": {"$in": batch}},
-                )
-                all_records_dict = {record.image_path: record for record in all_records}
+#             # randomize the order of to_process to ensure a good mix of images if the processes are parallelized
+#             to_process = random.sample(list(to_process), len(to_process))
 
-                j = 0
-                for relative_path in tqdm(sorted(batch), desc=f"Processing {device}"):
-                    app = process_image(
-                        app,
-                        device,
-                        relative_path.split("/")[0],
-                        relative_path.split("/")[1],
-                        all_records_dict.get(relative_path),
-                        to_encode=True,
-                    )
+#             for i in range(0, len(to_process), batch_size):
+#                 batch = to_process[i : i + batch_size]
+#                 all_records = ImageRecord.find(
+#                     filter={"device": device, "image_path": {"$in": batch}},
+#                 )
+#                 all_records_dict = {record.image_path: record for record in all_records}
 
-                    if job is not None and relative_path in tracked_files_set:
-                        job["progress"] += 1 / len(tracked_files) * 0.4
-                        j += 1
-                        if j % 100 == 0:
-                            job["message"] = (
-                                f"Processed {i}/{len(tracked_files)} files. Currently processing: {relative_path}"
-                            )
-                            redis_client.set_json(f"processing_job:{job_id}", job)
+#                 j = 0
+#                 for relative_path in tqdm(sorted(batch), desc=f"Processing {device}"):
+#                     app = process_image(
+#                         app,
+#                         device,
+#                         relative_path.split("/")[0],
+#                         relative_path.split("/")[1],
+#                         all_records_dict.get(relative_path),
+#                         to_encode=True,
+#                     )
 
-                    changed = True
+#                     if job is not None and relative_path in tracked_files_set:
+#                         job["progress"] += 1 / len(tracked_files) * 0.4
+#                         j += 1
+#                         if j % 100 == 0:
+#                             job["message"] = (
+#                                 f"Processed {i}/{len(tracked_files)} files. Currently processing: {relative_path}"
+#                             )
+#                             redis_client.set_json(f"processing_job:{job_id}", job)
 
-    if job is not None:
-        job["progress"] = 0.4
-        job["message"] = "Finalizing feature update. Moving to segmentation..."
-        redis_client.set_json(f"processing_job:{job_id}", job)
+#                     changed = True
 
-    return changed
+#     if job is not None:
+#         job["progress"] = 0.4
+#         job["message"] = "Finalizing feature update. Moving to segmentation..."
+#         redis_client.set_json(f"processing_job:{job_id}", job)
 
-
-def activity_recognition(app: CustomFastAPI):
-    # Placeholder for future activity recognition implementation
-    return app
+#     return changed

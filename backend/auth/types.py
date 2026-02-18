@@ -1,3 +1,4 @@
+from app_types import CustomTarget
 from dependencies import CamelCaseModel
 from mongodb_odm import Document
 try:
@@ -45,6 +46,7 @@ class User(Document):
     password: str # hashed password
     is_admin: bool = False
     devices: list[DeviceAccess] | None = None
+    goal_targets: list[CustomTarget] = []
 
     class ODMConfig(Document.ODMConfig):
         collection_name = "users"

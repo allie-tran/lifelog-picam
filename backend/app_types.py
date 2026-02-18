@@ -1,14 +1,25 @@
 from collections import defaultdict
+from enum import Enum
 from datetime import datetime
-from typing import Annotated, Dict, List, Literal, Optional, TypeVar, Any, Generic
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Generic,
+    List,
+    Literal,
+    Optional,
+    TypeVar,
+    NamedTuple,
+)
 
 import numpy as np
 import numpy.typing as npt
 from fastapi import FastAPI
-from pydantic import BaseModel, RootModel, computed_field, GetPydanticSchema, InstanceOf
+from pydantic import BaseModel, Field, GetPydanticSchema, InstanceOf, computed_field
 from typing_extensions import TypeAlias
-from typing import TypeVar, Generic, Callable, ClassVar, Dict
-from pydantic import BaseModel, Field
 
 from dependencies import CamelCaseModel
 
@@ -21,6 +32,8 @@ Array3x3 = Annotated[npt.NDArray[DType], Literal[3, 3]]
 ArrayNxNx3 = Annotated[npt.NDArray[DType], Literal["N", "N", 3]]
 
 RootDictType = TypeVar("RootDictType", bound=BaseModel)
+
+
 class DictRootModel(BaseModel, Generic[RootDictType]):
     root: Dict[str, RootDictType] = Field(default_factory=dict)
     _default_factory: ClassVar[Callable[[], RootDictType]]
@@ -46,12 +59,14 @@ class DictRootModel(BaseModel, Generic[RootDictType]):
     def items(self):
         return self.root.items()
 
+
 PydanticNDArray: TypeAlias = Annotated[
     Array2D[np.float32],
     GetPydanticSchema(
         lambda _s, h: h(InstanceOf[np.ndarray]), lambda _s, h: h(InstanceOf[np.ndarray])
     ),
 ]
+
 
 class CLIPFeatures(BaseModel):
     # features: PydanticNDArray = Field(
@@ -61,8 +76,10 @@ class CLIPFeatures(BaseModel):
     # image_paths_to_index: Dict[str, int] = {}
     collection: Optional[Any] = None  # Placeholder for the zvec collection object
 
+
 class DeviceFeatures(DictRootModel[CLIPFeatures]):
     _default_factory: ClassVar[Callable[[], CLIPFeatures]] = CLIPFeatures
+
 
 class AppFeatures(DictRootModel[DeviceFeatures]):
     _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
@@ -143,26 +160,39 @@ class SummarySegment(CamelCaseModel):
     representative_image: LifelogImage | None = None
     representative_images: list[LifelogImage] = []
 
+class ActionType(str, Enum):
+    BURST = "burst"   # Frequency: e.g., "drinking water"
+    PERIOD = "period" # Duration/Segments: e.g., "eating"
+    BINARY = "binary" # State: e.g., "social vs alone"
+
+class CustomTarget(NamedTuple):
+    name: str
+    action_type: ActionType
+    query_prompt: str  # The prompt for CLIP/Classifier
 
 class DaySummary(CamelCaseModel):
     date: str
-    segments: list[SummarySegment] = []
+    segments: List[SummarySegment] = []
     summary_text: str = ""
     updated: bool = False
     device: str = ""
 
-    # Social vs Alone
-    social_minutes: float = 0.0
-    alone_minutes: float = 0.0
+    # 1. BINARY: Tracks durations for "state" targets (e.g., "social_minutes": 120.0)
+    # Replaces: social_minutes, alone_minutes
+    binary_metrics: Dict[str, float] = Field(default_factory=dict)
 
-    # Time Distribution
+    # 2. PERIODS: Stores groups of segments for specific activities (e.g., "eating")
+    # Replaces: food_drink_segments, food_drink_minutes
+    period_metrics: Dict[str, List[SummarySegment]] = Field(default_factory=dict)
+
+    # 3. BURSTS: Lists of timestamps/counts for instant actions (e.g., "drinking water")
+    burst_metrics: Dict[str, List[float]] = Field(default_factory=dict)
+
+    # Summaries for specific periods (e.g., {"Dining": "Quick lunch at desk"})
+    # Replaces: food_drink_summary
+    custom_summaries: Dict[str, str] = Field(default_factory=dict)
+
+    # Bookkeeping
     category_minutes: Dict[str, float] = {}
-
-    # Food / Drink Patterns
-    food_drink_minutes: float = 0.0
-    food_drink_segments: list[SummarySegment] = []
-    food_drink_summary: str = ""
-
-    # Optional: bookkeeping fields
     total_images: int = 0
     total_minutes: float = 0.0

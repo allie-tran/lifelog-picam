@@ -14,44 +14,53 @@ from fastapi.params import Body
 from fastapi_limiter import FastAPILimiter
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
+from redis import asyncio as aioredis
 from tqdm.auto import tqdm
 
-from app_types import CustomFastAPI, DaySummary
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, LifelogImage
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
-from auth.types import AccessLevel
-from scripts.segmentation import load_all_segments
-from constants import DIR, LOCAL_PORT, SEARCH_MODEL, THUMBNAIL_DIR
+from auth.types import AccessLevel, User
+from constants import DIR, LOCAL_PORT, SEARCH_MODEL
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from ingest import app as ingest_app
 from pipelines.all import process_image, process_video
-from pipelines.delete import remove_from_features, remove_physical_image
+from pipelines.delete import remove_physical_image
 from pipelines.hourly import update_app
-from preprocess import (
-    get_blurred_image,
-    get_similar_images,
-    get_thumbnail_path,
-    load_features,
-    retrieve_image,
-)
+from preprocess import get_similar_images, load_features, retrieve_image
 from scripts.describe_segments import describe_segment
+from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
+from scripts.utils import get_thumbnail_path
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
-from redis import asyncio as aioredis
-from fastapi_limiter import FastAPILimiter
+
+
+class RangeRequest(CamelCaseModel):
+    date: str
+    start_time: int
+    end_time: int
+
 
 class CheckFilesRequest(BaseModel):
     date: str
     all_files: list[str]
+
+
+class DeleteImageRequest(CamelCaseModel):
+    image_path: str
+
+
+class DeleteImagesRequest(CamelCaseModel):
+    image_paths: List[str]
 
 
 load_dotenv()
@@ -73,9 +82,7 @@ async def lifespan(app: CustomFastAPI):
                 upsert=True,
             )
     redis = aioredis.from_url(
-        "redis://localhost:6379",
-        encoding="utf8",
-        decode_responses=True
+        "redis://localhost:6379", encoding="utf8", decode_responses=True
     )
     await FastAPILimiter.init(redis)
     app.features = load_features(app)
@@ -190,11 +197,14 @@ async def upload_image(
         # Save image with EXIF data
         output_path = f"{folder}/{file_name}"
         image.save(output_path, exif=exif)
-        background_tasks.add_task(process_image, app, device, date, file_name)
+        background_tasks.add_task(
+            process_image,
+            device,
+            date,
+            file_name,
+            app.features[device]["conclip"].collection,
+        )
 
-    # now = datetime.now()
-    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-    #     background_tasks.add_task(update_app, app)
     return get_mode()
 
 
@@ -227,7 +237,13 @@ async def upload_video(
         os.remove(output_path)
         output_path = mp4_path
 
-    background_tasks.add_task(process_video, app, device, date, file_name)
+    background_tasks.add_task(
+        process_video,
+        device,
+        date,
+        file_name,
+        app.features[device]["conclip"].collection,
+    )
     return {"message": "Video uploaded successfully."}
 
 
@@ -325,7 +341,9 @@ def get_image(
     # Read the image file and return as base64
     image_path = os.path.join(DIR, device, filename)
     if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail=f"Image file not found at {image_path}.")
+        raise HTTPException(
+            status_code=404, detail=f"Image file not found at {image_path}."
+        )
 
     thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
     if not thumbnail_exists:
@@ -396,6 +414,7 @@ async def get_images_by_hour(
                 "images": {"$push": "$$ROOT"},
             }
         },
+        # sort segment by id
         {"$sort": {"_id": -1}},
     ]
 
@@ -414,7 +433,9 @@ async def get_images_by_hour(
     start_index = (page - 1) * items_per_page
     end_index = start_index + items_per_page
     segments = segments[start_index:end_index]
-    print(f"Found {len(segments)} segments for date {date} and hour {hour}.")
+
+    for segment in segments:
+        segment.images = sorted(segment.images, key=lambda x: x.timestamp, reverse=True)
 
     return {
         "date": date,
@@ -424,13 +445,36 @@ async def get_images_by_hour(
                 ImageRecord(**image.dict()).model_dump(
                     exclude={"_id", "id"}, by_alias=True
                 )
-                for image in segment.images[::-1]
+                for image in segment.images
             ]
             for segment in segments
         ],
         "available_hours": sorted(all_hours, reverse=True),
         "total_pages": total_page,
     }
+
+
+@app.post("/get-images-by-range", response_model=List[LifelogImage])
+def get_images_by_range(
+    request: RangeRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        print("Access level:", access_level)
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    start_timestamp = request.start_time
+    end_timestamp = request.end_time
+    images = ImageRecord.find(
+        filter={
+            "timestamp": {"$gte": start_timestamp, "$lte": end_timestamp},
+            "deleted": False,
+            "device": device,
+        },
+        sort=[("timestamp", -1)],
+    )
+    return [LifelogImage.validate(image) for image in images]
 
 
 @app.get("/get-all-dates")
@@ -507,9 +551,6 @@ def similar_images(
             filter={"deleted": True, "device": device}, distinct="image_path"
         )
     )
-    now = datetime.now()
-    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-    #     update_app(app)
 
     results = get_similar_images(
         device,
@@ -522,6 +563,7 @@ def similar_images(
         remove=app.low_visual_indices[device],
     )
     return list(results)
+
 
 @app.post("/similar-images")
 def similar_images_by_upload(
@@ -538,8 +580,8 @@ def similar_images_by_upload(
         )
     )
     now = datetime.now()
-    # if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-    #     update_app(app)
+    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
+        update_app(app)
 
     # save in temp
     temp_path = f"{DIR}/{device}/temp_{file.filename}"
@@ -568,12 +610,6 @@ def similar_images_by_upload(
 # =================================================================================== #
 
 
-class DeleteImageRequest(CamelCaseModel):
-    image_path: str
-
-class DeleteImagesRequest(CamelCaseModel):
-    image_paths: List[str]
-
 @app.delete("/delete-image")
 def delete_image(
     request: DeleteImageRequest,
@@ -600,6 +636,7 @@ def delete_image(
         {"image_path": original, "device": device},
         {"$set": {"deleted": True, "delete_time": timestamp_now}},
     )
+
 
 @app.delete("/delete-images")
 def delete_images(
@@ -658,8 +695,9 @@ def get_deleted_images(
             # Delete image permanently
             full_path = os.path.join(DIR, device, image.image_path)
             print(f"Permanently deleting image: {full_path}")
-            remove_physical_image(device, image.image_path)
-            remove_from_features(app, device, image.image_path)
+            remove_physical_image(
+                device, image.image_path, app.features[device][SEARCH_MODEL].collection
+            )
             continue
     return final_list
 
@@ -689,8 +727,10 @@ def force_delete_image(
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_path = request.image_path
-    remove_physical_image(device, image_path)
-    remove_from_features(app, device, image_path)
+    remove_physical_image(
+        device, image_path, app.features[device][SEARCH_MODEL].collection
+    )
+
 
 @app.delete("/force-delete-image")
 def force_delete_images(
@@ -702,8 +742,9 @@ def force_delete_images(
         raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_paths = request.image_paths
     for image_path in image_paths:
-        remove_physical_image(device, image_path)
-        remove_from_features(app, device, image_path)
+        remove_physical_image(
+            device, image_path, app.features[device][SEARCH_MODEL].collection
+        )
 
 
 def process_segments(date: str, device: str):
@@ -739,7 +780,7 @@ def process_segments(date: str, device: str):
     all_summaries = list(all_summaries)[-10:]  # last 10 summaries
     all_summaries = [s.summary for s in all_summaries]
     total = len(segments)
-    for i, segment_id in tqdm(
+    for _, segment_id in tqdm(
         enumerate(segments), total=total, desc="Processing segments"
     ):
         if segment_id is None:
@@ -768,6 +809,7 @@ def process_segments(date: str, device: str):
             {"$set": {"updated": True}},
             upsert=True,
         )
+
 
 @app.get("/process-date")
 def process_date(
@@ -803,19 +845,36 @@ def process_date(
     load_all_segments(
         device,
         app.features,
-        set(
-            ImageRecord.find(filter={"deleted": True}, distinct="image_path")
-        ).union(app.images_with_low_density)
+        set(ImageRecord.find(filter={"deleted": True}, distinct="image_path")).union(
+            app.images_with_low_density
+        ),
+        date=date,
     )
 
-    # background_tasks.add_task(process_segments, date, device)
+    background_tasks.add_task(process_segments, date, device)
     return {"message": f"Processing segments for date {date} in background."}
+
+
+DEFAULT_TARGETS = [
+    CustomTarget(
+        "Phone",
+        ActionType.BURST,
+        "checking or using a phone (e.g., texting, calling, browsing)",
+    ),
+    CustomTarget(
+        "Computer",
+        ActionType.BINARY,
+        "using a computer (e.g., typing, video calls, browsing)",
+    ),
+    CustomTarget("Eating", ActionType.PERIOD, "a photo of a meal on a table"),
+]
 
 
 @app.get("/day-summary", response_model=DaySummary)
 def get_day_summary(
     date: str,
     device: str,
+    user=Depends(get_user),
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
     if access_level == AccessLevel.NONE:
@@ -824,8 +883,7 @@ def get_day_summary(
         )
 
     if not date:
-        date = datetime.now().strftime("%Y-%m-%d")
-
+        raise HTTPException(status_code=400, detail="Date is required.")
 
     # Check if there are changes in the segments
     day_summary_record = DaySummaryRecord.find_one({"date": date, "device": device})
@@ -840,9 +898,16 @@ def get_day_summary(
         raise HTTPException(status_code=404, detail="No segments found for this date.")
 
     summary = summarize_day_by_text(summary)
+    if user.goal_targets:
+        my_targets = user.goal_targets
+    else:
+        my_targets = DEFAULT_TARGETS
+
+    print(
+        f"Summarizing day {date} for device {device} with targets: {[(t.name, t.action_type) for t in my_targets]}"
+    )
     summary = summarize_lifelog_by_day(
-        summary,
-        app.features[device][SEARCH_MODEL]
+        summary, app.features[device][SEARCH_MODEL], my_targets
     )
 
     DaySummaryRecord.update_one(
@@ -852,6 +917,37 @@ def get_day_summary(
     )
 
     return summary
+
+
+@app.get("/get-targets")
+def get_targets(
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(status_code=403, detail="Not authorized to access targets.")
+
+    if user.goal_targets:
+        return user.goal_targets
+    else:
+        return DEFAULT_TARGETS
+
+
+@app.post("/update-targets")
+def update_targets(
+    targets: List[CustomTarget],
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized to set targets.")
+
+    if not targets:
+        targets = DEFAULT_TARGETS
+
+    user.goal_targets = targets
+    User.update_one({"username": user.username}, {"$set": {"goal_targets": targets}})
+    return {"message": "Targets updated successfully."}
 
 
 class ChangeSegmentActivityRequest(CamelCaseModel):

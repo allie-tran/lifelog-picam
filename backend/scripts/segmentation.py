@@ -1,16 +1,17 @@
 import math
 from datetime import datetime
 from typing import List, Optional
-from database.vector_database import fetch_embeddings
-from scripts.describe_segments import describe_segment
-from preprocess import compress_image
 
 import numpy as np
 from app_types import AppFeatures
 from constants import SEARCH_MODEL, SEGMENT_THRESHOLD
 from database.types import DaySummaryRecord, ImageRecord
+from database.vector_database import fetch_embeddings
 from sessions.redis import RedisClient
 from tqdm.auto import tqdm
+
+from scripts.describe_segments import describe_segment
+from scripts.utils import compress_image
 
 redis_client = RedisClient()
 
@@ -63,12 +64,18 @@ def segment_images(
 
     # Get physical boundaries first (time difference too large)
     boundaries = set()
-    time_threshold = 15 * 60 * 1000  # 15 minutes in milliseconds
-    min_time = 5 * 60 * 1000  # 5 minutes in milliseconds
+    time_threshold = 2 * 60 * 1000  # 15 minutes in milliseconds
+    min_time = 2 * 60 * 1000  # 5 minutes in milliseconds
+
     timestamp = ImageRecord.find(
         filter={"image_path": {"$in": image_paths}, "device": device_id}
     )
     path_to_time = {record.image_path: record.timestamp for record in timestamp}
+    for img in image_paths:
+        if img not in path_to_time:
+            print("Error: Missing timestamp for image:", img)
+            raise ValueError(f"Missing timestamp for image: {img}")
+
     for i in range(1, len(image_paths)):
         t1 = path_to_time[image_paths[i - 1]]
         t2 = path_to_time[image_paths[i]]
@@ -79,6 +86,7 @@ def segment_images(
     sorted_indices = np.argsort(image_paths)
     if reverse:
         sorted_indices = sorted_indices[::-1]
+
     features = features[sorted_indices]
     image_paths = [image_paths[i] for i in sorted_indices]
 
@@ -163,30 +171,29 @@ def segment_images(
     return image_segments
 
 
-def reset_all_segments():
+def reset_all_segments(device_id):
     print("Resetting all segments...")
     ImageRecord.update_many(
-        filter={},
+        filter={"device": device_id},
         data={"$unset": {"segment_id": None}},
     )
 
 
-def find_first_unsegmented_timestamp():
-    today = datetime.now().strftime("%Y-%m-%d")
+def find_first_unsegmented_timestamp(device_id, date: Optional[str] = None):
     record = ImageRecord.find(
         filter={
             "segment_id": None,
             "deleted": False,
-            "date": today,
+            "device": device_id,
+            **({"date": date} if date else {}),
         },
         sort=[("timestamp", 1)],
+        limit=1,
     )
     record = list(record)
-    print(record)
     if record:
         return record[0].timestamp
     return None
-
 
 def load_all_segments(
     device_id,
@@ -194,26 +201,37 @@ def load_all_segments(
     deleted_images: set[str],
     *,
     job_id: Optional[str] = None,
+    date: Optional[str] = None,
 ):
+
     # reset_all_segments()
-    # first_unsegmented_time = find_first_unsegmented_timestamp()
-    # if first_unsegmented_time is None:
-    #     print("All images are already segmented. Exiting.")
-    #     return
+    first_unsegmented_time = find_first_unsegmented_timestamp(device_id)
+    if first_unsegmented_time is None:
+        print("All images are already segmented. Exiting.")
+        return
 
     # Reset all the segments after the first unsegmented timestamp
-    # print(
-    #     f"First unsegmented image timestamp: {first_unsegmented_time}, {datetime.fromtimestamp(int(first_unsegmented_time / 1000))}"
-    # )
-    # ImageRecord.update_many(
-    #     filter={"timestamp": {"$gte": first_unsegmented_time}},
-    #     data={"$unset": {"segment_id": None}},
-    # )
+    print(
+        f"First unsegmented image timestamp: {datetime.fromtimestamp(int(first_unsegmented_time / 1000))}"
+    )
+    ImageRecord.update_many(
+        filter={
+            "timestamp": {"$gte": first_unsegmented_time},
+            "device": device_id,
+            **({"date": date} if date else {}),
+        },
+        data={"$unset": {"segment_id": None}},
+    )
 
     job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
+
     # Check exisiting segments
     segment_ids = ImageRecord.find(
-        filter={"segment_id": {"$exists": True}, "device": device_id},
+        filter={
+            "segment_id": {"$exists": True},
+            "device": device_id,
+            **({"date": date} if date else {}),
+        },
         distinct="segment_id",
     )
     # Remove None
@@ -231,25 +249,24 @@ def load_all_segments(
             ],
             "deleted": {"$ne": True},
             "device": device_id,
+            **({"date": date} if date else {}),
         },
         sort=[("image_path", -1)],
-        limit=10000,
+        limit=50000,
     )
 
     new_records = list(new_records)
     print(f"Found {len(new_records)} new images to segment.")
-    paths = [
-        record.image_path
-        for record in new_records
-        if record.image_path in image_to_index
-    ]
+    paths = [record.image_path for record in new_records]
 
-    if len(paths) < 100:
-        print(f"Not enough new images to segment ({len(paths)}). Exiting.")
+    now = datetime.now().timestamp() * 1000
+    last_image_time = new_records[-1].timestamp
+    if len(paths) < 100 and now - last_image_time < 60 * 60 * 1000:
+        print(f"Not enough new images to segment ({len(paths)}), and last image is new ({datetime.fromtimestamp(int(last_image_time / 1000))}). Skipping segmentation for now.")
         return
 
-    collection = features.collection
-    feats = fetch_embeddings(collection, paths)
+    collection = features[device_id][SEARCH_MODEL].collection
+    paths, feats = fetch_embeddings(collection, paths, device_id)
 
     print(f"Segmenting {len(feats)} images...")
     print(f"Features shape for segmentation: {feats.shape}")
@@ -268,22 +285,23 @@ def load_all_segments(
             data={"$set": {"segment_id": max_id + i}},
         )
 
-        # try:
-        #     describe_segment(
-        #         device_id,
-        #         [compress_image(f"{device_id}/{i}") for i in segment],
-        #         segment_idx=max_id + i,
-        #     )
+        if device_id == "allie":
+            try:
+                describe_segment(
+                    device_id,
+                    [compress_image(f"{device_id}/{i}") for i in segment],
+                    segment_idx=max_id + i,
+                )
 
-        #     date = segment[0].split("_")[0]
-        #     date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
-        #     DaySummaryRecord.update_one(
-        #         {"date": date},
-        #         {"$set": {"updated": True}},
-        #         upsert=True,
-        #     )
-        # except Exception:
-        #     pass
+                date = segment[0].split("_")[0]
+                date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+                DaySummaryRecord.update_one(
+                    {"date": date},
+                    {"$set": {"updated": True}},
+                    upsert=True,
+                )
+            except Exception:
+                pass
 
         if job is not None and tracked_files_set:
             if (i + 1) % 10 == 0:

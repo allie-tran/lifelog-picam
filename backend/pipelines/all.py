@@ -1,17 +1,16 @@
 from datetime import datetime
+import os
 
+import zvec
 from app_types import CustomFastAPI, ProcessedInfo
 from constants import DIR, SEARCH_MODEL
 from database.types import ImageRecord
-from preprocess import (
-    blur_image,
-    compress_image,
-    encode_image,
-    get_thumbnail_path,
-    make_video_thumbnail,
-)
+from database.vector_database import insert_embedding
+from pipelines.delete import remove_physical_image
 from scripts.anonymise import anonymise_image
 from scripts.object_detection import extract_object_from_image
+from scripts.utils import get_thumbnail_path, make_video_thumbnail
+from visual import clip_model
 
 
 def find_segment(device_id: str, timestamp: float) -> int | None:
@@ -59,66 +58,103 @@ def find_segment(device_id: str, timestamp: float) -> int | None:
     return None
 
 
+def index_to_mongo(device_id: str, relative_path: str):
+    date, file_name = relative_path.split("/")
+    timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
+    ImageRecord(
+        date=date,
+        device=device_id,
+        image_path=relative_path,
+        thumbnail="",
+        timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+        is_video=False,
+        objects=[],
+        people=[],
+        processed=ProcessedInfo(yolo=False, encoded=False, sam3=False),
+        segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
+    ).create()
+
+
+def yolo_process_image(device_id: str, relative_path: str):
+    objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}")
+
+    ImageRecord.update_one(
+        filter={"device": device_id, "image_path": relative_path},
+        data={
+            "$set": {
+                "objects": objects,
+                "people": people,
+                "processed.yolo": True,
+            }
+        },
+    )
+
+
+def create_thumbnail(device_id: str, relative_path: str):
+    thumbnail_path, thumbnail_exists = get_thumbnail_path(
+        f"{DIR}/{device_id}/{relative_path}"
+    )
+    if not thumbnail_exists:
+        anonymise_image(
+            f"{DIR}/{device_id}/{relative_path}", thumbnail_path
+        )
+
+    ImageRecord.update_one(
+        filter={"device": device_id, "image_path": relative_path},
+        data={
+            "$set": {
+                "thumbnail": relative_path.replace(".jpg", ".webp"),
+                "processed.sam3": True,
+            }
+        },
+    )
+
+
+def encode_image(
+    device_id: str,
+    image_path: str,
+    collection: zvec.Collection,
+):
+    try:
+        path = f"{DIR}/{device_id}/{image_path}"
+        if image_path.endswith(".mp4") or image_path.endswith(".h264"):
+            # use video thumbnail
+            new_path = make_video_thumbnail(f"{DIR}/{device_id}/{image_path}")
+            if new_path:
+                path = new_path
+
+        vector = clip_model.encode_image(path)
+        if len(vector.shape) == 0:
+            vector = vector.reshape(1, -1)
+
+        insert_embedding(collection, vector.flatten(), image_path)
+    except Exception as e:
+        print(e)
+        print(f"Error encoding image {image_path}")
+        if os.path.exists(f"{DIR}/{device_id}/{image_path}"):
+            os.remove(f"{DIR}/{device_id}/{image_path}")
+
+
 def process_image(
-    app: CustomFastAPI,
     device_id: str,
     date: str,
     file_name: str,
-    image_record: ImageRecord | None = None,
-    to_encode: bool = True,
+    collection: zvec.Collection,
 ):
+    relative_path = f"{date}/{file_name}"
     try:
-        relative_path = f"{date}/{file_name}"
-        model = SEARCH_MODEL
-
-        # Check if features already exist
-        if to_encode:
-            encode_image(
-                device_id, f"{date}/{file_name}", app.features[device_id][model]
-            )
-
-        # Other checks
-        thumbnail_exists = False
-        thumbnail_path, thumbnail_exists = get_thumbnail_path(f"{DIR}/{device_id}/{date}/{file_name}")
-
-        # Perform necessary processing
-        if image_record is not None:
-            people = image_record.people
-            objects = image_record.objects
-            timestamp = datetime.fromtimestamp(image_record.timestamp / 1000)  # Convert from milliseconds
-        else:
-            timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
-            objects, people = extract_object_from_image(
-                f"{DIR}/{device_id}/{relative_path}"
-            )
-
-        if not thumbnail_exists:
-            anonymise_image = anonymise_image(f"{DIR}/{device_id}/{relative_path}", thumbnail_path)
-
-        if image_record is None:
-            ImageRecord(
-                date=date,
-                device=device_id,
-                image_path=relative_path,
-                thumbnail=relative_path.replace(".jpg", ".webp"),
-                timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-                is_video=False,
-                objects=objects,
-                people=people,
-                processed=ProcessedInfo(yolo=True, encoded=True, sam3=sam3),
-                segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
-            ).create()
-
-        return app
-
+        index_to_mongo(device_id, relative_path)
+        yolo_process_image(device_id, relative_path)
+        create_thumbnail(device_id, relative_path)
+        encode_image(device_id, relative_path, collection)
     except FileNotFoundError as e:
         print(
             f"Error processing image {file_name} for device {device_id} on date {date}: {e}"
         )
-        return app
+        remove_physical_image(device_id, relative_path, collection)
 
 
-def process_video(app: CustomFastAPI, device_id: str, date: str, file_name: str):
+def process_video(device_id: str, date: str, file_name: str, collection: zvec.Collection):
     output_path = f"{DIR}/{device_id}/{date}/{file_name}"
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
     make_video_thumbnail(output_path)
@@ -131,9 +167,6 @@ def process_video(app: CustomFastAPI, device_id: str, date: str, file_name: str)
         is_video=True,
     ).create()
 
-    model = SEARCH_MODEL
-    _, app.features[device_id][model] = encode_image(
-        device_id, f"{date}/{file_name}", app.features[device_id][model]
+    encode_image(
+        device_id, f"{date}/{file_name}", collection
     )
-
-    return app

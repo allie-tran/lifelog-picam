@@ -1,5 +1,7 @@
-import zvec
 import numpy as np
+import zvec
+from constants import DIR
+from visual import clip_model
 
 directory = "/mnt/ssd0/embeddings/zvec"
 
@@ -69,14 +71,38 @@ def search_similar_embeddings_by_id(collection, image_path, top_k=10):
 def delete_embedding(collection, image_path):
     collection.delete(to_id(image_path))
 
+
 def check_if_exists(collection, image_path):
     doc = collection.get(to_id(image_path))
     return doc is not None
 
 
-def fetch_embeddings(collection, image_paths):
+def fetch_embeddings(collection, image_paths, device_id):
     ids = [to_id(image_path) for image_path in image_paths]
     docs = collection.fetch(ids=ids)
-    arrays = [docs[id].vectors["embedding"] for id in ids if id in docs]
+    vectors = {id: doc.vectors["embedding"] for (id, doc) in docs.items()}
+
+    missing = [id for id in ids if id not in docs]
+    for id in missing:
+        try:
+            path = id.replace("_", "/", 1)
+            path = f"{DIR}/{device_id}/{path}"
+            vector = clip_model.encode_image(path)
+            vector = vector.astype(np.float32).flatten()
+            insert_embedding(collection, vector, id.replace("_", "/", 1))
+            vectors[id] = vector
+        except Exception as e:
+            continue
+
+    if missing:
+        collection.optimize()
+
+    valid_paths = [id for id in ids if id in vectors]
+    # TODO! remove 
+
+    arrays = [vectors[id] for id in valid_paths]
     arrays = [np.array(arr) for arr in arrays]
-    return np.vstack(arrays) if arrays else np.empty((0, 768), dtype=np.float32)
+
+    valid_paths = [id.replace("_", "/", 1) for id in valid_paths]
+
+    return valid_paths, np.vstack(arrays) if arrays else np.empty((0, 768), dtype=np.float32)
