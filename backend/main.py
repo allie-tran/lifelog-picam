@@ -1,5 +1,4 @@
 import base64
-import nacl.utils
 from nacl.public import PrivateKey, Box, PublicKey
 
 import io
@@ -24,7 +23,7 @@ from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, Lifel
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
-from auth.types import AccessLevel, User
+from auth.types import AccessLevel, Device, User
 from constants import DIR, LOCAL_PORT, SEARCH_MODEL
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
@@ -159,12 +158,10 @@ def get_device_from_headers(request: Request):
     return device.username
 
 SERVER_SECRET_KEY = os.getenv("SERVER_SECRET_KEY", "")
-DEVICE_PUBLIC_KEY = os.getenv("DEVICE_PUBLIC_KEY", "")
 assert SERVER_SECRET_KEY, "SERVER_SECRET_KEY is not set in environment variables."
-assert DEVICE_PUBLIC_KEY, "DEVICE_PUBLIC_KEY is not set in environment variables."
-box = Box(PrivateKey(bytes.fromhex(SERVER_SECRET_KEY)), PublicKey(bytes.fromhex(DEVICE_PUBLIC_KEY)))
+server_sk = PrivateKey(bytes.fromhex(SERVER_SECRET_KEY))
 
-def decrypt_image(file: UploadFile):
+def decrypt_image(box: Box, file: UploadFile):
     file.file.seek(0)
     file_bytes = file.file.read()
     decrypted = box.decrypt(file_bytes)
@@ -195,7 +192,9 @@ async def upload_image(
             image = Image.open(file.file)
         except UnidentifiedImageError:
             try:
-                image = decrypt_image(file)
+                device_public_key_hex = Device.find_one({"device_id": device}).public_key
+                box = Box(server_sk, PublicKey(bytes.fromhex(device_public_key_hex)))
+                image = decrypt_image(box, file)
             except Exception as e:
                 traceback.print_exc()
                 print(f"Failed to decrypt image. Error: {e}")

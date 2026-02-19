@@ -60,7 +60,7 @@ class UserResponse(CamelCaseModel):
 
 class Device(Document):
     device_id: str
-    public_key: str
+    public_key: str = None
     last_seen: datetime | None = None
 
     class ODMConfig(Document.ODMConfig):
