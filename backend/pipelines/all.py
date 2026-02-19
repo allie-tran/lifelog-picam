@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+from typing import Optional
 
 import zvec
 from app_types import CustomFastAPI, ProcessedInfo
@@ -65,7 +66,7 @@ def index_to_mongo(device_id: str, relative_path: str):
         date=date,
         device=device_id,
         image_path=relative_path,
-        thumbnail="",
+        thumbnail=relative_path.replace(".jpg", ".webp"),
         timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
         is_video=False,
         objects=[],
@@ -82,8 +83,8 @@ def yolo_process_image(device_id: str, relative_path: str):
         filter={"device": device_id, "image_path": relative_path},
         data={
             "$set": {
-                "objects": objects,
-                "people": people,
+                "objects": [obj.model_dump() for obj in objects],
+                "people": [person.model_dump() for person in people],
                 "processed.yolo": True,
             }
         },
@@ -103,8 +104,8 @@ def create_thumbnail(device_id: str, relative_path: str):
         filter={"device": device_id, "image_path": relative_path},
         data={
             "$set": {
-                "thumbnail": relative_path.replace(".jpg", ".webp"),
                 "processed.sam3": True,
+                "thumbnail": relative_path.replace(".jpg", ".webp"),
             }
         },
     )
@@ -139,9 +140,10 @@ def process_image(
     device_id: str,
     date: str,
     file_name: str,
-    collection: zvec.Collection,
+    collection: Optional[zvec.Collection]
 ):
     relative_path = f"{date}/{file_name}"
+    assert collection, "Collection must be provided for processing images"
     try:
         index_to_mongo(device_id, relative_path)
         yolo_process_image(device_id, relative_path)
@@ -154,8 +156,9 @@ def process_image(
         remove_physical_image(device_id, relative_path, collection)
 
 
-def process_video(device_id: str, date: str, file_name: str, collection: zvec.Collection):
+def process_video(device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]):
     output_path = f"{DIR}/{device_id}/{date}/{file_name}"
+    assert collection, "Collection must be provided for processing images"
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
     make_video_thumbnail(output_path)
     ImageRecord(

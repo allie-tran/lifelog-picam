@@ -19,7 +19,7 @@ redis_client = RedisClient()
 def choose_num_thumbnails(
     num_frames: int,
     frames_per_thumb: int = 100,
-    min_thumbs: int = 1,
+    min_thumbs: int = 3,
     max_thumbs: int = 8,
 ) -> int:
     """
@@ -42,6 +42,7 @@ def choose_num_thumbnails(
     estimated = math.ceil(num_frames / frames_per_thumb)
     estimated = max(min_thumbs, estimated)
     estimated = min(max_thumbs, estimated)
+    estimated = min(num_frames, estimated)  # can't have more thumbnails than frames
     return estimated
 
 
@@ -195,17 +196,17 @@ def find_first_unsegmented_timestamp(device_id, date: Optional[str] = None):
         return record[0].timestamp
     return None
 
+
 def load_all_segments(
-    device_id,
+    device_id: str,
+    date: str,
     features: AppFeatures,
     deleted_images: set[str],
     *,
     job_id: Optional[str] = None,
-    date: Optional[str] = None,
 ):
-
     # reset_all_segments()
-    first_unsegmented_time = find_first_unsegmented_timestamp(device_id)
+    first_unsegmented_time = find_first_unsegmented_timestamp(device_id, date)
     if first_unsegmented_time is None:
         print("All images are already segmented. Exiting.")
         return
@@ -218,7 +219,8 @@ def load_all_segments(
         filter={
             "timestamp": {"$gte": first_unsegmented_time},
             "device": device_id,
-            **({"date": date} if date else {}),
+            "date": date,
+            "deleted": {"$ne": True},
         },
         data={"$unset": {"segment_id": None}},
     )
@@ -230,7 +232,7 @@ def load_all_segments(
         filter={
             "segment_id": {"$exists": True},
             "device": device_id,
-            **({"date": date} if date else {}),
+            "date": date,
         },
         distinct="segment_id",
     )
@@ -249,7 +251,7 @@ def load_all_segments(
             ],
             "deleted": {"$ne": True},
             "device": device_id,
-            **({"date": date} if date else {}),
+            "date": date,
         },
         sort=[("image_path", -1)],
         limit=50000,
@@ -262,7 +264,9 @@ def load_all_segments(
     now = datetime.now().timestamp() * 1000
     last_image_time = new_records[-1].timestamp
     if len(paths) < 100 and now - last_image_time < 60 * 60 * 1000:
-        print(f"Not enough new images to segment ({len(paths)}), and last image is new ({datetime.fromtimestamp(int(last_image_time / 1000))}). Skipping segmentation for now.")
+        print(
+            f"Not enough new images to segment ({len(paths)}), and last image is new ({datetime.fromtimestamp(int(last_image_time / 1000))}). Skipping segmentation for now."
+        )
         return
 
     collection = features[device_id][SEARCH_MODEL].collection
@@ -280,8 +284,14 @@ def load_all_segments(
     for i, segment in tqdm(
         enumerate(segments), desc="Updating segments", total=len(segments)
     ):
+        segment_id = max_id + i
+        print(segment_id, date, segment[:3], "...", segment[-3:])
         ImageRecord.update_many(
-            filter={"image_path": {"$in": segment}},
+            filter={
+                "image_path": {"$in": segment},
+                "device": device_id,
+                "date": date,
+            },
             data={"$set": {"segment_id": max_id + i}},
         )
 
@@ -289,14 +299,12 @@ def load_all_segments(
             try:
                 describe_segment(
                     device_id,
+                    date,
                     [compress_image(f"{device_id}/{i}") for i in segment],
-                    segment_idx=max_id + i,
+                    segment_idx=segment_id,
                 )
-
-                date = segment[0].split("_")[0]
-                date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
                 DaySummaryRecord.update_one(
-                    {"date": date},
+                    {"date": date, "device": device_id},
                     {"$set": {"updated": True}},
                     upsert=True,
                 )

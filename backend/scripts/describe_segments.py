@@ -1,17 +1,15 @@
+import io
 import random
 import time
 import traceback
-import io
-from PIL import Image
 
-from constants import THUMBNAIL_DIR
+from constants import CATEGORIES, THUMBNAIL_DIR
 from database.types import ImageRecord
 from google.genai.errors import ClientError, ServerError
-from partialjson.json_parser import JSONParser
-from rich import print as rprint
-
 from llm import MixedContent, get_visual_content, llm
-from constants import CATEGORIES
+from partialjson.json_parser import JSONParser
+from PIL import Image
+from rich import print as rprint
 
 parser = JSONParser()
 
@@ -21,7 +19,10 @@ def get_description_from_frames(
 ) -> dict[str, str] | None:
     description = llm.generate_from_mixed_media(
         get_visual_content(image_bytes)
-        + [MixedContent(type="text", content=instructions) for instructions in instructions]
+        + [
+            MixedContent(type="text", content=instructions)
+            for instructions in instructions
+        ]
     )
     description = str(description)
     description_text = description.strip()
@@ -66,7 +67,13 @@ Return with the following format:
 """
 
 
-def describe_segment(device: str, segment: list[str], segment_idx: int, extra_info: list[str] = []):
+def describe_segment(
+    device: str,
+    date: str,
+    segment: list[str],
+    segment_idx: int,
+    extra_info: list[str] = [],
+):
     image_bytes = []
     if len(segment) > 20:
         segment = [segment[i] for i in sorted(random.sample(range(len(segment)), 20))]
@@ -102,7 +109,8 @@ def describe_segment(device: str, segment: list[str], segment_idx: int, extra_in
                     PROMPT.format(
                         categories_list="\n".join([f"- {c}" for c in CATEGORIES.keys()])
                     )
-                ] + extra_info,
+                ]
+                + extra_info,
                 image_bytes,
             )
 
@@ -129,7 +137,7 @@ def describe_segment(device: str, segment: list[str], segment_idx: int, extra_in
 
     print(f"Segment {segment_idx}: {final_category}")
     ImageRecord.update_many(
-        filter={"segment_id": segment_idx, "device": device},
+        filter={"segment_id": segment_idx, "device": device, "date": date},
         data={
             "$set": {
                 "activity": final_category,

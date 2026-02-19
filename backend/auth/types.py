@@ -1,6 +1,7 @@
 from app_types import CustomTarget
 from dependencies import CamelCaseModel
 from mongodb_odm import Document
+from datetime import datetime
 try:
     from enum import StrEnum
 except ImportError:
@@ -59,6 +60,8 @@ class UserResponse(CamelCaseModel):
 
 class Device(Document):
     device_id: str
+    public_key: str
+    last_seen: datetime | None = None
 
     class ODMConfig(Document.ODMConfig):
         collection_name = "devices"

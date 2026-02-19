@@ -9,7 +9,7 @@ directory = "/mnt/ssd0/embeddings/zvec"
 def create_collection(device, search_model):
     schema = zvec.CollectionSchema(
         name=f"{device}_{search_model}",
-        vectors=zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, 768),
+        vectors=zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, 768, index_param=zvec.FlatIndexParam(metric_type=zvec.MetricType.COSINE)),
         fields=[
             zvec.FieldSchema("image_path", zvec.DataType.STRING),
         ],

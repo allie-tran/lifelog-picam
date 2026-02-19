@@ -73,53 +73,71 @@ def blur_image_mosaic(image, mask, scale_ratio=0.0075):
                 color = image[cy, cx].tolist()
 
                 # 4. Draw the filled hexagon onto the output
-                cv2.fillPoly(output, poly, color)
+                cv2.fillPoly(output, poly, color)  # type: ignore
 
+    # only apply the masked areas, keep the rest of the image intact
+    output = np.where(mask[:, :, None], output, image)
     return output
 
 
 def anonymise_image(image_path, thumbnail_path, quality=80):
-    sam3.set_image(image_path)
+    try:
+        sam3.set_image(image_path)
 
-    # Query with multiple text prompts
-    results = sam3(
-        text=[
-            "screen",
-            "face",
-            "document",
-            "address",
-            "license plate",
-            "signature",
-            "name plate",
-            "credit card",
-            "bank card",
-            "id card",
-            "passport",
-            "vehicle registration",
-            "social security number",
-            "barcode",
-            "qr code",
-        ]
-    )
+        # Query with multiple text prompts
+        with torch.no_grad():  # Disable gradients for inference
+            results = sam3(
+                text=[
+                    "screen",
+                    "face",
+                    "face with glasses",
+                    "face with mask",
+                    "document",
+                    "address",
+                    "license plate",
+                    "signature",
+                    "name plate",
+                    "credit card",
+                    "bank card",
+                    "id card",
+                    "passport",
+                    "vehicle registration",
+                    "social security number",
+                    "barcode",
+                    "qr code",
+                ],
+                stream=True
+            )
 
-    # Process results
-    img = cv2.imread(image_path)
-    full_mask = np.zeros(img.shape[:2], dtype=bool)  # Initialize an empty mask
-    for result in results:
-        mask = result.masks.data.any(dim=0).cpu().numpy().astype(bool)
-        full_mask |= mask  # Combine masks using logical OR
+        # Process results
+        img = cv2.imread(image_path)
+        full_mask = np.zeros(img.shape[:2], dtype=bool)  # Initialize an empty mask
+        sam3.reset_image()
+        for result in results:
+            result = result.cpu()  # Move to CPU for processing
+            if result.masks is not None:
+                mask = result.masks.data.any(dim=0).numpy().astype(bool)
+                full_mask |= mask  # Combine masks using logical OR
+                del mask
 
-    # Apply mosaic blur to the original image using the combined mask
-    anonymised_image = blur_image_mosaic(img, full_mask)
+        # Apply mosaic blur to the original image using the combined mask
+        anonymised_image = blur_image_mosaic(img, full_mask)
 
-    # 3. Explicit Cleanup
-    del results
-    gc.collect()  # Python overhead cleanup
-    torch.cuda.empty_cache()  # GPU memory release
+        # 3. Explicit Cleanup
+        del results
+        gc.collect()  # Python overhead cleanup
+        torch.cuda.empty_cache()  # GPU memory release
 
-    os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
-    # 4. Resize to max 800x800 while maintaining aspect ratio
-    anonymised_image = cv2.cvtColor(anonymised_image, cv2.COLOR_BGR2RGB)  # Convert to RGB for PIL
-    img = Image.fromarray(anonymised_image)
-    img.thumbnail((800, 800))
-    img.save(thumbnail_path, "WEBP", quality=quality)
+        os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
+        # 4. Resize to max 800x800 while maintaining aspect ratio
+        anonymised_image = cv2.cvtColor(anonymised_image, cv2.COLOR_BGR2RGB)  # Convert to RGB for PIL
+        img = Image.fromarray(anonymised_image)
+        img.thumbnail((800, 800))
+        img.save(thumbnail_path, "WEBP", quality=quality)
+    except torch.cuda.OutOfMemoryError:
+        print(f"CUDA Out of Memory while processing {image_path}. Skipping.")
+        if 'results' in locals():
+            del results
+        gc.collect()
+        torch.cuda.empty_cache()
+        sam3.reset_image()

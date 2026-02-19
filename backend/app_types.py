@@ -121,6 +121,7 @@ class ProcessedInfo(BaseModel):
     yolo: bool = False
     face_recognition: bool = False
     encoded: bool = False
+    sam3: bool = False
 
 
 class LifelogImage(CamelCaseModel):

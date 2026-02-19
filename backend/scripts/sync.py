@@ -6,6 +6,7 @@ import zvec
 from constants import DIR, THUMBNAIL_DIR
 from pipelines.all import index_to_mongo, create_thumbnail, encode_image
 from tqdm import tqdm
+from PIL import Image
 
 client = MongoClient("mongodb://localhost:27017/")
 db = client["picam"]
