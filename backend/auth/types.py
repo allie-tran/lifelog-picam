@@ -58,10 +58,15 @@ class UserResponse(CamelCaseModel):
     is_admin: bool
     devices: list[DeviceAccess] | None = None
 
+class Person(CamelCaseModel):
+    name: str
+    embedding: list[float]
+
 class Device(Document):
     device_id: str
-    public_key: str = None
+    public_key: str = ""
     last_seen: datetime | None = None
+    whitelist: list[Person] = []
 
     class ODMConfig(Document.ODMConfig):
         collection_name = "devices"

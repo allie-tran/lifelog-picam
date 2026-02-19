@@ -211,3 +211,54 @@ export const updateUserGoals = async (
     );
     return response.data;
 };
+
+export const getFaces = async (deviceId: string, blobUrl: string) => {
+    const formData = new FormData();
+    const blobResponse = await fetch(blobUrl);
+    const blob = await blobResponse.blob();
+    formData.append('file', blob, 'white_list_image');
+
+    const response = await axios.post(
+        `${BACKEND_URL}/get-faces?device=${encodeURIComponent(deviceId)}`,
+        formData,
+        {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        }
+    );
+    return response.data as ImageObject[];
+}
+
+
+export const addToWhiteList = async (deviceId: string, blobUrl: string, name: string) => {
+    const formData = new FormData();
+    const blobResponse = await fetch(blobUrl);
+    const blob = await blobResponse.blob();
+    formData.append('file', blob, 'white_list_image');
+
+    const response = await axios.put(
+        `${BACKEND_URL}/add-to-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`,
+        formData,
+        {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        }
+    );
+    return response.data;
+}
+
+export const getWhiteList = async (deviceId: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-whitelist?device=${encodeURIComponent(deviceId)}`
+    );
+    return response.data as { name: string; images: ImageObject[] }[];
+}
+
+export const removeFromWhiteList = async (deviceId: string, name: string) => {
+    const response = await axios.delete(
+        `${BACKEND_URL}/remove-from-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`
+    );
+    return response.data;
+}

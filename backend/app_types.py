@@ -115,6 +115,7 @@ class ObjectDetection(BaseModel):
     confidence: float
     bbox: list[int]  # [x_min, y_min, x_max, y_max]
     embedding: Optional[list[float]] = None
+    cluster_label: Optional[int] = None
 
 
 class ProcessedInfo(BaseModel):

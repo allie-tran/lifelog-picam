@@ -61,7 +61,7 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
         image_path = f"{DIR}/{device}/{image}"
         try:
             Image.open(image_path).verify()
-        except Exception as e:
+        except Exception:
             print(f"Corrupted image found and removed: {image_path}")
             os.remove(image_path)
             if image in missing_in_mongo:
@@ -71,14 +71,16 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
             if image in missing_in_zvec:
                 missing_in_zvec.remove(image)
 
-    for image in tqdm(missing_in_mongo):
+
+    for image in tqdm(missing_in_mongo, desc="Indexing to MongoDB"):
         index_to_mongo(device, image)
 
-    for image in tqdm(missing_in_thumbnail):
+    for image in tqdm(missing_in_thumbnail, desc="Creating Thumbnails"):
         create_thumbnail(device, image)
 
-    for image in tqdm(missing_in_zvec):
+    for image in tqdm(missing_in_zvec, desc="Encoding to ZVec"):
         encode_image(device, image, zvec_collection)
+    zvec_collection.optimize()
 
     # 3. Base on raw_images, find the extra ones in mongo and zvec
     print("-" * 30)

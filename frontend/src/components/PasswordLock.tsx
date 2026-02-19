@@ -20,6 +20,7 @@ import { useSWRConfig } from 'swr';
 import DeletedImages from './DeletedImages';
 import {
     AdminPanelSettingsRounded,
+    FaceRounded,
     HomeRounded,
     LogoutOutlined,
     LogoutRounded,
@@ -114,6 +115,15 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                                 onClick={() => navigate('/search?mode=text')}
                             >
                                 <SearchRounded />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title="People">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => navigate('/faces')}
+                            >
+                                <FaceRounded />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title="Admin Panel">

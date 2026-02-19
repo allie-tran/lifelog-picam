@@ -4,6 +4,7 @@ from typing import Optional
 
 import zvec
 from app_types import CustomFastAPI, ProcessedInfo
+from auth.types import Device
 from constants import DIR, SEARCH_MODEL
 from database.types import ImageRecord
 from database.vector_database import insert_embedding
@@ -77,7 +78,10 @@ def index_to_mongo(device_id: str, relative_path: str):
 
 
 def yolo_process_image(device_id: str, relative_path: str):
-    objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}")
+    device = Device.find_one({"device_id": device_id})
+    assert device, f"Device {device_id} not found"
+    whitelist = device.whitelist
+    objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}", whitelist)
 
     ImageRecord.update_one(
         filter={"device": device_id, "image_path": relative_path},
@@ -95,9 +99,18 @@ def create_thumbnail(device_id: str, relative_path: str):
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
         f"{DIR}/{device_id}/{relative_path}"
     )
+    # get whitelist people
+    image_record = ImageRecord.find_one({"device": device_id, "image_path": relative_path})
+    people = image_record.people if image_record else []
+    whitelist_boxes = []
+    for person in people:
+        if person.label != "redacted face" and person.label != "face":
+            whitelist_boxes.append(person.bbox)
+
     if not thumbnail_exists:
         anonymise_image(
-            f"{DIR}/{device_id}/{relative_path}", thumbnail_path
+            f"{DIR}/{device_id}/{relative_path}", thumbnail_path,
+            whitelist_boxes,
         )
 
     ImageRecord.update_one(

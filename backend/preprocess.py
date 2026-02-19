@@ -17,6 +17,7 @@ from database.vector_database import (
     search_similar_embeddings,
     search_similar_embeddings_by_id,
 )
+from scripts.face_recognition import open_face_collection
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
 
@@ -31,6 +32,7 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
         app_features[device] = device_features
         collection = open_collection(device, "conclip")
         app_features[device]["conclip"] = CLIPFeatures(collection=collection)
+        app_features[device]["faces"] = CLIPFeatures(collection=open_face_collection(device))
 
     app.features = app_features
     return app_features

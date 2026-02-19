@@ -24,6 +24,7 @@ import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
+import FaceIntelligence from 'pages/Faces';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 /**
@@ -216,6 +217,12 @@ const App = () => {
                                         path="/status/:jobId"
                                         element=<PasswordLock>
                                             <ProcessingStatusPage />
+                                        </PasswordLock>
+                                    />
+                                    <Route
+                                        path="/faces"
+                                        element=<PasswordLock>
+                                            <FaceIntelligence />
                                         </PasswordLock>
                                     />
                                 </Routes>

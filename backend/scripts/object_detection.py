@@ -6,19 +6,22 @@ import os
 import glob
 from typing import Any
 from tqdm import tqdm
-
+import numpy as np
 
 import cv2
 from app_types import ObjectDetection
 from ultralytics import YOLO
 from deepface import DeepFace
 
+from auth.types import Person
+
 detect_model = YOLO('yolo11x.pt', task='detect', verbose=False)
 classify_model = YOLO('yolo11x-cls.pt', task='classify', verbose=False)
 print("Model loaded successfully.")
 
 def extract_object_from_image(
-    image_path
+    image_path,
+    whitelist: list[Person] = []
 ):
     frame = cv2.imread(image_path)
     if frame is None:
@@ -68,8 +71,15 @@ def extract_object_from_image(
                             face_bbox[2] + x1,
                             face_bbox[3] + y1,
                         ]
+
+                        label = "redacted face"
+                        for whitelist_person in whitelist:
+                            dist = np.array(whitelist_person.embedding) @ np.array(face.embedding).T
+                            if dist > 0.8:  # Adjust threshold as needed
+                                label = whitelist_person.name
+
                         people.append(ObjectDetection(
-                            label="face",
+                            label=label,
                             confidence=face.confidence,
                             bbox=adjusted_bbox,
                             embedding=face.embedding,

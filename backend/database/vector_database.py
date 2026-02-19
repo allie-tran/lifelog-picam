@@ -22,7 +22,11 @@ def create_collection(device, search_model):
 
 
 def open_collection(device, search_model):
-    collection = zvec.open(path=f"{directory}/{device}_{search_model}")
+    try:
+        collection = zvec.open(path=f"{directory}/{device}_{search_model}")
+    except ValueError:
+        collection = create_collection(device, search_model)
+    print("Stats:", collection.stats)
     return collection
 
 
@@ -39,7 +43,6 @@ def insert_embedding(collection, embedding, image_path):
         )
     )
 
-
 def insert_batch_embeddings(collection, embeddings, image_paths):
     for embedding, image_path in zip(embeddings, image_paths):
         doc = zvec.Doc(
@@ -54,7 +57,7 @@ def insert_batch_embeddings(collection, embeddings, image_paths):
 
 def search_similar_embeddings(collection, query_embedding, top_k=10):
     results = collection.query(
-        vectors=zvec.VectorQuery(field_name="embedding", vector=query_embedding),
+        zvec.VectorQuery(field_name="embedding", vector=query_embedding),
         topk=top_k,
     )
     return results

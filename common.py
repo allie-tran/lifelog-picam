@@ -7,13 +7,14 @@ from dotenv import load_dotenv
 import nacl.utils
 from nacl.public import PrivateKey, Box, PublicKey
 
+
+load_dotenv()
+
+device_id = os.getenv("DEVICE_ID", "allie")
 DEVICE_SECRET_KEY = os.getenv("DEVICE_SECRET_KEY", "")
 SERVER_PUBLIC_KEY = os.getenv("SERVER_PUBLIC_KEY", "")
 assert DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY, "Both DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY environment variables must be set."
 box = Box(PrivateKey(bytes.fromhex(DEVICE_SECRET_KEY)), PublicKey(bytes.fromhex(SERVER_PUBLIC_KEY)))
-
-load_dotenv()
-device_id = os.getenv("DEVICE_ID", "allie")
 
 BACKEND_URL = "https://dcu.allietran.com/selfhealth/be"
 UPLOAD_URL = f"{BACKEND_URL}/upload-image"

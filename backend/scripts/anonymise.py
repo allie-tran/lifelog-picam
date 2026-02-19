@@ -80,7 +80,7 @@ def blur_image_mosaic(image, mask, scale_ratio=0.0075):
     return output
 
 
-def anonymise_image(image_path, thumbnail_path, quality=80):
+def anonymise_image(image_path, thumbnail_path, whitelist_boxes, quality=80):
     try:
         sam3.set_image(image_path)
 
@@ -120,6 +120,11 @@ def anonymise_image(image_path, thumbnail_path, quality=80):
                 full_mask |= mask  # Combine masks using logical OR
                 del mask
 
+        # Remove whitelist areas from the mask
+        for bbox in whitelist_boxes:
+            x1, y1, x2, y2 = bbox
+            full_mask[y1:y2, x1:x2] = False
+
         # Apply mosaic blur to the original image using the combined mask
         anonymised_image = blur_image_mosaic(img, full_mask)
 
@@ -132,7 +137,7 @@ def anonymise_image(image_path, thumbnail_path, quality=80):
         # 4. Resize to max 800x800 while maintaining aspect ratio
         anonymised_image = cv2.cvtColor(anonymised_image, cv2.COLOR_BGR2RGB)  # Convert to RGB for PIL
         img = Image.fromarray(anonymised_image)
-        img.thumbnail((800, 800))
+        img.thumbnail((1080, 1080))
         img.save(thumbnail_path, "WEBP", quality=quality)
     except torch.cuda.OutOfMemoryError:
         print(f"CUDA Out of Memory while processing {image_path}. Skipping.")

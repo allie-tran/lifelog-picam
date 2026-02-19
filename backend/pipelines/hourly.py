@@ -16,7 +16,7 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
     # Process newly saved images
     # process_saved_images(job_id, app)
     # if app.last_saved < datetime.now() - timedelta(minutes=24 * 60):
-    to_sync = True
+    to_sync = False
     if app.last_saved < datetime.now() - timedelta(minutes=24 * 60):
         print("Last saved was more than 24 hours ago, syncing all images...")
         to_sync = True
@@ -30,22 +30,33 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
     # Segment images excluding deleted and low visual density images
     today = datetime.now().strftime("%Y-%m-%d")
     for device_id in app.features.keys():
-        # Let's do day-based
-        for date in os.listdir(os.path.join(DIR, device_id)):
-            if date != today:
-                continue
-            load_all_segments(
-                device_id,
-                date,
-                app.features,
-                set(
-                    ImageRecord.find(
-                        filter={"deleted": True, "device": device_id, "date": date},
-                        distinct="image_path",
-                    )
-                ),
-                job_id=job_id,
-            )
+        load_all_segments(
+            device_id,
+            today,
+            app.features,
+            set(
+                ImageRecord.find(
+                    filter={"deleted": True, "device": device_id, "date": today},
+                    distinct="image_path",
+                )
+            ),
+            job_id=job_id,
+        )
+    # for device_id in app.features.keys():
+    #     # Let's do day-based
+    #     for date in os.listdir(os.path.join(DIR, device_id)):
+    #         load_all_segments(
+    #             device_id,
+    #             date,
+    #             app.features,
+    #             set(
+    #                 ImageRecord.find(
+    #                     filter={"deleted": True, "device": device_id, "date": date},
+    #                     distinct="image_path",
+    #                 )
+    #             ),
+    #             job_id=job_id,
+    #         )
     app.last_saved = datetime.now()
     return app
 
