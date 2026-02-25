@@ -87,7 +87,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         color="primary"
                         fontWeight="bold"
                     >
-                        STREAM
+                        Keep It Secret, Keep It Safe
                     </Typography>
                 </AppBar>
                 <Drawer

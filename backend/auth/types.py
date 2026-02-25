@@ -68,6 +68,7 @@ class Device(Document):
     public_key: str = ""
     last_seen: datetime | None = None
     whitelist: list[Person] = []
+    transform_matrix: bytes | None = None
 
     class ODMConfig(Document.ODMConfig):
         collection_name = "devices"

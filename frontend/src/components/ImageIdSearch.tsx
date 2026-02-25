@@ -10,7 +10,7 @@ const ImageIdSearch = ({ visible = true }: { visible?: boolean }) => {
     const navigate = useNavigate();
 
     const onSearch = (query: string) => {
-        navigate('/search?mode=id&&image_id=' + encodeURIComponent(query));
+        navigate('/search?mode=id&&query=' + encodeURIComponent(query));
     };
 
     return (

@@ -92,19 +92,22 @@ def segment_images(
     image_paths = [image_paths[i] for i in sorted_indices]
 
     # Smooth the features by exponential moving average
-    features = ema_features(features, alpha=0.3)
+    # features = ema_features(features, alpha=0.3)
     # Normalise
-    features = features / np.linalg.norm(features, axis=1, keepdims=True)
+    # features = features / np.linalg.norm(features, axis=1, keepdims=True)
     k = SEGMENT_THRESHOLD
 
     # Calculate all distances
     distances = np.linalg.norm(features[1:] - features[:-1], axis=1)
+    print(distances)
 
     # Dynamic threshold: mean + std
     mean_dist = np.mean(distances)
     std_dist = np.std(distances)
     dynamic_threshold = mean_dist + std_dist * 1.5
     k = dynamic_threshold
+    if np.isnan(k) or np.isinf(k):
+        k = SEGMENT_THRESHOLD
     print(f"Dynamic threshold for segmentation: {k}")
 
     # Compare each feature vector with the previous one

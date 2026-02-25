@@ -1151,8 +1151,12 @@ def remove_from_whitelist(
 def segment_image(
     file: UploadFile,
 ):
-    visualised_base64 = segment_image_with_sam(Image.open(file.file), [])
-    return f"data:image/jpeg;base64, {visualised_base64}"
+    visualised_base64, masks_data, bbox_list = segment_image_with_sam(Image.open(file.file))
+    return {
+        "visualisation": f"data:image/jpeg;base64, {visualised_base64}",
+        "masks": masks_data,
+        "bboxes": bbox_list,
+    }
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -1,4 +1,5 @@
 import gc  # Garbage collector
+import colorsys
 import os
 
 import cv2
@@ -193,31 +194,34 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
 
 model = SAM("sam3.pt")
 
+def get_colors(N: int):
+    HSV_tuples = [(x*1.0/N, 0.5, 0.5) for x in range(N)]
+    RGB_tuples = map(lambda x: colorsys.hsv_to_rgb(*x), HSV_tuples)
+    return [(int(r*255), int(g*255), int(b*255)) for r, g, b in RGB_tuples]
 
-def segment_image_with_sam(image, points=list[int]):
-    if not points:
-        results = model.predict(image, verbose=False, stream=True)
-    else:
-        # Single point prompt - segments object at specific location
-        results = model.predict(
-            image, verbose=False, stream=True, points=points, labels=[1]
-        )
-    segments = []
+def segment_image_with_sam(image):
+    # get the middle point
+    points = np.array([[image.width // 2, image.height // 2]])
+    results = model.predict(image, verbose=False, stream=True, points=points, labels=[1])
     image = np.array(image.convert("RGB"))
+    mask_list = []
+    bbox_list = []
     for result in results:
         if result.masks is None:
             return None
 
         # 2. Logic to find the "Biggest" mask
         # result.masks.data is a tensor of shape [N, H, W]
-        all_masks = result.masks.data.cpu().numpy()
+        result = result.cpu()  # Move to CPU for processing
+        all_masks = result.masks.data.numpy()
+        all_colors = get_colors(all_masks.shape[0])
         for i, mask in enumerate(all_masks):
             coords = np.argwhere(mask > 0)
             if len(coords) == 0:
                 continue
 
             y_c, x_c = coords.mean(axis=0).astype(int)
-            cv2.circle(image, (x_c, y_c), 15, (0, 0, 255), -1)
+            cv2.circle(image, (x_c, y_c), 15, all_colors[i], -1)
             cv2.putText(
                 image,
                 str(i),
@@ -228,8 +232,22 @@ def segment_image_with_sam(image, points=list[int]):
                 2,
             )
 
+            # Overlay the mask on the image for visualization
+            color_mask = np.zeros_like(image)
+            color_mask[mask > 0] = all_colors[i]
+            alpha = 0.7
+            image = cv2.addWeighted(image, 1, color_mask, alpha, 0)
+
+
+            # Save the mask as a PNG in memory and convert to base64
+            _, mask_buffor = cv2.imencode(".png", mask.astype(np.uint8) * 255)
+            mask_list.append(to_base64(mask_buffor))
+
+            bbox = cv2.boundingRect(mask.astype(np.uint8))
+            bbox_list.append(bbox)
+
         # Convert RGB to BGR for OpenCV
         bgr_img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         _, buffer = cv2.imencode(".jpg", bgr_img)
 
-        return to_base64(buffer)
+        return to_base64(buffer), mask_list, bbox_list

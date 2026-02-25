@@ -283,8 +283,17 @@ export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
                 headers: { 'Content-Type': 'multipart/form-data' },
             }
         );
-        return response.data as string;
+        return response.data as {
+            visualisation: string;
+            masks: string[];
+            bboxes: [number, number, number, number][];
+        }
     } catch (error) {
         console.error('Segmentation failed', error);
+        return {
+            visualisation: '',
+            masks: [],
+            bboxes: [],
+        };
     }
 };
