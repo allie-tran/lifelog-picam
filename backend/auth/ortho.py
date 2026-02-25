@@ -39,6 +39,8 @@ def apply_transformation(embedding, transform_matrix):
     Returns:
         The transformed (rotated) embedding
     """
+    if transform_matrix is None:
+        return embedding
     # Ensure the embedding is treated as a column vector for the dot product
     return np.dot(transform_matrix, embedding)
 
@@ -57,5 +59,4 @@ def get_matrix(device: str):
     if device_record and device_record.transform_matrix:
         return pickle.loads(device_record.transform_matrix)
     else:
-        raise ValueError(f"No transformation matrix found for device {device}. Please generate one first.")
         return None
