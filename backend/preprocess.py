@@ -137,7 +137,6 @@ def get_similar_images(
 
     top_images = [doc.fields["image_path"] for doc in docs]
     top_images = [path for path in top_images if path not in deleted_images and path not in remove]
-    print("Similar images:", top_images)
     return ImageRecord.find(
         filter={
             "device": device_id,

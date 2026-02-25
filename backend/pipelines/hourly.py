@@ -13,10 +13,7 @@ redis_client = RedisClient()
 
 def update_app(app: CustomFastAPI, job_id: str | None = None):
     print(f"Starting hourly update at {datetime.now()} with job_id: {job_id}")
-    # Process newly saved images
-    # process_saved_images(job_id, app)
-    # if app.last_saved < datetime.now() - timedelta(minutes=24 * 60):
-    to_sync = False
+    to_sync = True
     if app.last_saved < datetime.now() - timedelta(minutes=24 * 60):
         print("Last saved was more than 24 hours ago, syncing all images...")
         to_sync = True

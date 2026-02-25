@@ -60,7 +60,8 @@ class UserResponse(CamelCaseModel):
 
 class Person(CamelCaseModel):
     name: str
-    embedding: list[float]
+    embeddings: list[list[float]] = []
+    cropped: list[str]
 
 class Device(Document):
     device_id: str

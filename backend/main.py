@@ -8,8 +8,7 @@ from typing import Annotated, List
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import (BackgroundTasks, Depends, HTTPException, Request,
-                     UploadFile)
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Body
 from fastapi_limiter import FastAPILimiter
@@ -19,8 +18,7 @@ from pydantic import BaseModel
 from redis import asyncio as aioredis
 from tqdm.auto import tqdm
 
-from app_types import (ActionType, CustomFastAPI, CustomTarget, DaySummary,
-                       LifelogImage)
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, LifelogImage
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
@@ -30,16 +28,19 @@ from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from ingest import app as ingest_app
-from pipelines.all import process_image, process_video
+from pipelines.all import process_video
 from pipelines.delete import remove_physical_image
 from pipelines.hourly import update_app
 from preprocess import get_similar_images, load_features, retrieve_image
+from scripts.anonymise import segment_image_with_sam
 from scripts.describe_segments import describe_segment
-from scripts.face_recognition import (add_face_to_whitelist,
-                                      search_face_embedding, search_for_faces)
+from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from scripts.segmentation import load_all_segments
-from scripts.summary import (create_day_timeline, summarize_day_by_text,
-                             summarize_lifelog_by_day)
+from scripts.summary import (
+    create_day_timeline,
+    summarize_day_by_text,
+    summarize_lifelog_by_day,
+)
 from scripts.utils import get_thumbnail_path
 from settings import control_app, get_mode
 from settings.types import PiCamControl
@@ -224,7 +225,7 @@ async def upload_image(
             device,
             date,
             file_name,
-            app.features[device]["conclip"].collection,
+            app.features[device]["conclip"].collection
         )
 
     now = datetime.now()
@@ -1061,7 +1062,7 @@ async def change_segment_activity(
 
 @app.post("/get-faces", response_model=List[LifelogImage])
 def get_faces(
-    file: UploadFile,
+    files: List[UploadFile],
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
@@ -1071,7 +1072,7 @@ def get_faces(
     collection = app.features[device]["faces"].collection
     assert collection is not None, "Face collection is not initialized for device"
 
-    images = search_for_faces(collection, file.file, k=10)
+    images = search_for_faces(collection, files)
     print(f"Found {len(images)} similar faces for the uploaded image.")
     image_docs = ImageRecord.find(
         filter={"device": device, "image_path": {"$in": images}, "deleted": False},
@@ -1082,7 +1083,7 @@ def get_faces(
 
 @app.put("/add-to-whitelist")
 def add_to_whitelist(
-    file: UploadFile,
+    files: List[UploadFile],
     device: str,
     name: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
@@ -1091,12 +1092,12 @@ def add_to_whitelist(
         raise HTTPException(
             status_code=403, detail="Not authorized to modify whitelist."
         )
-    add_face_to_whitelist(device, name, file)
+    add_face_to_whitelist(device, name, files)
 
 
 class WhitelistEntry(BaseModel):
     name: str
-    images: List[LifelogImage]
+    images: List[str]  # base64 encoded images
 
 
 @app.get("/get-whitelist", response_model=List[WhitelistEntry])
@@ -1115,19 +1116,15 @@ def get_whitelist(
     whitelist = device_obj.whitelist
     results = []
     for entry in whitelist:
-        res = search_face_embedding(collection, entry.embedding, 5)
+        based64_images = entry.cropped[:2]
         results.append(
             {
                 "name": entry.name,
-                "images": [
-                    LifelogImage.model_validate(
-                        ImageRecord.find_one({"image_path": doc.fields["image_path"]})
-                    )
-                    for doc in res
-                ],
+                "images": [f"data:image/jpeg;base64, {img}" for img in based64_images],
             }
         )
     return results
+
 
 @app.delete("/remove-from-whitelist")
 def remove_from_whitelist(
@@ -1143,8 +1140,19 @@ def remove_from_whitelist(
     assert device_obj is not None, "Device not found in database"
     whitelist = device_obj.whitelist
     new_whitelist = [entry for entry in whitelist if entry.name != name]
-    Device.update_one({"device_id": device}, {"$set": {"whitelist": new_whitelist}})
+    Device.update_one(
+        {"device_id": device},
+        {"$set": {"whitelist": [entry.model_dump() for entry in new_whitelist]}},
+    )
     return {"message": f"Removed {name} from whitelist."}
+
+
+@app.post("/segment-image")
+def segment_image(
+    file: UploadFile,
+):
+    visualised_base64 = segment_image_with_sam(Image.open(file.file), [])
+    return f"data:image/jpeg;base64, {visualised_base64}"
 
 if __name__ == "__main__":
     uvicorn.run(
@@ -1155,4 +1163,3 @@ if __name__ == "__main__":
         # workers=2,
         reload_excludes=["./files/QB_norm/*" "./files/**/*"],
     )
-

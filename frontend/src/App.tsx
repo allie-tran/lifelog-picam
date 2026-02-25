@@ -20,11 +20,11 @@ import PasswordLock from './components/PasswordLock';
 import FeedbackComponents from 'components/FeedbackComponents';
 import dayjs from 'dayjs';
 import Admin from 'pages/Admin';
+import FaceIntelligence from 'pages/Faces';
 import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
-import FaceIntelligence from 'pages/Faces';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 /**
@@ -146,20 +146,6 @@ const activityTrackerTheme = createTheme({
         },
     },
 });
-
-async function subscribeUser() {
-  const registration = await navigator.serviceWorker.register('/sw.js');
-  const permission = await Notification.requestPermission();
-
-  if (permission === 'granted') {
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: 'YOUR_PUBLIC_VAPID_KEY'
-    });
-    // Send 'subscription' to your server via fetch() to save it
-    console.log(JSON.stringify(subscription));
-  }
-}
 
 const theme = responsiveFontSizes(activityTrackerTheme);
 dayjs.extend(localizedFormat);

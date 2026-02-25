@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import UploadFile
 import zvec
 from auth.types import Device
@@ -6,6 +7,7 @@ import cv2
 import numpy as np
 
 from scripts.object_detection import get_face_data_from_person_crop
+from scripts.utils import to_base64
 
 directory = "/mnt/ssd0/embeddings/zvec"
 
@@ -62,7 +64,6 @@ def open_face_collection(device):
     except ValueError:
         return create_zvec_collection(device)
 
-
 def index_face_embeddings(
     zvec_collection: zvec.Collection, device: str, image_record: ImageRecord
 ):
@@ -93,33 +94,55 @@ def search_face_embedding(
 
 
 def search_for_faces(
-    zvec_collection: zvec.Collection, file: UploadFile
+    zvec_collection: zvec.Collection, files: List[UploadFile]
 ):
-    cv_image = cv2.imdecode(np.frombuffer(file.file.read(), np.uint8), cv2.IMREAD_COLOR)
-    faces = get_face_data_from_person_crop(cv_image)
-    print(f"Detected {len(faces)} faces in the uploaded image.")
-    if not faces:
-        raise ValueError("No faces detected in the uploaded image.")
-    face = faces[0].embedding
-    results = search_face_embedding(zvec_collection, face, top_k=10)
-    print(results)
+    results = []
+    for file in files:
+        cv_image = cv2.imdecode(np.frombuffer(file.file.read(), np.uint8), cv2.IMREAD_COLOR)
+        faces = get_face_data_from_person_crop(cv_image)
+        print(f"Detected {len(faces)} faces in the uploaded image.")
+        if not faces:
+            continue
+        face = faces[0].embedding
+        results += search_face_embedding(zvec_collection, face, top_k=5)
     return [doc.fields["image_path"] for doc in results]
 
+def add_face_to_whitelist(device: str, name: str, files: List[UploadFile]):
+    cropped = []
+    embeddings = []
+    for file in files:
+        cv_image = cv2.imdecode(np.frombuffer(file.file.read(), np.uint8), cv2.IMREAD_COLOR)
+        if cv_image is None:
+            print("Error: Unable to read the uploaded image.")
+            continue
+        faces = get_face_data_from_person_crop(cv_image)
+        if not faces:
+            continue
+        face = faces[0].embedding
+        bbox = faces[0].bbox
+        # expand the box by 20% in each direction
+        x1, y1, x2, y2 = bbox
+        w = x2 - x1
+        h = y2 - y1
+        x1 = max(0, x1 - int(w * 0.2))
+        y1 = max(0, y1 - int(h * 0.2))
+        x2 = min(cv_image.shape[1], x2 + int(w * 0.2))
+        y2 = min(cv_image.shape[0], y2 + int(h * 0.2))
+        cropped_image = cv_image[y1:y2, x1:x2]
+        image_bytes = cv2.imencode('.jpg', cropped_image)[1].tobytes()
 
-def add_face_to_whitelist(device: str, name: str, file: UploadFile):
-    cv_image = cv2.imdecode(np.frombuffer(file.file.read(), np.uint8), cv2.IMREAD_COLOR)
-    faces = get_face_data_from_person_crop(cv_image)
+        embeddings.append(face)
+        cropped.append(to_base64(image_bytes))
 
-    for face in faces:
-        embedding = face.embedding
-        Device.update_one(
-            {"device_id": device},
-            {
-                "$addToSet": {
-                    "whitelist": {
-                        "name": name,
-                        "embedding": embedding,
-                    }
+    Device.update_one(
+        {"device_id": device},
+        {
+            "$addToSet": {
+                "whitelist": {
+                    "name": name,
+                    "embeddings": embeddings,
+                    "cropped": cropped,
                 }
-            },
-        )
+            }
+        },
+    )

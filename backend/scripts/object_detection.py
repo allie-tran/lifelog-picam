@@ -1,11 +1,3 @@
-# You can install it using pip:
-# pip install ultralytics
-
-import json
-import os
-import glob
-from typing import Any
-from tqdm import tqdm
 import numpy as np
 
 import cv2
@@ -74,9 +66,11 @@ def extract_object_from_image(
 
                         label = "redacted face"
                         for whitelist_person in whitelist:
-                            dist = np.array(whitelist_person.embedding) @ np.array(face.embedding).T
-                            if dist > 0.8:  # Adjust threshold as needed
-                                label = whitelist_person.name
+                            for embedding in whitelist_person.embeddings:
+                                dist = np.array(embedding) @ np.array(face.embedding).T
+                                if dist > 0.9:  # Adjust threshold as needed
+                                    label = whitelist_person.name
+                                    break
 
                         people.append(ObjectDetection(
                             label=label,

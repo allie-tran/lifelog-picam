@@ -1,25 +1,20 @@
+import { AddRounded } from '@mui/icons-material';
 import {
     Box,
     Button,
     Card,
-    CardActionArea,
     CardContent,
     Container,
     IconButton,
-    Paper,
     Stack,
     Typography,
 } from '@mui/material';
-import Webcam from 'react-webcam';
-import { getFaces, getWhiteList, removeFromWhiteList } from 'apis/browsing';
-import ImageWithDate from 'components/ImageWithDate';
-import React, { Fragment, useCallback, useEffect, useRef } from 'react';
+import { getWhiteList, removeFromWhiteList } from 'apis/browsing';
+import FaceEnroll from 'components/FaceEnroll';
+import ModalWithCloseButton from 'components/ModalWithCloseButton';
+import React, { useEffect } from 'react';
 import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
-import FaceEnroll from 'components/FaceEnroll';
-import { ImageObject } from '@utils/types';
-import ModalWithCloseButton from 'components/ModalWithCloseButton';
-import { AddRounded } from '@mui/icons-material';
 
 const WhiteListedPerson = ({
     name,
@@ -27,7 +22,7 @@ const WhiteListedPerson = ({
     onDelete,
 }: {
     name: string;
-    images: ImageObject[];
+    images: string[];
     onDelete?: () => void;
 }) => {
     const [index, setIndex] = React.useState(0);
@@ -56,12 +51,10 @@ const WhiteListedPerson = ({
                             <b> {name} </b>
                         </Typography>
                         {images.length > 0 && (
-                            <ImageWithDate
-                                disableDelete
-                                image={images[index]}
-                                onClick={() =>
-                                    setIndex((index + 1) % images.length)
-                                }
+                            <img
+                                src={images[index]}
+                                alt={`${name} face`}
+                                style={{ width: '100%', borderRadius: 8 }}
                             />
                         )}
                     </Stack>

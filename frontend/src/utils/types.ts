@@ -70,4 +70,9 @@ type DaySummary = {
     totalMinutes: number;
 };
 
-export type { ImageObject, SummarySegment, DaySummary };
+interface Point {
+    x: number;
+    y: number;
+}
+
+export type { ImageObject, SummarySegment, DaySummary, Point };

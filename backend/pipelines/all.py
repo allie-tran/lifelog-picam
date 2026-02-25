@@ -102,14 +102,18 @@ def create_thumbnail(device_id: str, relative_path: str):
     # get whitelist people
     image_record = ImageRecord.find_one({"device": device_id, "image_path": relative_path})
     people = image_record.people if image_record else []
+    boxes = []
     whitelist_boxes = []
     for person in people:
         if person.label != "redacted face" and person.label != "face":
             whitelist_boxes.append(person.bbox)
+        else:
+            boxes.append(person.bbox)
 
     if not thumbnail_exists:
         anonymise_image(
             f"{DIR}/{device_id}/{relative_path}", thumbnail_path,
+            boxes,
             whitelist_boxes,
         )
 

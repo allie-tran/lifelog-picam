@@ -3,7 +3,6 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
 const FeedbackComponents = () => {
     const { notification, loading } = useAppSelector((state) => state.feedback);
-
     const dispatch = useAppDispatch();
 
     return (
