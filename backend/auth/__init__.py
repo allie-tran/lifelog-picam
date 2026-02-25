@@ -1,5 +1,6 @@
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi_limiter.depends import RateLimiter
+from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
 
 from auth.auth_models import (
@@ -22,7 +23,7 @@ def health_check():
 @auth_app.post(
     "/register",
     response_model=UserResponse,
-    dependencies=[Depends(RateLimiter(times=3, seconds=60))],
+    dependencies=[Depends(RateLimiter(limiter=Limiter(Rate(3, 5 * Duration.MINUTE))))],
 )
 def register(request: CreateUserRequest):
     """

@@ -1,9 +1,9 @@
 import numpy as np
 import zvec
-from constants import DIR
+from constants import DIR, EMBEDDING_DIR
 from visual import clip_model
 
-directory = "/mnt/ssd0/embeddings/zvec"
+directory = EMBEDDING_DIR
 
 
 def create_collection(device, search_model):
