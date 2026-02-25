@@ -2,6 +2,7 @@ from typing import List
 from fastapi import UploadFile
 import zvec
 from auth.types import Device
+from constants import EMBEDDING_DIR
 from database.types import ImageRecord
 import cv2
 import numpy as np
@@ -9,7 +10,7 @@ import numpy as np
 from scripts.object_detection import get_face_data_from_person_crop
 from scripts.utils import to_base64
 
-directory = "/mnt/ssd0/embeddings/zvec"
+directory = EMBEDDING_DIR
 
 def create_zvec_collection(device):
     collection_schema = zvec.CollectionSchema(

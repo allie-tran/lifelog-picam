@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Body
-from fastapi_limiter import FastAPILimiter
 from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
@@ -87,10 +86,8 @@ async def lifespan(app: CustomFastAPI):
     redis = aioredis.from_url(
         "redis://localhost:6379", encoding="utf8", decode_responses=True
     )
-    await FastAPILimiter.init(redis)
     app.features = load_features(app)
     yield
-    await FastAPILimiter.close()
 
 
 app = CustomFastAPI(lifespan=lifespan)
