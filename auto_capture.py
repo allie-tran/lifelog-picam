@@ -41,8 +41,12 @@ def check_capturing_mode(timeout=5):
 
 
 def check_if_camera_connected():
-    status = os.system("rpicam-still -n --output status.jpg")
-    return status == 0
+    try:
+        cam.take_photo("test.jpg")
+        return True
+    except Exception as e:
+        print(e)
+        return False
 
 def capture_image():
     file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
@@ -155,28 +159,13 @@ def main():
     # mode = check_capturing_mode(timeout=5)
     mode = "photo"
     print(f"Initial capturing mode: {mode}")
-    last_capture_time = time.time()
     while True:
         try:
-            current_time = time.time()
-            print(datetime.now())
-            print(int(current_time - last_capture_time), "seconds.")
-            # new_mode = check_capturing_mode(timeout=5)
-            # print("Checked. Mode:", mode)
-            # if new_mode != mode:
-            #     print(f"Capturing mode changed from {mode} to {new_mode}")
-            #     mode = new_mode
-
-            if mode == "photo":
-                if current_time - last_capture_time >= CAPTURE_INTERVAL:
-                    last_capture_time = current_time
-                    capture_image()
-
-            elif mode == "video":
-                record_video_until_interrupt()
-
-            print("waiting...")
-            time.sleep(1)
+            last_capture_time = time.time()
+            capture_image()
+            now = time.time()
+            if now - last_capture_time < 10:
+                sleep(10 - now + last_capture_time)
         except KeyboardInterrupt:
             print("Exiting...")
             break
