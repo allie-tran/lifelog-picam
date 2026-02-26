@@ -152,8 +152,8 @@ def main():
     print("Camera connected.")
 
     CAPTURE_INTERVAL = 10  # seconds
-
-    mode = check_capturing_mode(timeout=5)
+    # mode = check_capturing_mode(timeout=5)
+    mode = "photo"
     print(f"Initial capturing mode: {mode}")
     last_capture_time = time.time()
     while True:
@@ -161,11 +161,12 @@ def main():
             current_time = time.time()
             print(datetime.now())
             print(int(current_time - last_capture_time), "seconds.")
-            new_mode = check_capturing_mode(timeout=5)
-            print("Checked. Mode:", mode)
-            if new_mode != mode:
-                print(f"Capturing mode changed from {mode} to {new_mode}")
-                mode = new_mode
+            # new_mode = check_capturing_mode(timeout=5)
+            # print("Checked. Mode:", mode)
+            # if new_mode != mode:
+            #     print(f"Capturing mode changed from {mode} to {new_mode}")
+            #     mode = new_mode
+
             if mode == "photo":
                 if current_time - last_capture_time >= CAPTURE_INTERVAL:
                     last_capture_time = current_time
