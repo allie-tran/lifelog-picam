@@ -27,10 +27,10 @@ from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from ingest import app as ingest_app
-from pipelines.all import process_video
-from pipelines.delete import remove_physical_image
+from pipelines.all import process_video, process_image
+from pipelines.delete import mark_error, remove_physical_image
 from pipelines.hourly import update_app
-from preprocess import get_similar_images, load_features, retrieve_image
+from preprocess import get_similar_images, load_features, retrieve_image, save_features
 from scripts.anonymise import segment_image_with_sam
 from scripts.describe_segments import describe_segment
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
@@ -83,11 +83,9 @@ async def lifespan(app: CustomFastAPI):
                 },
                 upsert=True,
             )
-    redis = aioredis.from_url(
-        "redis://localhost:6379", encoding="utf8", decode_responses=True
-    )
     app.features = load_features(app)
     yield
+    save_features(app)
 
 
 app = CustomFastAPI(lifespan=lifespan)
@@ -205,6 +203,7 @@ async def upload_image(
             except Exception as e:
                 traceback.print_exc()
                 print(f"Failed to decrypt image. Error: {e}")
+                mark_error(device, date, f"{date}/{file_name}", timestamp.timestamp() * 1000)
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
         exif = image.getexif()
@@ -285,7 +284,6 @@ def check_all_files_exist(
     request: CheckFilesRequest = Body(...),  # type: ignore
     device: str = Depends(get_device_from_headers),
 ):
-    print(request.date, len(request.all_files), request.all_files[:5])
     all_files = request.all_files
     all_dates = [f.split("/")[-1].split("_")[0] for f in all_files]
     all_dates = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in all_dates]
@@ -1160,7 +1158,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=LOCAL_PORT,
-        reload=True,
-        # workers=2,
-        reload_excludes=["./files/QB_norm/*" "./files/**/*"],
+        reload=False
     )

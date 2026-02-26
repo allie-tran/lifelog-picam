@@ -42,7 +42,7 @@ class DictRootModel(BaseModel, Generic[RootDictType]):
         super().__init__(root={})
 
     def __getitem__(self, key: str) -> RootDictType:
-        if key not in self.root:
+        if key not in self.root.keys():
             # create and store default
             return self._default_factory()
         return self.root[key]
@@ -83,7 +83,6 @@ class DeviceFeatures(DictRootModel[CLIPFeatures]):
 
 class AppFeatures(DictRootModel[DeviceFeatures]):
     _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
-
 
 class CustomFastAPI(FastAPI):
     models: List[str] = ["conclip"]

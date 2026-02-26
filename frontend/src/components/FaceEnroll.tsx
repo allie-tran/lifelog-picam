@@ -269,9 +269,9 @@ const FaceEnroll = ({ onUpdate }: { onUpdate: () => void }) => {
                         </Paper>
                     </Stack>
                     {images.length > 0 && (
-                        <Stack spacing={2}>
+                        <Stack spacing={2} sx={{ mt: 4 }}>
                             <Typography variant="h6">
-                                Recognized Faces:
+                                Recognized Faces in the past 30 minutes
                             </Typography>
                             <Stack
                                 direction="row"

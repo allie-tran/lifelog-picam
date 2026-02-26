@@ -80,7 +80,6 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
 
     for image in tqdm(missing_in_zvec, desc="Encoding to ZVec"):
         encode_image(device, image, zvec_collection)
-    zvec_collection.optimize()
 
     # 3. Base on raw_images, find the extra ones in mongo and zvec
     print("-" * 30)
@@ -103,16 +102,4 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
     for image in tqdm(extra_in_zvec):
         zvec_collection.delete(to_id(image))
 
-    zvec_collection.optimize()
     print("Sync complete!")
-
-
-
-
-
-
-
-
-
-
-

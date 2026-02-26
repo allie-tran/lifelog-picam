@@ -1,10 +1,16 @@
 import numpy as np
 import zvec
+from zvec.typing.enum import LogLevel
 from constants import DIR, EMBEDDING_DIR
 from visual import clip_model
+import os
 
 directory = EMBEDDING_DIR
 
+zvec.init(
+    log_level=LogLevel.INFO,
+    optimize_threads=1,
+)
 
 def create_collection(device, search_model):
     schema = zvec.CollectionSchema(
@@ -24,9 +30,9 @@ def create_collection(device, search_model):
 def open_collection(device, search_model):
     try:
         collection = zvec.open(path=f"{directory}/{device}_{search_model}")
+        print(collection.path, collection.stats)
     except ValueError:
         collection = create_collection(device, search_model)
-    print("Stats:", collection.stats)
     return collection
 
 
@@ -51,8 +57,6 @@ def insert_batch_embeddings(collection, embeddings, image_paths):
             fields={"image_path": image_path},
         )
         collection.insert(doc)
-
-    collection.optimize()
 
 
 def search_similar_embeddings(collection, query_embedding, top_k=10):
@@ -81,6 +85,7 @@ def check_if_exists(collection, image_path):
 
 
 def fetch_embeddings(collection, image_paths, device_id):
+    collection.flush()
     ids = [to_id(image_path) for image_path in image_paths]
     docs = collection.fetch(ids=ids)
     vectors = {id: doc.vectors["embedding"] for (id, doc) in docs.items()}
@@ -94,18 +99,26 @@ def fetch_embeddings(collection, image_paths, device_id):
             vector = vector.astype(np.float32).flatten()
             insert_embedding(collection, vector, id.replace("_", "/", 1))
             vectors[id] = vector
-        except Exception as e:
+        except Exception:
             continue
 
-    if missing:
-        collection.optimize()
-
     valid_paths = [id for id in ids if id in vectors]
-    # TODO! remove 
+    # TODO! remove
 
     arrays = [vectors[id] for id in valid_paths]
     arrays = [np.array(arr) for arr in arrays]
 
     valid_paths = [id.replace("_", "/", 1) for id in valid_paths]
-
     return valid_paths, np.vstack(arrays) if arrays else np.empty((0, 768), dtype=np.float32)
+
+def backup_collection(collection):
+    backup_path = f"{collection.path}_backup"
+    path = collection.path
+    os.system(f"cp -r {path} {backup_path}")
+
+def restore_backup(collection):
+    backup_path = f"{collection.path}_backup"
+    path = collection.path
+    if os.path.exists(backup_path):
+        os.system(f"rm -rf {path}")
+        os.system(f"mv {backup_path} {path}")

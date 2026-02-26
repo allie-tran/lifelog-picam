@@ -117,6 +117,18 @@ def create_blur_mask(boxes, image_height, image_width):
     return np.array(full_mask).astype(bool)
 
 
+ALL_PRIVATE_LABELS = [
+    "face",
+    "face with glasses or masks",
+    "screen content (e.g. computer screen, phone screen, tablet screen)",
+    "private document (e.g. bank statement, tax document, medical record, passport, visa, id card)",
+    "home address (e.g. on a letter, package, or document)",
+    "license plate",
+    "signature",
+    "cards (e.g. credit card, id card, bank card)",
+]
+
+
 def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=80):
     # Process results
     img = cv2.imread(image_path)
@@ -125,42 +137,37 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     try:
         sam3.set_image(image_path)
 
+        batch_size = 4
         # Query with multiple text prompts
         with torch.no_grad():  # Disable gradients for inference
-            results = sam3(
-                text=[
-                    "face" "face with glasses or masks",
-                    "screen content (e.g. computer screen, phone screen, tablet screen)",
-                    "private document (e.g. bank statement, tax document, medical record, passport, visa, id card)",
-                    "home address (e.g. on a letter, package, or document)",
-                    "license plate",
-                    "signature",
-                    "cards (e.g. credit card, id card, bank card)",
-                ],
-                stream=True,
-            )
+            for i in range(0, len(ALL_PRIVATE_LABELS), batch_size):
+                batch_labels = ALL_PRIVATE_LABELS[i : i + batch_size]
+                results = sam3(
+                    text=batch_labels,
+                    stream=True,
+                )
+
+                for result in results:
+                    result = result.cpu()  # Move to CPU for processing
+                    if result.masks is not None:
+                        mask = result.masks.data.any(dim=0).numpy().astype(bool)
+                        # check if the mask has too much overlapping with the whitelist areas, if so, skip it
+                        to_blur = True
+                        for bbox in whitelist_boxes:
+                            if mask[bbox[1] : bbox[3], bbox[0] : bbox[2]].any():
+                                overlap_area = np.sum(
+                                    mask[bbox[1] : bbox[3], bbox[0] : bbox[2]]
+                                )
+                                bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                                if overlap_area / bbox_area > 0.8:
+                                    to_blur = False
+                                    break
+                        if to_blur:
+                            full_mask |= mask  # Combine masks using logical OR
+                        del mask
 
         # full_mask = np.zeros(img.shape[:2], dtype=bool)  # Initialize an empty mask
         sam3.reset_image()
-        for result in results:
-            result = result.cpu()  # Move to CPU for processing
-            if result.masks is not None:
-                mask = result.masks.data.any(dim=0).numpy().astype(bool)
-                # check if the mask has too much overlapping with the whitelist areas, if so, skip it
-                to_blur = True
-                for bbox in whitelist_boxes:
-                    if mask[bbox[1] : bbox[3], bbox[0] : bbox[2]].any():
-                        overlap_area = np.sum(
-                            mask[bbox[1] : bbox[3], bbox[0] : bbox[2]]
-                        )
-                        bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-                        if overlap_area / bbox_area > 0.8:
-                            to_blur = False
-                            break
-                if to_blur:
-                    full_mask |= mask  # Combine masks using logical OR
-                del mask
-
         # Remove whitelist areas from the mask
         for bbox in whitelist_boxes:
             x1, y1, x2, y2 = bbox
@@ -208,7 +215,7 @@ def segment_image_with_sam(image):
     bbox_list = []
     for result in results:
         if result.masks is None:
-            return None
+            continue
 
         # 2. Logic to find the "Biggest" mask
         # result.masks.data is a tensor of shape [N, H, W]
@@ -251,3 +258,5 @@ def segment_image_with_sam(image):
         _, buffer = cv2.imencode(".jpg", bgr_img)
 
         return to_base64(buffer), mask_list, bbox_list
+
+    return None, [], []

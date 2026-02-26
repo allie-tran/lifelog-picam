@@ -46,17 +46,6 @@ def choose_num_thumbnails(
     return estimated
 
 
-def ema_features(features, alpha=0.4):
-    weights = (1 - alpha) ** np.arange(features.shape[0])
-    weights = weights[::-1]  # reverse to align powers
-
-    # cumulative weighted sum
-    cum = np.cumsum(features[::-1] * weights[:, None], axis=0)
-    ema_rev = alpha * cum / weights[:, None]
-
-    return ema_rev[::-1]
-
-
 def segment_images(
     device_id: str, features, image_paths, deleted_images: set[str], reverse=True
 ) -> list[list[str]]:
@@ -91,24 +80,30 @@ def segment_images(
     features = features[sorted_indices]
     image_paths = [image_paths[i] for i in sorted_indices]
 
-    # Smooth the features by exponential moving average
-    # features = ema_features(features, alpha=0.3)
     # Normalise
-    # features = features / np.linalg.norm(features, axis=1, keepdims=True)
+    features = features / np.linalg.norm(features, axis=1, keepdims=True)
+
+
+    # Hearst Textiling
+    similarities = [
+        np.dot(features[i], features[i - 1]) for i in range(1, len(features))
+    ]
+    if not similarities:
+        return [image_paths]
+
+    window_size = 3
+    smoothed = np.convolve(similarities, np.ones(window_size) / window_size, mode="same")
+
+    depth_scores = []
+    for i in range(1, len(smoothed)-1):
+        left_peak = max(smoothed[:i])
+        right_peak = max(smoothed[i+1:])
+        depth = left_peak + right_peak - 2 * smoothed[i]
+        depth_scores.append(depth)
+
+    depth_threshold = np.mean(depth_scores) + np.std(depth_scores)
     k = SEGMENT_THRESHOLD
-
-    # Calculate all distances
-    distances = np.linalg.norm(features[1:] - features[:-1], axis=1)
-    print(distances)
-
-    # Dynamic threshold: mean + std
-    mean_dist = np.mean(distances)
-    std_dist = np.std(distances)
-    dynamic_threshold = mean_dist + std_dist * 1.5
-    k = dynamic_threshold
-    if np.isnan(k) or np.isinf(k):
-        k = SEGMENT_THRESHOLD
-    print(f"Dynamic threshold for segmentation: {k}")
+    print(f"Segmenting with depth threshold: {depth_threshold:.4f} and similarity threshold: {k:.4f}")
 
     # Compare each feature vector with the previous one
     segments: list[list[int]] = []
@@ -123,8 +118,8 @@ def segment_images(
         if image_path in boundaries:
             start_new_segment = True
         else:
-            distance = distances[i - 1]
-            if distance > k:
+            similarity = smoothed[i - 1]  # similarity between current and previous
+            if similarity < k or depth_scores[i - 1] > depth_threshold:
                 start_new_segment = True
 
         if start_new_segment:
@@ -261,12 +256,15 @@ def load_all_segments(
     )
 
     new_records = list(new_records)
-    print(f"Found {len(new_records)} new images to segment.")
     paths = [record.image_path for record in new_records]
+    if len(new_records) == 0 or len(paths) == 0:
+        print("No new images to segment. Exiting.")
+        return
 
     now = datetime.now().timestamp() * 1000
     last_image_time = new_records[-1].timestamp
-    if len(paths) < 100 and now - last_image_time < 60 * 60 * 1000:
+
+    if len(paths) < 20 and now - last_image_time < 15 * 60 * 1000:
         print(
             f"Not enough new images to segment ({len(paths)}), and last image is new ({datetime.fromtimestamp(int(last_image_time / 1000))}). Skipping segmentation for now."
         )
@@ -276,7 +274,6 @@ def load_all_segments(
     paths, feats = fetch_embeddings(collection, paths, device_id)
 
     print(f"Segmenting {len(feats)} images...")
-    print(f"Features shape for segmentation: {feats.shape}")
     segments = segment_images(device_id, feats, paths, deleted_images, reverse=False)
     print(f"Total segments created: {len(segments)}")
 
@@ -288,7 +285,6 @@ def load_all_segments(
         enumerate(segments), desc="Updating segments", total=len(segments)
     ):
         segment_id = max_id + i
-        print(segment_id, date, segment[:3], "...", segment[-3:])
         ImageRecord.update_many(
             filter={
                 "image_path": {"$in": segment},

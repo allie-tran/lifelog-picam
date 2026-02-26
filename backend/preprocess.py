@@ -16,6 +16,7 @@ from scripts.face_recognition import open_face_collection
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
 
+
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 
@@ -25,14 +26,24 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
     for device in os.listdir(feature_dir):
         device_features = DeviceFeatures()
         app_features[device] = device_features
-        collection = open_collection(device, "conclip")
-        app_features[device]["conclip"] = CLIPFeatures(collection=collection)
+
+        app_features[device]["conclip"] = CLIPFeatures(
+            collection=open_collection(device, "conclip")
+        )
         app_features[device]["faces"] = CLIPFeatures(
             collection=open_face_collection(device)
         )
 
     app.features = app_features
     return app_features
+
+
+def save_features(app: CustomFastAPI):
+    for device, device_features in app.features.items():
+        for model_name, features in device_features.items():
+            if features.collection:
+                features.collection.flush()
+                features.collection.optimize()
 
 
 def retrieve_image(

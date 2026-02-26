@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from app_types import CustomFastAPI
 from constants import SEARCH_MODEL
 from database.types import ImageRecord
+from scripts.face_recognition import delete_old_faces
 from scripts.segmentation import load_all_segments
 from scripts.sync import sync_images
 from sessions.redis import RedisClient
@@ -42,6 +43,12 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
             )
 
 
+    # delete old faces
+    an_hour_ago = datetime.now() - timedelta(hours=1)
+    device_id = "allie"
+    collection = app.features[device_id]["faces"].collection
+    if collection:
+        delete_old_faces(collection, an_hour_ago.timestamp() * 1000)
 
     # for device_id in app.features.keys():
     #     # Let's do day-based
