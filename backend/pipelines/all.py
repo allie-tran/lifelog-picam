@@ -87,7 +87,6 @@ def yolo_process_image(device_id: str, relative_path: str, collection: zvec.Coll
         f"{DIR}/{device_id}/{relative_path}", whitelist
     )
 
-
     ImageRecord.update_one(
         filter={"device": device_id, "image_path": relative_path},
         data={
@@ -99,9 +98,12 @@ def yolo_process_image(device_id: str, relative_path: str, collection: zvec.Coll
         },
     )
 
-    new_record = ImageRecord.find_one({"device": device_id, "image_path": relative_path})
+    new_record = ImageRecord.find_one(
+        {"device": device_id, "image_path": relative_path}
+    )
     assert new_record, "New record not found after YOLO processing"
     index_face_embeddings(collection, new_record)
+
 
 def create_thumbnail(device_id: str, relative_path: str):
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
@@ -164,13 +166,17 @@ def encode_image(
 
 
 def process_image(
-    device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]
+    device_id: str,
+    date: str,
+    file_name: str,
+    collection: zvec.Collection,
+    face_collection: zvec.Collection,
 ):
     relative_path = f"{date}/{file_name}"
     assert collection, "Collection must be provided for processing images"
     try:
         index_to_mongo(device_id, relative_path)
-        yolo_process_image(device_id, relative_path, collection)
+        yolo_process_image(device_id, relative_path, face_collection)
         create_thumbnail(device_id, relative_path)
         encode_image(device_id, relative_path, collection)
     except FileNotFoundError as e:

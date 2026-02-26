@@ -17,6 +17,7 @@ def to_id(image_path):
 
 
 def sync_images(device: str, zvec_collection: zvec.Collection):
+    zvec_collection.flush()
     def in_zvec(image_path):
         docs = zvec_collection.fetch(to_id(image_path))
         if docs:

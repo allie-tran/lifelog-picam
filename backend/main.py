@@ -216,12 +216,17 @@ async def upload_image(
         # Save image with EXIF data
         output_path = f"{folder}/{file_name}"
         image.save(output_path, exif=exif)
+        conclip_collection = app.features[device]["conclip"].collection
+        face_collection = app.features[device]["faces"].collection
+        assert conclip_collection is not None, f"Conclip collection is not initialized for device"
+        assert face_collection is not None, f"Face collection is not initialized for device {device}"
         background_tasks.add_task(
             process_image,
             device,
             date,
             file_name,
-            app.features[device]["conclip"].collection
+            conclip_collection,
+            face_collection,
         )
 
     now = datetime.now()

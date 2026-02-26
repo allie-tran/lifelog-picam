@@ -20,9 +20,10 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
 
     if to_sync:
         for device in app.features.keys():
-            collection = app.features[device][SEARCH_MODEL].collection
-            assert collection is not None, f"ZVec collection for device {device} is not initialized"
-            sync_images(device, collection)
+            if device == "allie":
+                collection = app.features[device][SEARCH_MODEL].collection
+                assert collection is not None, f"ZVec collection for device {device} is not initialized"
+                sync_images(device, collection)
 
     # Segment images excluding deleted and low visual density images
     today = datetime.now().strftime("%Y-%m-%d")

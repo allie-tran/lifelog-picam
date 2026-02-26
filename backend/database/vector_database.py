@@ -8,8 +8,8 @@ import os
 directory = EMBEDDING_DIR
 
 zvec.init(
-    log_level=LogLevel.INFO,
     optimize_threads=1,
+    query_threads=1,
 )
 
 def create_collection(device, search_model):
@@ -41,13 +41,15 @@ def to_id(image_path):
 
 
 def insert_embedding(collection, embedding, image_path):
-    collection.insert(
+    result = collection.insert(
         zvec.Doc(
             id=to_id(image_path),
             vectors={"embedding": embedding},
             fields={"image_path": image_path},
         )
     )
+    if not result.ok():
+        print(image_path, result.code(), result.message())
 
 def insert_batch_embeddings(collection, embeddings, image_paths):
     for embedding, image_path in zip(embeddings, image_paths):

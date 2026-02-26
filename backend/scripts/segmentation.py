@@ -102,6 +102,7 @@ def segment_images(
         depth_scores.append(depth)
 
     depth_threshold = np.mean(depth_scores) + np.std(depth_scores)
+    depth_scores = [0] + depth_scores + [0]  # pad to align with image indices
     k = SEGMENT_THRESHOLD
     print(f"Segmenting with depth threshold: {depth_threshold:.4f} and similarity threshold: {k:.4f}")
 

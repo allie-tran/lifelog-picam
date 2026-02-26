@@ -17,12 +17,12 @@ directory = EMBEDDING_DIR
 
 def create_zvec_collection(device):
     collection_schema = zvec.CollectionSchema(
-        "faces",
+        f"{device}_faces",
         vectors=[
             zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, 512),
         ],
         fields=[
-            zvec.FieldSchema("timestamp", zvec.DataType.FLOAT, index_param=zvec.InvertIndexParam()),
+            zvec.FieldSchema("timestamp", zvec.DataType.FLOAT, index_param=zvec.InvertIndexParam(enable_range_optimization=True)),
             zvec.FieldSchema("image_path", zvec.DataType.STRING),
             zvec.FieldSchema("bbox", zvec.DataType.STRING),
             zvec.FieldSchema("whitelist", zvec.DataType.BOOL, index_param=zvec.InvertIndexParam()),
@@ -32,9 +32,8 @@ def create_zvec_collection(device):
     name = f"{directory}/{device}_faces"
     zvec_collection = zvec.create_and_open(name, collection_schema)
     print(f"Created ZVec collection for device {device} at {name}")
-    print(zvec_collection.schema)
 
-    recent = datetime.now().timestamp() - 3600  # only index the last hour of data
+    recent = datetime.now().timestamp() - 24 * 3600  # only index the last hour of data
     agg = ImageRecord.aggregate(
         [
             {
@@ -79,6 +78,7 @@ def open_face_collection(device):
     try:
         collection = zvec.open(path=f"{directory}/{device}_faces")
         print(collection.path, collection.stats)
+        return collection
     except ValueError:
         return create_zvec_collection(device)
 
@@ -105,7 +105,7 @@ def index_face_embeddings(
 
 def delete_old_faces(zvec_collection: zvec.Collection, cutoff_timestamp: float):
     before = zvec_collection.stats.doc_count
-    zvec_collection.delete_by_filter(filter=f'timestamp < {cutoff_timestamp} AND whitelist == false')
+    zvec_collection.delete_by_filter(filter=f'timestamp < {cutoff_timestamp} AND whitelist = false')
     after = zvec_collection.stats.doc_count
     print(f"Deleted {before - after} old face embeddings")
 
