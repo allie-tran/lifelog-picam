@@ -1,17 +1,17 @@
 import base64
 import io
 import os
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, List
 
-import redis
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Body
-from fastapi_limiter import FastAPILimiter
+from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 from redis import asyncio as aioredis
@@ -21,17 +21,19 @@ from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, Lifel
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
-from auth.types import AccessLevel, User
+from auth.types import AccessLevel, Device, User
 from constants import DIR, LOCAL_PORT, SEARCH_MODEL
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
 from ingest import app as ingest_app
-from pipelines.all import process_image, process_video
-from pipelines.delete import remove_physical_image
+from pipelines.all import process_video, process_image
+from pipelines.delete import mark_error, remove_physical_image
 from pipelines.hourly import update_app
-from preprocess import get_similar_images, load_features, retrieve_image
+from preprocess import get_similar_images, load_features, retrieve_image, save_features
+from scripts.anonymise import segment_image_with_sam
 from scripts.describe_segments import describe_segment
+from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
@@ -81,14 +83,9 @@ async def lifespan(app: CustomFastAPI):
                 },
                 upsert=True,
             )
-    redis = aioredis.from_url(
-        "redis://localhost:6379", encoding="utf8", decode_responses=True
-    )
-    await FastAPILimiter.init(redis)
     app.features = load_features(app)
-    # update_app(app)
     yield
-    await FastAPILimiter.close()
+    save_features(app)
 
 
 app = CustomFastAPI(lifespan=lifespan)
@@ -158,6 +155,19 @@ def get_device_from_headers(request: Request):
     return device.username
 
 
+SERVER_SECRET_KEY = os.getenv("SERVER_SECRET_KEY", "")
+assert SERVER_SECRET_KEY, "SERVER_SECRET_KEY is not set in environment variables"
+server_sk = PrivateKey(bytes.fromhex(SERVER_SECRET_KEY))
+
+
+def decrypt_image(box: Box, file: UploadFile):
+    file.file.seek(0)
+    file_bytes = file.file.read()
+    decrypted = box.decrypt(file_bytes)
+    image = Image.open(io.BytesIO(decrypted))
+    return image
+
+
 @app.put("/upload-image")
 async def upload_image(
     file: UploadFile,
@@ -178,22 +188,31 @@ async def upload_image(
         print(f"File {file_name} already exists for date {date}.")
     else:
         print(f"Saving file {file_name} for date {date}.")
-        # Rotate 90 degrees if needed
         try:
             image = Image.open(file.file)
         except UnidentifiedImageError:
-            print("Invalid image file uploaded.")
-            # Just save the file without processing
-            output_path = f"{folder}/{file_name}"
-            with open(output_path, "wb") as f:
-                f.write(await file.read())
-            raise HTTPException(status_code=400, detail="Invalid image file.")
+            try:
+                device_doc = Device.find_one({"device_id": device})
+                if not device_doc or not device_doc.public_key:
+                    raise HTTPException(
+                        status_code=403, detail="Device public key not found."
+                    )
+                device_public_key_hex = device_doc.public_key
+                box = Box(server_sk, PublicKey(bytes.fromhex(device_public_key_hex)))
+                image = decrypt_image(box, file)
+            except Exception as e:
+                traceback.print_exc()
+                print(f"Failed to decrypt image. Error: {e}")
+                mark_error(device, date, f"{date}/{file_name}", timestamp.timestamp() * 1000)
+                raise HTTPException(status_code=400, detail="Invalid image file.")
 
         exif = image.getexif()
+        # Rotate 90 degrees if needed
         if image.width > image.height:
             image = image.rotate(-90, expand=True)
             # Update EXIF orientation tag
             exif[274] = 1  # Normal orientation
+
         # Save image with EXIF data
         output_path = f"{folder}/{file_name}"
         image.save(output_path, exif=exif)
@@ -202,9 +221,13 @@ async def upload_image(
             device,
             date,
             file_name,
-            app.features[device]["conclip"].collection,
+            app.features[device]["conclip"].collection
         )
 
+    now = datetime.now()
+    if (now - app.last_saved).seconds > 60 * 10:  # autosave every 10 minutes
+        update_app(app)
+        app.last_saved = now
     return get_mode()
 
 
@@ -261,7 +284,6 @@ def check_all_files_exist(
     request: CheckFilesRequest = Body(...),  # type: ignore
     device: str = Depends(get_device_from_headers),
 ):
-    print(request.date, len(request.all_files), request.all_files[:5])
     all_files = request.all_files
     all_dates = [f.split("/")[-1].split("_")[0] for f in all_files]
     all_dates = [f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in all_dates]
@@ -474,7 +496,7 @@ def get_images_by_range(
         },
         sort=[("timestamp", -1)],
     )
-    return [LifelogImage.validate(image) for image in images]
+    return [LifelogImage.model_validate(image) for image in images]
 
 
 @app.get("/get-all-dates")
@@ -695,9 +717,9 @@ def get_deleted_images(
             # Delete image permanently
             full_path = os.path.join(DIR, device, image.image_path)
             print(f"Permanently deleting image: {full_path}")
-            remove_physical_image(
-                device, image.image_path, app.features[device][SEARCH_MODEL].collection
-            )
+            collection = app.features[device][SEARCH_MODEL].collection
+            assert collection is not None, "Collection is not initialized for device"
+            remove_physical_image(device, image.image_path, collection)
             continue
     return final_list
 
@@ -727,9 +749,9 @@ def force_delete_image(
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_path = request.image_path
-    remove_physical_image(
-        device, image_path, app.features[device][SEARCH_MODEL].collection
-    )
+    collection = app.features[device][SEARCH_MODEL].collection
+    assert collection is not None, "Collection is not initialized for device"
+    remove_physical_image(device, image_path, collection)
 
 
 @app.delete("/force-delete-image")
@@ -741,10 +763,10 @@ def force_delete_images(
     if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
         raise HTTPException(status_code=403, detail="Not authorized to delete images.")
     image_paths = request.image_paths
+    collection = app.features[device][SEARCH_MODEL].collection
+    assert collection is not None, "Collection is not initialized for device"
     for image_path in image_paths:
-        remove_physical_image(
-            device, image_path, app.features[device][SEARCH_MODEL].collection
-        )
+        remove_physical_image(device, image_path, collection)
 
 
 def process_segments(date: str, device: str):
@@ -788,6 +810,7 @@ def process_segments(date: str, device: str):
 
         new_description = describe_segment(
             device,
+            date,
             [
                 img.thumbnail
                 for img in ImageRecord.find(
@@ -844,14 +867,14 @@ def process_date(
 
     load_all_segments(
         device,
+        date,
         app.features,
         set(ImageRecord.find(filter={"deleted": True}, distinct="image_path")).union(
             app.images_with_low_density
         ),
-        date=date,
     )
 
-    background_tasks.add_task(process_segments, date, device)
+    # background_tasks.add_task(process_segments, date, device)
     return {"message": f"Processing segments for date {date} in background."}
 
 
@@ -951,6 +974,7 @@ def update_targets(
 
 
 class ChangeSegmentActivityRequest(CamelCaseModel):
+    date: str
     segment_id: int
     new_activity_info: str
 
@@ -967,7 +991,9 @@ async def change_segment_activity(
             status_code=403, detail="Not authorized to change activity."
         )
 
-    segment = ImageRecord.find_one({"segment_id": request.segment_id})
+    segment = ImageRecord.find_one(
+        {"segment_id": request.segment_id, "device": device, "date": request.date}
+    )
     if not segment or segment.segment_id is None:
         raise HTTPException(status_code=404, detail="Segment not found")
 
@@ -994,11 +1020,13 @@ async def change_segment_activity(
     all_summaries = [s.summary for s in all_summaries]
     new_description = describe_segment(
         device,
+        request.date,
         [
             img.thumbnail
             for img in ImageRecord.find(
                 filter={
                     "segment_id": segment.segment_id,
+                    "date": request.date,
                     "deleted": False,
                     "device": device,
                 },
@@ -1012,7 +1040,7 @@ async def change_segment_activity(
         ],
     )
     ImageRecord.update_many(
-        {"segment_id": segment.segment_id, "device": device},
+        {"segment_id": segment.segment_id, "device": device, "date": request.date},
         {
             "$set": {
                 "activity": request.new_activity_info,
@@ -1021,18 +1049,114 @@ async def change_segment_activity(
         },
     )
     DaySummaryRecord.update_one(
-        {"date": segment.date, "device": device},
+        {"date": request.date, "device": device},
         {"$set": {"updated": True}},
         upsert=True,
     )
 
+
+@app.post("/get-faces", response_model=List[LifelogImage])
+def get_faces(
+    files: List[UploadFile],
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(status_code=403, detail="Not authorized to access faces.")
+
+    collection = app.features[device]["faces"].collection
+    assert collection is not None, "Face collection is not initialized for device"
+
+    images = search_for_faces(collection, files)
+    print(f"Found {len(images)} similar faces for the uploaded image.")
+    image_docs = ImageRecord.find(
+        filter={"device": device, "image_path": {"$in": images}, "deleted": False},
+        sort=[("timestamp", -1)],
+    )
+    return [LifelogImage.model_validate(image) for image in image_docs]
+
+
+@app.put("/add-to-whitelist")
+def add_to_whitelist(
+    files: List[UploadFile],
+    device: str,
+    name: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to modify whitelist."
+        )
+    add_face_to_whitelist(device, name, files)
+
+
+class WhitelistEntry(BaseModel):
+    name: str
+    images: List[str]  # base64 encoded images
+
+
+@app.get("/get-whitelist", response_model=List[WhitelistEntry])
+def get_whitelist(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access whitelist."
+        )
+    collection = app.features[device]["faces"].collection
+    assert collection is not None, "Face collection is not initialized for device"
+    device_obj = Device.find_one({"device_id": device})
+    assert device_obj is not None, "Device not found in database"
+    whitelist = device_obj.whitelist
+    results = []
+    for entry in whitelist:
+        based64_images = entry.cropped[:2]
+        results.append(
+            {
+                "name": entry.name,
+                "images": [f"data:image/jpeg;base64, {img}" for img in based64_images],
+            }
+        )
+    return results
+
+
+@app.delete("/remove-from-whitelist")
+def remove_from_whitelist(
+    device: str,
+    name: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to modify whitelist."
+        )
+    device_obj = Device.find_one({"device_id": device})
+    assert device_obj is not None, "Device not found in database"
+    whitelist = device_obj.whitelist
+    new_whitelist = [entry for entry in whitelist if entry.name != name]
+    Device.update_one(
+        {"device_id": device},
+        {"$set": {"whitelist": [entry.model_dump() for entry in new_whitelist]}},
+    )
+    return {"message": f"Removed {name} from whitelist."}
+
+
+@app.post("/segment-image")
+def segment_image(
+    file: UploadFile,
+):
+    visualised_base64, masks_data, bbox_list = segment_image_with_sam(Image.open(file.file))
+    return {
+        "visualisation": f"data:image/jpeg;base64, {visualised_base64}",
+        "masks": masks_data,
+        "bboxes": bbox_list,
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=LOCAL_PORT,
-        reload=True,
-        # workers=2,
-        reload_excludes=["./files/QB_norm/*" "./files/**/*"],
+        reload=False
     )

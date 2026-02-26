@@ -1,31 +1,33 @@
-# You can install it using pip:
-# pip install ultralytics
-
-import json
-import os
-import glob
-from typing import Any
-from tqdm import tqdm
-
+import numpy as np
 
 import cv2
 from app_types import ObjectDetection
 from ultralytics import YOLO
-from deepface import DeepFace
+from insightface.app import FaceAnalysis
 
-detect_model = YOLO('yolo11x.pt', task='detect', verbose=False)
-classify_model = YOLO('yolo11x-cls.pt', task='classify', verbose=False)
+from auth.types import Person
+import os
+
+
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
+
+detect_model = YOLO("yolo11x.pt", task="detect", verbose=False)
+classify_model = YOLO("yolo11x-cls.pt", task="classify", verbose=False)
 print("Model loaded successfully.")
 
-def extract_object_from_image(
-    image_path
-):
+# Initialize once, not inside the function
+face_app = FaceAnalysis(
+    name="buffalo_l", providers=["CUDAExecutionProvider"]  # or ["CPUExecutionProvider"]
+)
+
+face_app.prepare(ctx_id=0)
+
+
+def extract_object_from_image(image_path, whitelist: list[Person] = []):
     frame = cv2.imread(image_path)
     if frame is None:
         return [], []
-    results = detect_model(
-        frame, verbose=False
-    )  # Adjust confidence and iou as needed
+    results = detect_model(frame, verbose=False)  # Adjust confidence and iou as needed
 
     objects = []
     people = []
@@ -33,9 +35,7 @@ def extract_object_from_image(
         boxes = r.boxes
 
         for box in boxes:
-            x1, y1, x2, y2 = map(
-                int, box.xyxy[0]
-            )
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
 
             conf = box.conf[0]  # Confidence score
             cls = int(box.cls[0])
@@ -55,9 +55,7 @@ def extract_object_from_image(
                     )
                 )
                 if class_name == "person":
-                    face_data = get_face_data_from_person_crop(
-                        frame[y1:y2, x1:x2]
-                    )
+                    face_data = get_face_data_from_person_crop(frame[y1:y2, x1:x2])
                     # Add face bounding boxes to people list
                     for face in face_data:
                         face_bbox = face.bbox
@@ -68,60 +66,67 @@ def extract_object_from_image(
                             face_bbox[2] + x1,
                             face_bbox[3] + y1,
                         ]
-                        people.append(ObjectDetection(
-                            label="face",
-                            confidence=face.confidence,
-                            bbox=adjusted_bbox,
-                            embedding=face.embedding,
-                        ))
+
+                        label = "redacted face"
+                        for whitelist_person in whitelist:
+                            for embedding in whitelist_person.embeddings:
+                                dist = np.array(embedding) @ np.array(face.embedding).T
+                                if dist > 0.9:  # Adjust threshold as needed
+                                    label = whitelist_person.name
+                                    break
+
+                        people.append(
+                            ObjectDetection(
+                                label=label,
+                                confidence=face.confidence,
+                                bbox=adjusted_bbox,
+                                embedding=face.embedding,
+                            )
+                        )
     return objects, people
 
+
 PERSON_CONF_THRESHOLD = 0.5
+
 
 def get_face_data_from_person_crop(person_crop):
     """
     Detects faces in the person_crop, extracts aligned faces and their embeddings.
-    Returns a list of dictionaries: [{'embedding': [], 'bbox': (x1,y1,x2,y2)}]
+    Returns a list of ObjectDetection objects.
     """
     face_data = []
-    try:
-        faces = DeepFace.represent(
-            img_path=person_crop,
-            model_name="Facenet512",
-            enforce_detection=False,
-            detector_backend="yolov8",
-            normalization="Facenet2018",
-        )
 
-        for face_info in faces:
-            confidence = face_info["face_confidence"]
+    try:
+        faces = face_app.get(person_crop)
+        for face in faces:
+            confidence = float(face.det_score)
+
             if confidence < PERSON_CONF_THRESHOLD:
                 continue
 
-            face = face_info["facial_area"]
-            x, y, w, h = (
-                face["x"],
-                face["y"],
-                face["w"],
-                face["h"],
-            )
-            # Remove box that are the same size (or similar) as the person crop
+            x1, y1, x2, y2 = map(int, face.bbox)
+
+            w = x2 - x1
+            h = y2 - y1
+
+            # Remove boxes that are same size as person crop
             size_diff = abs(w - person_crop.shape[1]) + abs(h - person_crop.shape[0])
-            if size_diff < 10:  # Adjust threshold as needed
+
+            if size_diff < 10:
                 continue
 
-            embedding = face_info["embedding"]
-            bbox_xyxy = (x, y, x + w, y + h)  # Convert to xyxy format
+            embedding = face.embedding.tolist()
 
             face_data.append(
                 ObjectDetection(
                     label="face",
-                    confidence=float(confidence),
-                    bbox=[bbox_xyxy[0], bbox_xyxy[1], bbox_xyxy[2], bbox_xyxy[3]],
+                    confidence=confidence,
+                    bbox=[x1, y1, x2, y2],
                     embedding=embedding,
                 )
             )
 
     except Exception as e:
-        print(f"DeepFace error in get_face_data_from_person_crop: {e}")
+        print(f"InsightFace error in get_face_data_from_person_crop: {e}")
+
     return face_data

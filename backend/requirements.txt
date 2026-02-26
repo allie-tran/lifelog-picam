@@ -29,3 +29,4 @@ ultralytics
 deepface
 tf-keras
 timm
+PyNaCl

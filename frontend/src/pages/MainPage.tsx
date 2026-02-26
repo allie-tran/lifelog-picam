@@ -19,7 +19,6 @@ import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
-import GoalConfig from 'components/GoalConfig';
 import DeleteRange from 'components/DeleteRange';
 
 function MainPage() {

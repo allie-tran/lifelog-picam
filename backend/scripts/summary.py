@@ -121,7 +121,7 @@ def summarize_lifelog_by_day(
         merged.append(current_seg)
 
         # Attach Visuals and LLM Summaries for the Period
-        query_vec = clip_model.encode_text(f"a representative photo of {target_name}")
+        query_vec = clip_model.encode_text(f"a photo of {target_name}", normalize=True)
         for seg in merged:
             # (Selection logic for representative images remains same as your snippet)
             seg_paths, seg_feats = get_segment_data(summary, seg, collection)

@@ -7,14 +7,16 @@ const ModalWithCloseButton = ({
     open,
     onClose,
     fitContent = false,
+    sx,
 }: {
     children: React.ReactNode;
     onClose: () => void;
     open: boolean;
     fitContent?: boolean;
+    sx?: React.CSSProperties;
 }) => {
     return (
-        <Modal open={open} onClose={onClose}>
+        <Modal open={open} onClose={onClose} sx={{ ...sx }}>
             <Stack
                 sx={{
                     position: 'absolute',

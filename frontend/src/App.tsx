@@ -1,12 +1,9 @@
 import { ThemeProvider } from '@emotion/react';
-import { ArrowLeftRounded } from '@mui/icons-material';
 import {
-    AppBar,
     Container,
     createTheme,
     CssBaseline,
-    responsiveFontSizes,
-    Typography,
+    responsiveFontSizes
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -20,13 +17,14 @@ import { BrowserRouter, Route, Routes } from 'react-router';
 import './App.css';
 import PasswordLock from './components/PasswordLock';
 
+import FeedbackComponents from 'components/FeedbackComponents';
+import dayjs from 'dayjs';
+import Admin from 'pages/Admin';
+import FaceIntelligence from 'pages/Faces';
+import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
+import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
-import dayjs from 'dayjs';
-import FeedbackComponents from 'components/FeedbackComponents';
-import Admin from 'pages/Admin';
-import { UploadPage } from 'pages/UploadPage';
-import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 /**
@@ -205,6 +203,12 @@ const App = () => {
                                         path="/status/:jobId"
                                         element=<PasswordLock>
                                             <ProcessingStatusPage />
+                                        </PasswordLock>
+                                    />
+                                    <Route
+                                        path="/faces"
+                                        element=<PasswordLock>
+                                            <FaceIntelligence />
                                         </PasswordLock>
                                     />
                                 </Routes>

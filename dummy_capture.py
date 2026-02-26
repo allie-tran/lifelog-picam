@@ -1,20 +1,13 @@
 import os
-import io
 import signal
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime
-from picamzero import Camera
 import cv2
-import numpy as np
 
 import requests
-from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_video, box
-
-cam = Camera()
-# orginally 4056 x 3040
-cam.still_size = (2028, 1520)
+from common import BACKEND_URL, OUTPUT, IMAGE_EXTENSION, box
 
 def _check_capturing_mode():
     mode = "photo"
@@ -41,43 +34,42 @@ def check_capturing_mode(timeout=5):
 
 
 def check_if_camera_connected():
-    status = os.system("rpicam-still -n --output status.jpg")
-    return status == 0
+    try:
+        vc = cv2.VideoCapture(0)
+        if vc.isOpened():
+            vc.release()
+            return True
+    except Exception as e:
+        print("Error checking camera connection:", e)
+    return False
 
 def capture_image():
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + IMAGE_EXTENSION
     DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
         os.makedirs(DATE_DIR)
 
+    # capture from webcam
+    vc = cv2.VideoCapture(0)
+    if not vc.isOpened():
+        print("Failed to open camera for image capture.")
+        return None
+    ret, frame = vc.read()
+    vc.release()
+    if not ret:
+        print("Failed to capture image from camera.")
+        return None
     image_path = os.path.join(DATE_DIR, file_name)
 
-    try:
-        array = cam.capture_array() # RGB
-        # Convert to BGR for OpenCV
-        frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
-        # resize to 2028 x 1520
-        frame = cv2.resize(frame, (2028, 1520), interpolation=cv2.INTER_AREA)
-        # encode to webp in memory
-        io_buf = cv2.imencode('.webp', frame)[1].tobytes()
+    # Just the bytes
+    io_buf = cv2.imencode('.webp', frame)[1].tobytes()
 
-        encrypted = box.encrypt(io_buf)
-        with open(image_path, "wb") as f:
-            f.write(encrypted)
-        print("Captured image:", file_name)
+    encrypted = box.encrypt(io_buf)
+    with open(image_path, "wb") as f:
+        f.write(encrypted)
 
-    except Exception as e:
-        print("Failed to capture image:", e)
-        return None
-
-    # status = os.system(
-    #     f"rpicam-still -n --output {os.path.join(DATE_DIR, file_name)} >> rpicam.log 2>&1"
-    # )
-    # if status != 0:
-    #     print("Failed to capture image.")
-    #     return None
-    return image_path
+    return os.path.join(DATE_DIR, file_name)
 
 def record_video_until_interrupt(grace_period=5.0):
     file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
@@ -148,25 +140,23 @@ def main():
     while not check_if_camera_connected():
         print("Camera not connected. Retrying in 10 seconds...")
         time.sleep(1)
-
     print("Camera connected.")
 
-    CAPTURE_INTERVAL = 10  # seconds
-    # mode = check_capturing_mode(timeout=5)
-    mode = "photo"
+    mode = check_capturing_mode(timeout=5)
     print(f"Initial capturing mode: {mode}")
     last_capture_time = time.time()
+    CAPTURE_INTERVAL = 60
     while True:
         try:
             current_time = time.time()
             print(datetime.now())
             print(int(current_time - last_capture_time), "seconds.")
             # new_mode = check_capturing_mode(timeout=5)
-            # print("Checked. Mode:", mode)
-            # if new_mode != mode:
-            #     print(f"Capturing mode changed from {mode} to {new_mode}")
-            #     mode = new_mode
-
+            new_mode = mode
+            print("Checked. Mode:", mode)
+            if new_mode != mode:
+                print(f"Capturing mode changed from {mode} to {new_mode}")
+                mode = new_mode
             if mode == "photo":
                 if current_time - last_capture_time >= CAPTURE_INTERVAL:
                     last_capture_time = current_time

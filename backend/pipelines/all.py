@@ -1,13 +1,17 @@
 from datetime import datetime
 import os
+from typing import Optional
 
 import zvec
-from app_types import CustomFastAPI, ProcessedInfo
-from constants import DIR, SEARCH_MODEL
+from app_types import ProcessedInfo
+from auth.ortho import apply_transformation, get_matrix
+from auth.types import Device
+from constants import DIR
 from database.types import ImageRecord
 from database.vector_database import insert_embedding
 from pipelines.delete import remove_physical_image
 from scripts.anonymise import anonymise_image
+from scripts.face_recognition import index_face_embeddings
 from scripts.object_detection import extract_object_from_image
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from visual import clip_model
@@ -65,7 +69,7 @@ def index_to_mongo(device_id: str, relative_path: str):
         date=date,
         device=device_id,
         image_path=relative_path,
-        thumbnail="",
+        thumbnail=relative_path.replace(".jpg", ".webp"),
         timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
         is_video=False,
         objects=[],
@@ -75,36 +79,61 @@ def index_to_mongo(device_id: str, relative_path: str):
     ).create()
 
 
-def yolo_process_image(device_id: str, relative_path: str):
-    objects, people = extract_object_from_image(f"{DIR}/{device_id}/{relative_path}")
+def yolo_process_image(device_id: str, relative_path: str, collection: zvec.Collection):
+    device = Device.find_one({"device_id": device_id})
+    assert device, f"Device {device_id} not found"
+    whitelist = device.whitelist
+    objects, people = extract_object_from_image(
+        f"{DIR}/{device_id}/{relative_path}", whitelist
+    )
+
 
     ImageRecord.update_one(
         filter={"device": device_id, "image_path": relative_path},
         data={
             "$set": {
-                "objects": objects,
-                "people": people,
+                "objects": [obj.model_dump() for obj in objects],
+                "people": [person.model_dump() for person in people],
                 "processed.yolo": True,
             }
         },
     )
 
+    new_record = ImageRecord.find_one({"device": device_id, "image_path": relative_path})
+    assert new_record, "New record not found after YOLO processing"
+    index_face_embeddings(collection, new_record)
 
 def create_thumbnail(device_id: str, relative_path: str):
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
         f"{DIR}/{device_id}/{relative_path}"
     )
+    # get whitelist people
+    image_record = ImageRecord.find_one(
+        {"device": device_id, "image_path": relative_path}
+    )
+    people = image_record.people if image_record else []
+    boxes = []
+    whitelist_boxes = []
+    for person in people:
+        if person.label != "redacted face" and person.label != "face":
+            whitelist_boxes.append(person.bbox)
+        else:
+            boxes.append(person.bbox)
+
     if not thumbnail_exists:
         anonymise_image(
-            f"{DIR}/{device_id}/{relative_path}", thumbnail_path
+            f"{DIR}/{device_id}/{relative_path}",
+            thumbnail_path,
+            boxes,
+            whitelist_boxes,
         )
 
     ImageRecord.update_one(
         filter={"device": device_id, "image_path": relative_path},
         data={
             "$set": {
-                "thumbnail": relative_path.replace(".jpg", ".webp"),
                 "processed.sam3": True,
+                "thumbnail": relative_path.replace(".jpg", ".webp"),
             }
         },
     )
@@ -124,10 +153,9 @@ def encode_image(
                 path = new_path
 
         vector = clip_model.encode_image(path)
-        if len(vector.shape) == 0:
-            vector = vector.reshape(1, -1)
-
-        insert_embedding(collection, vector.flatten(), image_path)
+        vector = vector.flatten()
+        vector = apply_transformation(vector, get_matrix(device_id))
+        insert_embedding(collection, vector, image_path)
     except Exception as e:
         print(e)
         print(f"Error encoding image {image_path}")
@@ -136,15 +164,13 @@ def encode_image(
 
 
 def process_image(
-    device_id: str,
-    date: str,
-    file_name: str,
-    collection: zvec.Collection,
+    device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]
 ):
     relative_path = f"{date}/{file_name}"
+    assert collection, "Collection must be provided for processing images"
     try:
         index_to_mongo(device_id, relative_path)
-        yolo_process_image(device_id, relative_path)
+        yolo_process_image(device_id, relative_path, collection)
         create_thumbnail(device_id, relative_path)
         encode_image(device_id, relative_path, collection)
     except FileNotFoundError as e:
@@ -154,8 +180,11 @@ def process_image(
         remove_physical_image(device_id, relative_path, collection)
 
 
-def process_video(device_id: str, date: str, file_name: str, collection: zvec.Collection):
+def process_video(
+    device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]
+):
     output_path = f"{DIR}/{device_id}/{date}/{file_name}"
+    assert collection, "Collection must be provided for processing images"
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
     make_video_thumbnail(output_path)
     ImageRecord(
@@ -167,6 +196,4 @@ def process_video(device_id: str, date: str, file_name: str, collection: zvec.Co
         is_video=True,
     ).create()
 
-    encode_image(
-        device_id, f"{date}/{file_name}", collection
-    )
+    encode_image(device_id, f"{date}/{file_name}", collection)

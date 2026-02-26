@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { ActionType, CustomGoal, ImageObject } from 'utils/types';
+import { ActionType, CustomGoal, ImageObject, Point } from 'utils/types';
 import { getCookie, parseErrorResponse } from 'utils/misc';
 
 axios.defaults.headers.common['Authorization'] = `Bearer ${getCookie('token')}`;
@@ -210,4 +210,90 @@ export const updateUserGoals = async (
         goals.map((goal) => [goal.name, goal.type, goal.query_prompt || ''])
     );
     return response.data;
+};
+
+export const getFaces = async (deviceId: string, blobUrls: string[]) => {
+    const formData = new FormData();
+    for (let i = 0; i < blobUrls.length; i++) {
+        const blobResponse = await fetch(blobUrls[i]);
+        const blob = await blobResponse.blob();
+        formData.append('files', blob, `face_image_${i}`);
+    }
+    const response = await axios.post(
+        `${BACKEND_URL}/get-faces?device=${encodeURIComponent(deviceId)}`,
+        formData,
+        {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        }
+    );
+    return response.data as ImageObject[];
+};
+
+export const addToWhiteList = async (
+    deviceId: string,
+    blobUrls: string[],
+    name: string
+) => {
+    const formData = new FormData();
+    for (let i = 0; i < blobUrls.length; i++) {
+        const blobResponse = await fetch(blobUrls[i]);
+        const blob = await blobResponse.blob();
+        formData.append('files', blob, `white_list_image_${i}`);
+    }
+    const response = await axios.put(
+        `${BACKEND_URL}/add-to-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`,
+        formData,
+        {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        }
+    );
+    return response.data;
+};
+
+export const getWhiteList = async (deviceId: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-whitelist?device=${encodeURIComponent(deviceId)}`
+    );
+    return response.data as { name: string; images: string[] }[];
+};
+
+export const removeFromWhiteList = async (deviceId: string, name: string) => {
+    const response = await axios.delete(
+        `${BACKEND_URL}/remove-from-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`
+    );
+    return response.data;
+};
+
+export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
+    const formData = new FormData();
+    const blobResponse = await fetch(blobUrl);
+    const blob = await blobResponse.blob();
+    formData.append('file', blob, 'segment_image');
+    formData.append('points', JSON.stringify(points.map((p) => [p.x, p.y])));
+
+    try {
+        const response = await axios.post(
+            `${BACKEND_URL}/segment-image`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            }
+        );
+        return response.data as {
+            visualisation: string;
+            masks: string[];
+            bboxes: [number, number, number, number][];
+        }
+    } catch (error) {
+        console.error('Segmentation failed', error);
+        return {
+            visualisation: '',
+            masks: [],
+            bboxes: [],
+        };
+    }
 };

@@ -2,14 +2,9 @@ import os
 from typing import List
 
 import numpy as np
-import zvec
 
-from app_types import (
-    AppFeatures,
-    CLIPFeatures,
-    CustomFastAPI,
-    DeviceFeatures,
-)
+from app_types import AppFeatures, CLIPFeatures, CustomFastAPI, DeviceFeatures
+from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
 from database.types import ImageRecord
 from database.vector_database import (
@@ -17,8 +12,10 @@ from database.vector_database import (
     search_similar_embeddings,
     search_similar_embeddings_by_id,
 )
+from scripts.face_recognition import open_face_collection
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
+
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
@@ -29,11 +26,24 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
     for device in os.listdir(feature_dir):
         device_features = DeviceFeatures()
         app_features[device] = device_features
-        collection = open_collection(device, "conclip")
-        app_features[device]["conclip"] = CLIPFeatures(collection=collection)
+
+        app_features[device]["conclip"] = CLIPFeatures(
+            collection=open_collection(device, "conclip")
+        )
+        app_features[device]["faces"] = CLIPFeatures(
+            collection=open_face_collection(device)
+        )
 
     app.features = app_features
     return app_features
+
+
+def save_features(app: CustomFastAPI):
+    for device, device_features in app.features.items():
+        for model_name, features in device_features.items():
+            if features.collection:
+                features.collection.flush()
+                features.collection.optimize()
 
 
 def retrieve_image(
@@ -47,14 +57,21 @@ def retrieve_image(
     normalizing_sum=None,
     remove=np.array([]),
 ):
+
     query_vector = clip_model.encode_text(text, normalize=True)
+    query_vector = apply_transformation(query_vector, get_matrix(device_id))
+
     docs = search_similar_embeddings(
         features.collection,
         query_vector.flatten(),
         top_k=k,
     )
     image_paths = [doc.fields["image_path"] for doc in docs]
-    top_images = [path for path in image_paths if path not in deleted_images and path not in remove]
+    top_images = [
+        path
+        for path in image_paths
+        if path not in deleted_images and path not in remove
+    ]
 
     sort_by_timestamp = sort_by == "time"
     if sort_by_timestamp:
@@ -117,6 +134,8 @@ def get_similar_images(
 
             query_vector = clip_model.encode_image(path)
             query_vector = query_vector / np.linalg.norm(query_vector)
+            query_vector = query_vector.flatten()
+            query_vector = apply_transformation(query_vector, get_matrix(device_id))
         except Exception as e:
             print(f"Error encoding image {image}: {e}")
             return []
@@ -134,8 +153,9 @@ def get_similar_images(
         )
 
     top_images = [doc.fields["image_path"] for doc in docs]
-    top_images = [path for path in top_images if path not in deleted_images and path not in remove]
-    print("Similar images:", top_images)
+    top_images = [
+        path for path in top_images if path not in deleted_images and path not in remove
+    ]
     return ImageRecord.find(
         filter={
             "device": device_id,
