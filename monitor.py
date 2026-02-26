@@ -1,4 +1,5 @@
 from common import CHECK_ALL_URL, OUTPUT, check_if_connected, send_image, send_video
+import traceback
 import requests
 from datetime import datetime
 import os
@@ -48,7 +49,12 @@ def check_if_folder_is_synced(date: str):
                     print(f"Deleted file {deleted_file_path} as per server instruction.")
 
             return sorted(missing)
-    except requests.RequestException as e:
+        else:
+            print(response.reason)
+            print(response.json())
+
+
+    except Exception as e:
         print(f"Error checking folder sync status: {e}")
 
 

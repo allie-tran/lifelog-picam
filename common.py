@@ -5,13 +5,13 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
-device_id = os.getenv("DEVICE_ID", "omi")
+device_id = os.getenv("DEVICE_ID", "selfhealth")
 
-BACKEND_URL = "https://dcu.allietran.com/omi/be"
-UPLOAD_URL = "https://dcu.allietran.com/omi/be/upload-image"
-UPLOAD_VIDEO_URL = "https://dcu.allietran.com/omi/be/upload-video"
-CHECK_URL = "https://dcu.allietran.com/omi/be/check-image-uploaded"
-CHECK_ALL_URL = "https://dcu.allietran.com/omi/be/check-all-images-uploaded"
+BACKEND_URL = "https://dcu.allietran.com/selfhealth/be"
+UPLOAD_URL = "https://dcu.allietran.com/selfhealth/be/upload-image"
+UPLOAD_VIDEO_URL = "https://dcu.allietran.com/selfhealth/be/upload-video"
+CHECK_URL = "https://dcu.allietran.com/selfhealth/be/check-image-uploaded"
+CHECK_ALL_URL = "https://dcu.allietran.com/selfhealth/be/check-all-images-uploaded"
 OUTPUT = "Camera/timelapse"
 
 def send_image(image_path, uploaded_files, LOG_FILE):
