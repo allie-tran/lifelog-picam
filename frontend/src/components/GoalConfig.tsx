@@ -1,26 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import { AddRounded, DeleteRounded } from '@mui/icons-material';
 import {
-    Box,
     Button,
-    TextField,
-    Select,
-    MenuItem,
+    FormControl,
     IconButton,
+    InputLabel,
     List,
     ListItem,
     ListItemText,
-    Typography,
-    Paper,
-    InputLabel,
-    FormControl,
+    MenuItem,
+    Select,
     Stack,
+    TextField,
+    Typography
 } from '@mui/material';
-import { DeleteRounded, AddRounded } from '@mui/icons-material';
-import { CATEGORIES } from 'constants/activityColors';
-import useSWR from 'swr';
 import { getUserGoals } from 'apis/browsing';
-import { ActionType, CustomGoal } from 'utils/types';
+import { CATEGORIES } from 'constants/activityColors';
+import { useEffect, useState } from 'react';
 import { useAppSelector } from 'reducers/hooks';
+import useSWR from 'swr';
+import { ActionType, CustomGoal } from 'utils/types';
 
 const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';

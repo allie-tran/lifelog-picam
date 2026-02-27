@@ -109,7 +109,7 @@ const FaceIntelligence = () => {
                 direction="row"
                 flexWrap="wrap"
                 sx={{
-                    backgroundColor: '#1e1e1e',
+                    backgroundColor: 'background.paper',
                     padding: 2,
                     borderRadius: 2,
                 }}
@@ -177,7 +177,7 @@ const DummyFaceCard = ({ onClick }: { onClick: () => void }) => {
                 </Typography>
                 <Box
                     sx={{
-                        backgroundColor: '#1e1e1e',
+                        backgroundColor: 'background.paper',
                         height: 228,
                         display: 'flex',
                         alignItems: 'center',

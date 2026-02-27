@@ -1,0 +1,43 @@
+.photo-button {
+    width: 64px;
+    height: 64px;
+    left: 50%;
+    bottom: 16px;
+    transform: translate(-50%, 0);
+    position: absolute;
+    z-index: 2000;
+}
+.circle {
+    position: absolute;
+    top: 12%;
+    left: 12%;
+    bottom: 12%;
+    right: 12%;
+    border-radius: 100%;
+    background-color: #ffffff;
+    opacity: 0;
+}
+.ring {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+
+    border-radius: 100%;
+    border: 0.5em solid #ffffff;
+    opacity: 0.8;
+}
+.photo-button .circle,
+.photo-button .ring {
+    transition: all 0.25s;
+}
+.photo-button:hover .circle {
+    opacity: 1;
+}
+.photo-button:active .ring {
+    opacity: 1;
+}
+.photo-button:active .circle {
+    opacity: 0.5;
+}

@@ -87,7 +87,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         color="primary"
                         fontWeight="bold"
                     >
-                        Keep It Secret, Keep It Safe
+                        SelfHealth
                     </Typography>
                 </AppBar>
                 <Drawer

@@ -1,8 +1,8 @@
 // CategoryPieChart.tsx
-import React from 'react';
-import { Box, Typography, Stack, useTheme } from '@mui/material';
+import { Box, Typography, useTheme } from '@mui/material';
+import { ArcElement, Chart as ChartJS, Legend, Tooltip } from 'chart.js';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
-import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import React from 'react';
 import { Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(ArcElement, Tooltip, Legend);

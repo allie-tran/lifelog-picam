@@ -1,18 +1,18 @@
 export const CATEGORIES: Record<string, string> = {
     // Work – Research & Writing
-    'Writing': '#F1FA8C',
-    'Coding': '#F1FA8C',
-    'Email & Admin': '#F1FA8C',
-    'Taking Notes': '#F1FA8C',
+    'Writing': '#C8E9A0',
+    'Coding': '#C8E9A0',
+    'Email & Admin': '#C8E9A0',
+    'Taking Notes': '#C8E9A0',
 
     // old
-    'Paper Writing': '#F1FA8C',
-    'Grant Writing': '#F1FA8C',
-    'Coding / Experimenting': '#F1FA8C',
-    'Data Analysis': '#F1FA8C',
-    'Reading Papers': '#F1FA8C',
-    'Supervising Students': '#F1FA8C',
-    'Giving Feedback': '#F1FA8C',
+    'Paper Writing': '#C8E9A0',
+    'Grant Writing': '#C8E9A0',
+    'Coding / Experimenting': '#C8E9A0',
+    'Data Analysis': '#C8E9A0',
+    'Reading Papers': '#C8E9A0',
+    'Supervising Students': '#C8E9A0',
+    'Giving Feedback': '#C8E9A0',
 
     // Meetings & Collaboration
     'Meeting': '#50FA7B',
@@ -37,16 +37,16 @@ export const CATEGORIES: Record<string, string> = {
     'Outreach / Public Talk': '#FFB86C',
 
     // Travel
-    'Commuting': '#6272A4',
-    'Travelling (Train)': '#6272A4',
-    'Travelling (Plane)': '#6272A4',
-    'Travelling (Car)': '#6272A4',
-    'Travelling (Bus)': '#6272A4',
-    'Packing / Unpacking': '#6272A4',
+    'Commuting': '#6DD3CE',
+    'Travelling (Train)': '#6DD3CE',
+    'Travelling (Plane)': '#6DD3CE',
+    'Travelling (Car)': '#6DD3CE',
+    'Travelling (Bus)': '#6DD3CE',
+    'Packing / Unpacking': '#6DD3CE',
 
     // old
-    'Walking on Campus': '#6272A4',
-    'Conference Travel': '#6272A4',
+    'Walking on Campus': '#6DD3CE',
+    'Conference Travel': '#6DD3CE',
 
     // Food & Drink
     Eating: '#FF5555',
@@ -83,21 +83,21 @@ export const CATEGORIES: Record<string, string> = {
     Napping: '#2c3e50',
 
     // Miscellaneous
-    'Transit / Waiting': '#95a5a6',
-    'Unclear Activity': '#95a5a6',
+    'Transit / Waiting': '#E1E7E7',
+    'Unclear Activity': '#E1E7E7',
     'No Activity': 'transparent',
 }
 
 export const THEME_COLORS : Record<string, string> = {
-    "Work – Research & Writing": "#F1FA8C",
+    "Work – Research & Writing": "#C8E9A0",
     "Meetings & Collaboration": "#50FA7B",
     "Teaching & Outreach": "#FFB86C",
-    "Travel": "#6272A4",
+    "Travel": "#6DD3CE",
     "Food & Drink": "#FF5555",
     "Leisure & Wellbeing": "#8BE9FD",
     "Social & Personal": "#BD93F9",
     "Sleep / Downtime": "#2c3e50",
-    "Miscellaneous": "#95a5a6",
+    "Miscellaneous": "#E1E7E7",
 }
 
 

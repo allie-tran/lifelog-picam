@@ -195,6 +195,7 @@ const DaySummaryComponent = () => {
                                 value={periodIndex}
                                 onChange={(_, value) => setPeriodIndex(value)}
                                 sx={{
+                                    transform: 'translateX(-8px)',
                                     minHeight: '32px',
                                     '& .MuiTabs-scroller': {
                                         display: 'flex',
@@ -354,8 +355,8 @@ function BurstMetricsCard({ bursts }: { bursts: Record<string, number[]> }) {
  */
 
 const PeriodTimeTab = styled(Tab)({
-    backgroundColor: '#1418204f',
-    borderRadius: '8px 8px 0 0',
+    backgroundColor: '#fdf1e3',
+    borderRadius: '8px px 0 0',
     marginRight: '4px',
     fontSize: '12px',
     minHeight: '32px',
@@ -500,6 +501,7 @@ function PeriodCard({
                         spacing={1}
                         mt={1}
                         sx={{ overflowX: 'auto', width: '100%', height: '220px' }}
+                        justifyContent="center"
                     >
                         {currentSegment.representativeImages?.map(
                             (img, idx) => (
@@ -603,8 +605,10 @@ function Timeline({ daySummary }: { daySummary: DaySummary }) {
                         spacing={0}
                         sx={{
                             overflowX: 'auto',
-                            width: '100%',
+                            maxWidth: '100%',
+                            minWidth: '400px',
                             pt: 1,
+                            justifyContent: 'center',
                         }}
                         flexWrap="wrap"
                     >

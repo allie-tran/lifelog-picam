@@ -1,8 +1,8 @@
+import { DeleteRounded } from '@mui/icons-material';
 import {
     Box,
     Button,
     Checkbox,
-    Container,
     Divider,
     Drawer,
     LinearProgress,
@@ -14,31 +14,29 @@ import {
     Tabs,
     ToggleButton,
     ToggleButtonGroup,
-    Typography,
+    Typography
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import {
-    deleteImage,
     deleteImages,
     searchImages,
     similarImages,
-    similarImagesPost,
+    similarImagesPost
 } from 'apis/browsing';
+import ImageDropSearch from 'components/ImageDropSearch';
 import ImageIdSearch from 'components/ImageIdSearch';
+import ImageWithDate from 'components/ImageWithDate';
 import LifelogEvent from 'components/LifelogEvent';
 import SearchBar from 'components/SearchBar';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
-import ImageDropSearch from 'components/ImageDropSearch';
-import ImageWithDate from 'components/ImageWithDate';
-import { setZoomedImage } from 'reducers/zoomedImage';
-import { CheckBox, DeleteRounded } from '@mui/icons-material';
 
 const PAGE_SIZE = 20;
 

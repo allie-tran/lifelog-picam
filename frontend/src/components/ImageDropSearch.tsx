@@ -1,9 +1,13 @@
 import { uploadAndSegment } from 'apis/browsing';
-import { ImageSearchRounded } from '@mui/icons-material';
+import {
+    FlipCameraAndroidRounded,
+    ImageSearchRounded,
+} from '@mui/icons-material';
 import {
     Box,
     Button,
     FormControl,
+    IconButton,
     InputLabel,
     MenuItem,
     Select,
@@ -18,16 +22,17 @@ import '../App.css';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch } from 'reducers/hooks';
+import './camera.css';
 
 const frontCameraConstraints = {
     width: 400,
-    height: 200,
+    height: 300,
     facingMode: 'user',
 };
 
 const rearCameraConstraints = {
     width: 400,
-    height: 200,
+    height: 300,
     facingMode: { exact: 'environment' },
 };
 
@@ -43,7 +48,6 @@ const base64ToBlobUrl = (base64: string): string => {
     const blob = new Blob([byteArray], { type: 'image/png' });
     return URL.createObjectURL(blob);
 };
-
 
 // Helper to apply mask on the frontend
 const applyMaskToImage = async (
@@ -94,15 +98,20 @@ const applyMaskToImage = async (
                 const padding = Math.floor(Math.min(w, h) * 0.1);
                 const croppedCanvas = document.createElement('canvas');
                 const croppedCtx = croppedCanvas.getContext('2d')!;
-                croppedCanvas.width = w + (padding * 2);
-                croppedCanvas.height = h + (padding * 2);
+                croppedCanvas.width = w + padding * 2;
+                croppedCanvas.height = h + padding * 2;
                 croppedCtx.drawImage(
                     canvas,
-                    x - padding, y - padding, w + (padding * 2), h + (padding * 2),
-                    0, 0, w + (padding * 2), h + (padding * 2)
+                    x - padding,
+                    y - padding,
+                    w + padding * 2,
+                    h + padding * 2,
+                    0,
+                    0,
+                    w + padding * 2,
+                    h + padding * 2
                 );
                 resolve(croppedCanvas.toDataURL('image/jpeg', 0.95));
-
             };
         };
         img.src = originalBlobUrl;
@@ -183,9 +192,15 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
         } else {
             // apply mask to image
             const maskBase64 = masks[selectedSegment];
-            applyMaskToImage(url, maskBase64, bboxes[selectedSegment]).then(setMaskedImage);
+            applyMaskToImage(url, maskBase64, bboxes[selectedSegment]).then(
+                setMaskedImage
+            );
         }
     }, [selectedSegment, masks, visualised, url]);
+
+    useEffect(() => {
+        setSelectedSegment('all');
+    }, [visualised, masks]);
 
     return (
         <Stack
@@ -233,10 +248,9 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                             </FormControl>
                         )}
                         <Button
+                            variant="outlined"
                             onClick={() => {
-                                onSearch(
-                                    base64ToBlobUrl(maskedImage)
-                                );
+                                onSearch(base64ToBlobUrl(maskedImage));
                                 setVisualised('');
                             }}
                         >
@@ -251,7 +265,17 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                     alignItems="center"
                     sx={{ width: '100%', position: 'relative' }}
                 >
-                    <Stack direction="row" spacing={2} alignItems="center">
+                    <Box
+                        sx={{
+                            height: 300,
+                            width: 400,
+                            backgroundColor: webcamRef.current
+                                ? 'transparent'
+                                : 'rgb(220, 220, 220, 0.5)',
+                            borderRadius: 2,
+                            position: 'relative',
+                        }}
+                    >
                         {url ? (
                             <>
                                 <Box
@@ -264,37 +288,57 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                                     }}
                                 />
                                 <Button
+                                    variant="contained"
                                     color="error"
                                     onClick={() => {
                                         setUrl(null);
+                                    }}
+                                    sx={{
+                                        textTransform: 'none',
+                                        paddingX: 3,
+                                        position: 'absolute',
+                                        bottom: 8,
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
                                     }}
                                 >
                                     Clear
                                 </Button>
                             </>
                         ) : (
-                            <>
-                                <Webcam
-                                    mirrored
-                                    screenshotFormat="image/jpeg"
-                                    ref={webcamRef}
-                                    videoConstraints={
-                                        flipCamera
-                                            ? rearCameraConstraints
-                                            : frontCameraConstraints
-                                    }
-                                ></Webcam>
-                                <Stack spacing={1}>
-                                    <Button onClick={capture}>Capture</Button>
-                                    <Button
-                                        onClick={() => setFlipCamera((f) => !f)}
+                            visible && (
+                                <>
+                                    <Webcam
+                                        mirrored
+                                        screenshotFormat="image/jpeg"
+                                        disablePictureInPicture
+                                        height={300}
+                                        width={400}
+                                        ref={webcamRef}
+                                        videoConstraints={
+                                            flipCamera
+                                                ? rearCameraConstraints
+                                                : frontCameraConstraints
+                                        }
+                                    ></Webcam>
+                                    <PhotoButton onClick={capture} />
+                                    <IconButton
+                                        onClick={() =>
+                                            setFlipCamera((prev) => !prev)
+                                        }
+                                        sx={{
+                                            color: 'white',
+                                            position: 'absolute',
+                                            bottom: 8,
+                                            right: 8,
+                                        }}
                                     >
-                                        Flip Camera
-                                    </Button>
-                                </Stack>
-                            </>
+                                        <FlipCameraAndroidRounded />
+                                    </IconButton>
+                                </>
+                            )
                         )}
-                    </Stack>
+                    </Box>
                     <Button
                         onClick={() => {
                             setUseCamera(false);
@@ -305,7 +349,7 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                             paddingX: 3,
                         }}
                     >
-                        Back to Upload
+                        Upload an Image Instead
                     </Button>
                 </Stack>
             ) : (
@@ -344,8 +388,8 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                                     src={url}
                                     alt="Uploaded"
                                     style={{
-                                        maxWidth: '200px',
-                                        maxHeight: '200px',
+                                        maxWidth: '300px',
+                                        maxHeight: '300px',
                                         objectFit: 'contain',
                                     }}
                                 />
@@ -367,6 +411,7 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
             <Stack sx={{ paddingTop: '1px' }} spacing={2} alignItems="center">
                 <Button
                     variant="outlined"
+                    color="secondary"
                     disabled={!url}
                     onClick={() => {
                         onSegment(url);
@@ -377,7 +422,7 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                         minWidth: '100px',
                     }}
                 >
-                    <strong>Segment</strong>
+                    Segment
                 </Button>
                 <Button
                     variant="outlined"
@@ -393,24 +438,25 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                 >
                     <strong>Lookup</strong>
                 </Button>
-                {url && (
-                    <Button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setUrl(null);
-                        }}
-                        color="error"
-                        sx={{
-                            textTransform: 'none',
-                            paddingX: 3,
-                        }}
-                    >
-                        Clear
-                    </Button>
-                )}
             </Stack>
         </Stack>
     );
 };
+
+const PhotoButton = ({
+    onClick,
+    disabled = false,
+    icon,
+}: {
+    onClick: () => void;
+    disabled?: boolean;
+    icon?: React.ReactNode;
+}) => (
+    <Box className="photo-button" onClick={disabled ? undefined : onClick}>
+        <Box className="circle" />
+        <Box className="ring" />
+        {icon && <Box className="icon">{icon}</Box>}
+    </Box>
+);
 
 export default ImageDropSearch;
