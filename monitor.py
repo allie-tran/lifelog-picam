@@ -107,4 +107,4 @@ if __name__ == "__main__":
                         cleanup(folder_path)
         else:
             print("No internet connection. Retrying in 1 minute.")
-        time.sleep(60)
+            time.sleep(60)
