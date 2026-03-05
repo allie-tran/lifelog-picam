@@ -25,6 +25,7 @@ missing_files = set()
 uploaded_files = set()
 LOG_FILE = "synced.txt"
 
+device_id = os.getenv("DEVICE_ID", "omi")
 
 class NewFileHandler(FileSystemEventHandler):
     def on_created(self, event):
