@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
-from ultralytics import SAM
 from ultralytics.models.sam import SAM3SemanticPredictor
+from ultralytics.models import FastSAM
 
 from scripts.utils import to_base64
 
@@ -24,22 +24,22 @@ overrides = dict(
 )
 sam3 = SAM3SemanticPredictor(overrides=overrides)
 
-import cv2
-import numpy as np
 
-
-def blur_image_mosaic(image, mask, scale_ratio=0.0075):
+def blur_image_mosaic(image, mask, scale_ratio=0.05):
     """
-    Calculates hexagon size based on image resolution.
+    Calculates hexagon size based mask area
+    0.05 means for each mask area there are 20 hexagons
     """
     h, w = image.shape[:2]
 
-    # 1. Calculate image diagonal for scale
-    diagonal = np.sqrt(h**2 + w**2)
+    # Calculate the area of the mask
+    mask_area = np.sum(mask)
+    total_area = h * w
+    mask_ratio = mask_area / total_area
 
-    # 2. Set size (radius) as a percentage of that diagonal
-    size = int(diagonal * scale_ratio)
-    size = max(4, size)  # Safety minimum
+    # Determine hexagon size based on the mask ratio
+    size = max(10, int(min(h, w) * scale_ratio * np.sqrt(mask_ratio)))
+    size = min(size, 50)  # Cap the size to prevent excessively large hexagons
 
     # Constants for hexagonal geometry
     v_step = int(size * 1.5)
@@ -120,12 +120,15 @@ def create_blur_mask(boxes, image_height, image_width):
 ALL_PRIVATE_LABELS = [
     "face",
     "face with glasses or masks",
-    "screen content (e.g. computer screen, phone screen, tablet screen)",
+    "content on a screen",
     "private document (e.g. bank statement, tax document, medical record, passport, visa, id card)",
     "home address (e.g. on a letter, package, or document)",
     "license plate",
     "signature",
+    "phone number",
     "cards (e.g. credit card, id card, bank card)",
+    "young child",
+    "personal item (e.g. keys, wallet, handbag)",
 ]
 
 
@@ -136,7 +139,6 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     full_mask = create_blur_mask(boxes, img.shape[0], img.shape[1])
     try:
         sam3.set_image(image_path)
-
         batch_size = 4
         # Query with multiple text prompts
         with torch.no_grad():  # Disable gradients for inference
@@ -165,22 +167,13 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
                         if to_blur:
                             full_mask |= mask  # Combine masks using logical OR
                         del mask
-
-        # full_mask = np.zeros(img.shape[:2], dtype=bool)  # Initialize an empty mask
         sam3.reset_image()
-        # Remove whitelist areas from the mask
-        for bbox in whitelist_boxes:
-            x1, y1, x2, y2 = bbox
-            full_mask[y1:y2, x1:x2] = False
 
     except torch.cuda.OutOfMemoryError:
         print(f"CUDA Out of Memory while processing {image_path}. Skipping.")
 
     # Apply mosaic blur to the original image using the combined mask
     anonymised_image = blur_image_mosaic(img, full_mask)
-    # just block out the areas for now with red
-    # img[full_mask] = [0, 0, 255]
-    # anonymised_image = img
 
     if "results" in locals():
         del results
@@ -199,7 +192,9 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     img.save(thumbnail_path, "WEBP", quality=quality)
 
 
-model = SAM("sam3.pt")
+
+# Create a FastSAM model
+model = FastSAM("FastSAM-x.pt")  # or FastSAM-x.pt
 
 def get_colors(N: int):
     HSV_tuples = [(x*1.0/N, 0.5, 0.5) for x in range(N)]
@@ -208,7 +203,7 @@ def get_colors(N: int):
 
 def segment_image_with_sam(image):
     # get the middle point
-    points = np.array([[image.width // 2, image.height // 2]])
+    points = [image.width // 2, image.height // 2]
     results = model.predict(image, verbose=False, stream=True, points=points, labels=[1])
     image = np.array(image.convert("RGB"))
     mask_list = []
@@ -223,6 +218,9 @@ def segment_image_with_sam(image):
         all_masks = result.masks.data.numpy()
         all_colors = get_colors(all_masks.shape[0])
         for i, mask in enumerate(all_masks):
+            mask = cv2.resize(mask.astype(np.uint8), (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            # fill holes in the mask
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
             coords = np.argwhere(mask > 0)
             if len(coords) == 0:
                 continue

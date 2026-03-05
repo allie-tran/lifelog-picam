@@ -26,10 +26,11 @@ const DeleteRange = ({
 
     const handlePreview = async () => {
         if (startTime && endTime) {
-            let startTimeWithDate = dayjs(date)
+            let startTimeWithDate = dayjs(date) || dayjs();
             startTimeWithDate = startTimeWithDate.hour(startTime.hour()).minute(startTime.minute()).second(startTime.second());
-            let endTimeWithDate = dayjs(date)
+            let endTimeWithDate = dayjs(date) || dayjs();
             endTimeWithDate = endTimeWithDate.hour(endTime.hour()).minute(endTime.minute()).second(endTime.second());
+            console.log('Previewing images from', startTimeWithDate.toISOString(), 'to', endTimeWithDate.toISOString());
 
             const images = await getImagesByRange(
                 deviceId,
@@ -38,6 +39,8 @@ const DeleteRange = ({
                 endTimeWithDate.valueOf()
             );
             setImages(images);
+        } else {
+            console.error('Start time and end time must be set');
         }
     };
 

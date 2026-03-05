@@ -606,10 +606,6 @@ def similar_images_by_upload(
             filter={"deleted": True, "device": device}, distinct="image_path"
         )
     )
-    now = datetime.now()
-    if (now - app.last_saved).seconds > 300:  # autosave every 5 minutes
-        update_app(app)
-
     # save in temp
     temp_path = f"{DIR}/{device}/temp_{file.filename}"
     with open(temp_path, "wb") as f:

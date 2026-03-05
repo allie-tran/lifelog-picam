@@ -284,7 +284,10 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                                     alt="Captured"
                                     sx={{
                                         maxWidth: '400px',
+                                        maxHeight: '300px',
                                         objectFit: 'contain',
+                                        margin: 'auto',
+                                        display: 'block',
                                     }}
                                 />
                                 <Button

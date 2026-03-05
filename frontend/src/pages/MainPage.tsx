@@ -20,6 +20,7 @@ import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
 import DeleteRange from 'components/DeleteRange';
+import dayjs from 'dayjs';
 
 function MainPage() {
     const navigate = useNavigate();
@@ -159,7 +160,7 @@ function MainPage() {
                         </Button>
                     ))}
                 </Stack>
-                <DeleteRange onDelete={() => mutate()} date={date || ''} />
+                <DeleteRange onDelete={() => mutate()} date={date || dayjs().format('YYYY-MM-DD')}/>
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&

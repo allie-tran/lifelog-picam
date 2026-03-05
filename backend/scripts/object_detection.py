@@ -2,7 +2,7 @@ import numpy as np
 
 import cv2
 from app_types import ObjectDetection
-from ultralytics import YOLO
+from ultralytics.models import YOLO
 from insightface.app import FaceAnalysis
 
 from auth.types import Person
@@ -68,17 +68,23 @@ def extract_object_from_image(image_path, whitelist: list[Person] = []):
                         ]
 
                         label = "redacted face"
+                        confidence = float(face.confidence)
                         for whitelist_person in whitelist:
                             for embedding in whitelist_person.embeddings:
-                                dist = np.array(embedding) @ np.array(face.embedding).T
-                                if dist > 0.9:  # Adjust threshold as needed
+                                embedding = np.array(embedding)
+                                embedding = embedding / np.linalg.norm(embedding)  # Normalize the embedding
+                                face_embedding = np.array(face.embedding)
+                                face_embedding = face_embedding / np.linalg.norm(face_embedding)  # Normalize the face embedding
+                                dist = np.dot(embedding, face_embedding)  # Cosine similarity
+                                if dist > 0.8:  # Adjust threshold as needed
+                                    confidence = dist
                                     label = whitelist_person.name
                                     break
 
                         people.append(
                             ObjectDetection(
                                 label=label,
-                                confidence=face.confidence,
+                                confidence=confidence,
                                 bbox=adjusted_bbox,
                                 embedding=face.embedding,
                             )
