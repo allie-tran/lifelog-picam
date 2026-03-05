@@ -6,7 +6,6 @@ from datetime import datetime
 
 import cv2
 from picamzero import Camera
-
 from common import OUTPUT, box
 
 cam = Camera()
@@ -37,7 +36,7 @@ def capture_image():
         # resize to 2028 x 1520
         frame = cv2.resize(frame, (2028, 1520), interpolation=cv2.INTER_AREA)
         # encode to webp in memory
-        io_buf = cv2.imencode('.webp', frame)[1].tobytes()
+        io_buf = cv2.imencode('.jpg', frame)[1].tobytes()
 
         encrypted = box.encrypt(io_buf)
         with open(image_path, "wb") as f:
