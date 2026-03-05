@@ -163,12 +163,19 @@ if __name__ == "__main__":
     observer.schedule(event_handler, OUTPUT, recursive=True)
     observer.start()
 
-    # 3. Main Loop: Periodically process the queue
+    # 3. Responsive Main Loop
     try:
         while True:
-            process_queue()
-            # Wait 5 minutes between full retry attempts to save battery/CPU
-            time.sleep(300)
+            if not retry_queue.empty():
+                if check_if_connected():
+                    # Process the queue immediately if we have internet
+                    process_queue()
+                else:
+                    print("No internet, waiting 1 minute before retrying...")
+                    time.sleep(60)
+            # This small sleep prevents the CPU from hitting 100%
+            # while waiting for the Watchdog to put something in the queue
+            time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
