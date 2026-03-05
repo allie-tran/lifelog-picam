@@ -1,44 +1,17 @@
 import os
-import io
 import signal
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime
-from picamzero import Camera
-import cv2
-import numpy as np
 
-import requests
-from common import BACKEND_URL, OUTPUT, check_if_connected, send_image, send_video, box
+import cv2
+from picamzero import Camera
+
+from common import OUTPUT, box
 
 cam = Camera()
 # orginally 4056 x 3040
 cam.still_size = (2028, 1520)
-
-def _check_capturing_mode():
-    mode = "photo"
-    try:
-        response = requests.get(BACKEND_URL + "/controls/settings")
-        if response.status_code == 200:
-            data = response.json()
-            print("Fetched settings:", data)
-            mode = data.get("captureMode", "photo")
-            return mode
-    except:
-        pass
-    return mode
-
-def check_capturing_mode(timeout=5):
-    with ThreadPoolExecutor() as executor:
-        future = executor.submit(_check_capturing_mode)
-    try:
-        result = future.result(timeout=timeout)
-        return result
-    except TimeoutError:
-        print("Timeout while checking capturing mode. Defaulting to 'photo'.")
-    return "photo"
-
 
 def check_if_camera_connected():
     try:
@@ -75,78 +48,7 @@ def capture_image():
         print("Failed to capture image:", e)
         return None
 
-    # status = os.system(
-    #     f"rpicam-still -n --output {os.path.join(DATE_DIR, file_name)} >> rpicam.log 2>&1"
-    # )
-    # if status != 0:
-    #     print("Failed to capture image.")
-    #     return None
     return image_path
-
-def record_video_until_interrupt(grace_period=5.0):
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
-    DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
-
-    if not os.path.exists(DATE_DIR):
-        os.makedirs(DATE_DIR)
-
-    video_path = os.path.join(DATE_DIR, file_name)
-
-    cmd = [
-        "rpicam-vid",
-        "--output", video_path,
-        "-t", "0"
-        "-n",
-    ]
-    print("Starting video recording:", video_path)
-    try:
-        process = subprocess.Popen(cmd)
-    except Exception as e:
-        print("Failed to start video recording:", e)
-        return None
-
-    try:
-        while True:
-            if process.poll() is not None:
-                print("Video recording process ended unexpectedly.")
-                return None
-
-            mode = check_capturing_mode(timeout=5)
-            if mode != "video":
-                print("Capturing mode changed. Stopping video recording.")
-                try:
-                    process.send_signal(signal.SIGINT)
-                except Exception as e:
-                    print("Failed to stop video recording:", e)
-
-                waited = 0.0
-                while process.poll() is None and waited < grace_period:
-                    time.sleep(0.5)
-                    waited += 0.5
-
-                if process.poll() is None:
-                    print("Grace period exceeded. Killing video recording process.")
-                    try:
-                        process.kill()
-                    except Exception as e:
-                        print("Failed to kill video recording process:", e)
-                break
-
-            time.sleep(1)
-    finally:
-        if process.poll() is None:
-            try:
-                process.terminate()
-                process.wait(timeout=2)
-            except Exception as e:
-                process.kill()
-
-    print("Recorded video:", video_path)
-    if os.path.exists(video_path):
-        return os.path.join(DATE_DIR, file_name)
-
-    print("Video file not found after recording.")
-    return None
 
 def main():
     while not check_if_camera_connected():
@@ -164,14 +66,15 @@ def main():
             last_capture_time = time.time()
             capture_image()
             now = time.time()
-            if now - last_capture_time < 10:
-                time.sleep(10 - (now - last_capture_time))
+            if now - last_capture_time < CAPTURE_INTERVAL:
+                time.sleep(CAPTURE_INTERVAL - (now - last_capture_time))
         except KeyboardInterrupt:
             print("Exiting...")
             break
         except Exception as e:
             print(f"Error in main loop: {e}")
-        time.sleep(0.1)
+            time.sleep(5)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
