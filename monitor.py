@@ -1,9 +1,18 @@
-import traceback
-from common import CHECK_ALL_URL, OUTPUT, check_if_connected, send_image, send_video, IMAGE_EXTENSION
-import requests
-from datetime import datetime
 import os
 import time
+import traceback
+from datetime import datetime
+
+import requests
+
+from common import (
+    CHECK_ALL_URL,
+    IMAGE_EXTENSION,
+    OUTPUT,
+    check_if_connected,
+    send_image,
+    send_video,
+)
 
 missing_files = set()
 uploaded_files = set()
@@ -16,17 +25,13 @@ def check_if_folder_is_synced(date: str):
     files = set(f for f in files if f.endswith(IMAGE_EXTENSION) or f.endswith(".mp4"))
     files.difference_update(uploaded_files)
 
-    if not files:
-        print(f"All files in folder {date} are already uploaded.")
-        with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-            f.write("All files are synced.\n")
-        return []
-
     # Only get filenames
     basenames = set(os.path.basename(f) for f in files)
     payload = {"date": date, "all_files": list(basenames)}
 
     try:
+        now = datetime.now()
+        print(f"Checking sync status for folder {date} at {now.strftime('%Y-%m-%d %H:%M:%S')}")
         response = requests.post(CHECK_ALL_URL, json=payload, timeout=10, headers={"X-Device-ID": device_id})
         if response.status_code == 200:
             missing, deleted = response.json()
@@ -38,10 +43,6 @@ def check_if_folder_is_synced(date: str):
             print(
                 f"Folder {date}: {len(synced_files)} files synced, {len(missing)} files missing."
             )
-            if not missing:
-                with open(os.path.join(OUTPUT, date, ".synced"), "w") as f:
-                    f.write("All files are synced.\n")
-
             for f in deleted:
                 deleted_file_path = os.path.join(DATE_DIR, f)
                 if os.path.exists(deleted_file_path):
@@ -83,7 +84,6 @@ def cleanup(directory: str):
 
 # Try to sync files every 5 minutes if connected to the internet
 if __name__ == "__main__":
-    print(f"Loaded {len(uploaded_files)} uploaded files from logs.")
     LOG_FILE = 'synced.txt'
     while True:
         print("-" * 40)
@@ -91,7 +91,6 @@ if __name__ == "__main__":
         if check_if_connected():
             print("Connected to the internet. Checking for missing files...")
             all_folders = sorted(os.listdir(OUTPUT), reverse=True)
-            print(all_folders)
             for folder in all_folders:
                 folder_path = os.path.join(OUTPUT, folder)
                 if os.path.isdir(folder_path):
@@ -107,4 +106,4 @@ if __name__ == "__main__":
                         cleanup(folder_path)
         else:
             print("No internet connection. Retrying in 1 minute.")
-            time.sleep(60)
+            time.sleep(30)

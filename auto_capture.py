@@ -165,13 +165,13 @@ def main():
             capture_image()
             now = time.time()
             if now - last_capture_time < 10:
-                sleep(10 - now + last_capture_time)
+                time.sleep(10 - (now - last_capture_time))
         except KeyboardInterrupt:
             print("Exiting...")
             break
         except Exception as e:
             print(f"Error in main loop: {e}")
-            time.sleep(1)
+        time.sleep(0.1)
 
 if __name__ == "__main__":
     main()
