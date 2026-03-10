@@ -20,7 +20,7 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
 
     if to_sync:
         for device in app.features.keys():
-            if device == "allie":
+            if device == "allie" or (job_id and job_id.startswith(device)):
                 collection = app.features[device][SEARCH_MODEL].collection
                 assert collection is not None, f"ZVec collection for device {device} is not initialized"
                 sync_images(device, collection)
@@ -42,7 +42,6 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
                 ),
                 job_id=job_id,
             )
-
 
     # delete old faces
     an_hour_ago = datetime.now() - timedelta(hours=1)

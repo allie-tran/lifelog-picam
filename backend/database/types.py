@@ -16,6 +16,7 @@ from mongodb_odm import Document, IndexModel
 from mongodb_odm.models import INHERITANCE_FIELD_NAME, Document
 from pydantic import field_serializer
 
+
 DICT_TYPE = Dict[str, Any]
 SORT_TYPE = Union[str, Sequence[Tuple[str, Union[int, str, Mapping[str, Any]]]]]
 

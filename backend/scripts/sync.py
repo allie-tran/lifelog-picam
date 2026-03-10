@@ -4,7 +4,7 @@ import os
 import time
 import zvec
 from constants import DIR, THUMBNAIL_DIR
-from pipelines.all import index_to_mongo, create_thumbnail, encode_image
+from pipelines.all import index_to_mongo, create_thumbnail, encode_image, yolo_process_images
 from tqdm import tqdm
 from PIL import Image
 
@@ -38,6 +38,13 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
     mongo_image_paths = set(image["_id"] for image in mongo_images)
     print(f"MongoDB: {len(mongo_image_paths)} images")
 
+    mongo_images = mongo_collection.aggregate([
+        {"$match": {"device": device, "processed.yolo": True}},
+        {"$group": {"_id": "$image_path"}},
+    ])
+    yolo_processed_images = set(image["_id"] for image in mongo_images)
+    print(f"MongoDB: {len(yolo_processed_images)} images processed by YOLO")
+
     thumbnail_images = glob.glob(f"{THUMBNAIL_DIR}/{device}/**/*.webp", recursive=True)
     thumbnail_images = set(thumbnail_images)
     thumbnail_images = set(image.split(device + "/")[1] for image in thumbnail_images)
@@ -49,6 +56,8 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
 
     missing_in_mongo = raw_images - mongo_image_paths
     print(f"Missing in MongoDB: {len(missing_in_mongo)}")
+    missing_in_mongo_yolo = raw_images - yolo_processed_images
+    print(f"Missing in MongoDB and not processed by YOLO: {len(missing_in_mongo_yolo)}")
     missing_in_thumbnail = raw_images - thumbnail_images
     print(f"Missing in Thumbnail: {len(missing_in_thumbnail)}")
     start = time.time()
@@ -72,12 +81,16 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
             if image in missing_in_zvec:
                 missing_in_zvec.remove(image)
 
-
     for image in tqdm(missing_in_mongo, desc="Indexing to MongoDB"):
-        index_to_mongo(device, image)
+        index_to_mongo(device, image, skip_segmentation=True)
+
+    batch_size = 16
+    for i in tqdm(range(0, len(missing_in_mongo_yolo), batch_size), desc="Processing YOLO"):
+        batch = list(missing_in_mongo_yolo)[i:i + batch_size]
+        yolo_process_images(device, batch)
 
     for image in tqdm(missing_in_thumbnail, desc="Creating Thumbnails"):
-        create_thumbnail(device, image)
+        create_thumbnail(device, image, skip_sam3=True)
 
     for image in tqdm(missing_in_zvec, desc="Encoding to ZVec"):
         encode_image(device, image, zvec_collection)

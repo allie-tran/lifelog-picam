@@ -145,6 +145,7 @@ class LifelogImage(CamelCaseModel):
     activity_confidence: str = ""
 
     processed: ProcessedInfo = ProcessedInfo()
+    new: bool = True
 
     @computed_field
     @property
@@ -197,3 +198,4 @@ class DaySummary(CamelCaseModel):
     category_minutes: Dict[str, float] = {}
     total_images: int = 0
     total_minutes: float = 0.0
+

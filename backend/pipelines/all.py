@@ -1,4 +1,5 @@
 from datetime import datetime
+import cv2
 import os
 from typing import Optional
 
@@ -12,7 +13,7 @@ from database.vector_database import insert_embedding
 from pipelines.delete import remove_physical_image
 from scripts.anonymise import anonymise_image
 from scripts.face_recognition import index_face_embeddings
-from scripts.object_detection import extract_object_from_image
+from scripts.object_detection import extract_object_from_images
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from visual import clip_model
 
@@ -62,7 +63,7 @@ def find_segment(device_id: str, timestamp: float) -> int | None:
     return None
 
 
-def index_to_mongo(device_id: str, relative_path: str):
+def index_to_mongo(device_id: str, relative_path: str, skip_segmentation: bool = False):
     date, file_name = relative_path.split("/")
     timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
     ImageRecord(
@@ -75,37 +76,51 @@ def index_to_mongo(device_id: str, relative_path: str):
         objects=[],
         people=[],
         processed=ProcessedInfo(yolo=False, encoded=False, sam3=False),
-        segment_id=find_segment(device_id, timestamp.timestamp() * 1000),
+        segment_id=None if skip_segmentation else find_segment(device_id, timestamp.timestamp() * 1000),
     ).create()
 
 
-def yolo_process_image(device_id: str, relative_path: str, collection: zvec.Collection):
+def yolo_process_images(device_id: str, relative_paths: list[str], collection: zvec.Collection | None = None):
+    whitelist = []
     device = Device.find_one({"device_id": device_id})
-    assert device, f"Device {device_id} not found"
-    whitelist = device.whitelist
-    objects, people = extract_object_from_image(
-        f"{DIR}/{device_id}/{relative_path}", whitelist
+    if device:
+        whitelist = device.whitelist
+
+    paths = []
+    for path in relative_paths:
+        image_path = f"{DIR}/{device_id}/{path}"
+        paths.append(image_path)
+
+    results = extract_object_from_images(
+        paths, whitelist
     )
 
-    ImageRecord.update_one(
-        filter={"device": device_id, "image_path": relative_path},
-        data={
-            "$set": {
-                "objects": [obj.model_dump() for obj in objects],
-                "people": [person.model_dump() for person in people],
-                "processed.yolo": True,
-            }
-        },
-    )
+    for r in results:
+        image_path = r["image_path"]
+        objects = r["objects"]
+        people = r["people"]
+        relative_path = image_path.split(f"{device_id}/")[1]
 
-    new_record = ImageRecord.find_one(
-        {"device": device_id, "image_path": relative_path}
-    )
-    assert new_record, "New record not found after YOLO processing"
-    index_face_embeddings(collection, new_record)
+        ImageRecord.update_one(
+            filter={"device": device_id, "image_path": relative_path},
+            data={
+                "$set": {
+                    "objects": [obj.model_dump() for obj in objects],
+                    "people": [person.model_dump() for person in people],
+                    "processed.yolo": True,
+                }
+            },
+        )
+
+        if collection:
+            new_record = ImageRecord.find_one(
+                {"device": device_id, "image_path": relative_path}
+            )
+            assert new_record, "New record not found after YOLO processing"
+            index_face_embeddings(collection, new_record)
 
 
-def create_thumbnail(device_id: str, relative_path: str):
+def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
         f"{DIR}/{device_id}/{relative_path}"
     )
@@ -128,6 +143,7 @@ def create_thumbnail(device_id: str, relative_path: str):
             thumbnail_path,
             boxes,
             whitelist_boxes,
+            skip_sam3=skip_sam3
         )
 
     ImageRecord.update_one(
@@ -176,7 +192,7 @@ def process_image(
     assert collection, "Collection must be provided for processing images"
     try:
         index_to_mongo(device_id, relative_path)
-        yolo_process_image(device_id, relative_path, face_collection)
+        yolo_process_images(device_id, [relative_path], face_collection)
         create_thumbnail(device_id, relative_path)
         encode_image(device_id, relative_path, collection)
     except FileNotFoundError as e:

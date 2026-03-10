@@ -21,6 +21,7 @@ type ImageObject = {
     activityConfidence?: number;
     activityDescription?: string;
     segmentId?: string;
+    new?: boolean;
 };
 
 type SummarySegment = {

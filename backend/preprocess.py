@@ -19,7 +19,6 @@ from visual import clip_model
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
-
 def load_features(app: CustomFastAPI) -> AppFeatures:
     feature_dir = "features"
     app_features = AppFeatures()

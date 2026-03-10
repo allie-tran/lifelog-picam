@@ -132,45 +132,46 @@ ALL_PRIVATE_LABELS = [
 ]
 
 
-def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=80):
+def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=80, skip_sam3=False):
     # Process results
     img = cv2.imread(image_path)
     assert img is not None, f"Failed to read image {image_path}"
     full_mask = create_blur_mask(boxes, img.shape[0], img.shape[1])
-    try:
-        sam3.set_image(image_path)
-        batch_size = 4
-        # Query with multiple text prompts
-        with torch.no_grad():  # Disable gradients for inference
-            for i in range(0, len(ALL_PRIVATE_LABELS), batch_size):
-                batch_labels = ALL_PRIVATE_LABELS[i : i + batch_size]
-                results = sam3(
-                    text=batch_labels,
-                    stream=True,
-                )
+    if not skip_sam3:
+        try:
+            sam3.set_image(image_path)
+            batch_size = 4
+            # Query with multiple text prompts
+            with torch.no_grad():  # Disable gradients for inference
+                for i in range(0, len(ALL_PRIVATE_LABELS), batch_size):
+                    batch_labels = ALL_PRIVATE_LABELS[i : i + batch_size]
+                    results = sam3(
+                        text=batch_labels,
+                        stream=True,
+                    )
 
-                for result in results:
-                    result = result.cpu()  # Move to CPU for processing
-                    if result.masks is not None:
-                        mask = result.masks.data.any(dim=0).numpy().astype(bool)
-                        # check if the mask has too much overlapping with the whitelist areas, if so, skip it
-                        to_blur = True
-                        for bbox in whitelist_boxes:
-                            if mask[bbox[1] : bbox[3], bbox[0] : bbox[2]].any():
-                                overlap_area = np.sum(
-                                    mask[bbox[1] : bbox[3], bbox[0] : bbox[2]]
-                                )
-                                bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-                                if overlap_area / bbox_area > 0.8:
-                                    to_blur = False
-                                    break
-                        if to_blur:
-                            full_mask |= mask  # Combine masks using logical OR
-                        del mask
-        sam3.reset_image()
+                    for result in results:
+                        result = result.cpu()  # Move to CPU for processing
+                        if result.masks is not None:
+                            mask = result.masks.data.any(dim=0).numpy().astype(bool)
+                            # check if the mask has too much overlapping with the whitelist areas, if so, skip it
+                            to_blur = True
+                            for bbox in whitelist_boxes:
+                                if mask[bbox[1] : bbox[3], bbox[0] : bbox[2]].any():
+                                    overlap_area = np.sum(
+                                        mask[bbox[1] : bbox[3], bbox[0] : bbox[2]]
+                                    )
+                                    bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                                    if overlap_area / bbox_area > 0.8:
+                                        to_blur = False
+                                        break
+                            if to_blur:
+                                full_mask |= mask  # Combine masks using logical OR
+                            del mask
+            sam3.reset_image()
 
-    except torch.cuda.OutOfMemoryError:
-        print(f"CUDA Out of Memory while processing {image_path}. Skipping.")
+        except torch.cuda.OutOfMemoryError:
+            print(f"CUDA Out of Memory while processing {image_path}. Skipping.")
 
     # Apply mosaic blur to the original image using the combined mask
     anonymised_image = blur_image_mosaic(img, full_mask)
@@ -190,7 +191,6 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     img = Image.fromarray(anonymised_image)
     img.thumbnail((1080, 1080))
     img.save(thumbnail_path, "WEBP", quality=quality)
-
 
 
 # Create a FastSAM model

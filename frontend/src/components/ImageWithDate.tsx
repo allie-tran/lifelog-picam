@@ -91,6 +91,7 @@ const ImageWithDate = ({
                     Not processed
                 </Box>
             )}
+            {image.new && <Typography variant="caption" sx={{ position: 'absolute', top: 8, right: 8, color: 'white', backgroundColor: 'red', px: 0.5, borderRadius: '4px' }}>New</Typography>}
             <VideocamRounded
                 sx={{
                     position: 'absolute',

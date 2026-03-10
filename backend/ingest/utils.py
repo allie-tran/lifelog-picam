@@ -2,9 +2,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-import requests
-from constants import LOCAL_PORT
 from sessions.redis import RedisClient
+
 
 redis_client = RedisClient()
 
@@ -58,13 +57,13 @@ def process_zip_job(job_id: str, UPLOAD_DIR: Path):
         job["progress"] = 0.0
         redis_client.set_json(f"processing_job:{job_id}", job)
 
-    # Delete the zip file to save space
-    if zip_path.exists():
-        zip_path.unlink()
+    # # Delete the zip file to save space
+    # if zip_path.exists():
+    #     zip_path.unlink()
 
-    # Cleanup parts
-    if zip_path.with_suffix(".part").exists():
-        zip_path.with_suffix(".part").unlink()
+    # # Cleanup parts
+    # if zip_path.with_suffix(".part").exists():
+    #     zip_path.with_suffix(".part").unlink()
 
 
 def process_file(
@@ -78,6 +77,12 @@ def process_file(
 
         # Keep original filename
         filename = Path(member).name
+
+        # Check extension
+        if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".mp4")):
+            return None
+
+        filename = filename.replace("._", "") # Remove MacOS hidden file prefix if present
 
         # Parse timestamp from filename (without extension)
         stem = Path(filename).stem

@@ -23,17 +23,16 @@ face_app = FaceAnalysis(
 face_app.prepare(ctx_id=0)
 
 
-def extract_object_from_image(image_path, whitelist: list[Person] = []):
-    frame = cv2.imread(image_path)
-    if frame is None:
-        return [], []
-    results = detect_model(frame, verbose=False)  # Adjust confidence and iou as needed
+def extract_object_from_images(image_paths, whitelist: list[Person] = []):
+    final_results = []
+    results = detect_model(image_paths, verbose=False)  # Adjust confidence and iou as needed
 
-    objects = []
-    people = []
-    for r in results:
+    for i, r in enumerate(results):
+        objects = []
+        people = []
+        frame = r.orig_img
+
         boxes = r.boxes
-
         for box in boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
 
@@ -89,11 +88,17 @@ def extract_object_from_image(image_path, whitelist: list[Person] = []):
                                 embedding=face.embedding,
                             )
                         )
-    return objects, people
+        final_results.append(
+            {
+                "image_path": image_paths[i],
+                "objects": objects,
+                "people": people,
+            }
+        )
+    return final_results
 
 
 PERSON_CONF_THRESHOLD = 0.5
-
 
 def get_face_data_from_person_crop(person_crop):
     """
