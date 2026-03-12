@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import cv2
 import os
 from typing import Optional
@@ -71,7 +71,7 @@ def index_to_mongo(device_id: str, relative_path: str, skip_segmentation: bool =
         device=device_id,
         image_path=relative_path,
         thumbnail=relative_path.replace(".jpg", ".webp"),
-        timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+        timestamp=timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000,  # Convert to milliseconds
         is_video=False,
         objects=[],
         people=[],

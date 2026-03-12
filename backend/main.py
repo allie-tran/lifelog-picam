@@ -4,7 +4,7 @@ import cv2
 import os
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, List
 
 from pymongo import MongoClient
@@ -719,7 +719,7 @@ def delete_image(
         original = image_path
 
     print(f"Deleting image: {original}")
-    timestamp_now = datetime.now().timestamp() * 1000
+    timestamp_now = datetime.now(timezone.utc).timestamp() * 1000
     ImageRecord.update_many(
         {"image_path": original, "device": device},
         {"$set": {"deleted": True, "delete_time": timestamp_now}},
@@ -748,10 +748,10 @@ def delete_images(
             original = image_path
 
         print(f"Deleting image: {original}")
-        timestamp_now = datetime.now().timestamp() * 1000
+        now = datetime.now(timezone.utc).timestamp() * 1000
         ImageRecord.update_many(
             {"image_path": original, "device": device},
-            {"$set": {"deleted": True, "delete_time": timestamp_now}},
+            {"$set": {"deleted": True, "delete_time": now}},
         )
 
 
@@ -771,7 +771,7 @@ def get_deleted_images(
     deleted_list = list(deleted_list)
     print(f"Found {len(deleted_list)} deleted images.")
 
-    now = datetime.now().timestamp() * 1000
+    now = datetime.now().replace(tzinfo=timezone.utc).timestamp() * 1000
     threshold = now - 30 * 24 * 60 * 60 * 1000  # 30 days ago
 
     final_list = []

@@ -3,7 +3,7 @@ from constants import DIR, THUMBNAIL_DIR
 from database.types import ImageRecord
 from database.vector_database import delete_embedding
 import zvec
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def remove_physical_image(device_id: str, image_path: str, collection: zvec.Collection):
@@ -42,7 +42,7 @@ def mark_error(device_id: str, date: str, image_path: str, timestamp: float):
                 "device": device_id,
                 "image_path": image_path,
                 "deleted": True,
-                "delete_time": datetime.now().timestamp(),
+                "delete_time": datetime.now().replace(tzinfo=timezone.utc).timestamp() * 1000,
                 "timestamp": timestamp,
                 "isVideo": False,
                 "thumbnail": "",

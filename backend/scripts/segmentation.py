@@ -1,5 +1,5 @@
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import numpy as np
@@ -261,7 +261,7 @@ def load_all_segments(
         print("No new images to segment. Exiting.")
         return
 
-    now = datetime.now().timestamp() * 1000
+    now = datetime.now(timezone.utc).timestamp() * 1000
     last_image_time = new_records[-1].timestamp
 
     if len(paths) < 20 and now - last_image_time < 15 * 60 * 1000:
