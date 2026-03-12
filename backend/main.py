@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, List
 
+from pymongo import MongoClient
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
@@ -27,13 +28,13 @@ from constants import DIR, LOCAL_PORT, SEARCH_MODEL, THUMBNAIL_DIR
 from database import init_db
 from database.types import DaySummaryRecord, ImageRecord
 from dependencies import CamelCaseModel
+from tasks import describe_segment_task
 from ingest import app as ingest_app
 from pipelines.all import process_video, process_image
 from pipelines.delete import mark_error, remove_physical_image
 from pipelines.hourly import update_app
 from preprocess import get_similar_images, load_features, retrieve_image, save_features
 from scripts.anonymise import segment_image_with_sam
-from scripts.describe_segments import describe_segment
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
@@ -873,7 +874,7 @@ def process_segments(date: str, device: str):
         if segment_id is None:
             continue
 
-        new_description = describe_segment(
+        new_description = describe_segment_task.delay(
             device,
             date,
             [
@@ -1083,7 +1084,7 @@ async def change_segment_activity(
     )
     all_summaries = list(all_summaries)[-10:]  # last 10 summaries
     all_summaries = [s.summary for s in all_summaries]
-    new_description = describe_segment(
+    new_description = describe_segment_task.delay(
         device,
         request.date,
         [

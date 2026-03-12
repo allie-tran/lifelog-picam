@@ -9,8 +9,7 @@ from database.types import DaySummaryRecord, ImageRecord
 from database.vector_database import fetch_embeddings
 from sessions.redis import RedisClient
 from tqdm.auto import tqdm
-
-from scripts.describe_segments import describe_segment
+from tasks import describe_segment_task
 from scripts.utils import compress_image
 
 redis_client = RedisClient()
@@ -297,11 +296,11 @@ def load_all_segments(
 
         if device_id == "allie":
             try:
-                describe_segment(
+                describe_segment_task.delay(
                     device_id,
                     date,
                     [compress_image(f"{device_id}/{i}") for i in segment],
-                    segment_idx=segment_id,
+                    segment_id,
                 )
                 DaySummaryRecord.update_one(
                     {"date": date, "device": device_id},

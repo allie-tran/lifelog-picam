@@ -3,14 +3,15 @@ import random
 import time
 import traceback
 
+from celery.utils.log import get_task_logger
 from constants import CATEGORIES, THUMBNAIL_DIR
-from database.types import ImageRecord
 from google.genai.errors import ClientError, ServerError
 from llm import MixedContent, get_visual_content, llm
 from partialjson.json_parser import JSONParser
 from PIL import Image
-from rich import print as rprint
 
+
+logger = get_task_logger(__name__)
 parser = JSONParser()
 
 
@@ -26,18 +27,15 @@ def get_description_from_frames(
     )
     description = str(description)
     description_text = description.strip()
-    print("LLM Response:")
-    print(description_text)
+    logger.info(f"LLM Response:\n{description_text}")
 
     try:
-        # Try to parse the object
         obj = description_text.split("```json")[-1].strip()
         obj = obj.split("```")[0].strip()
-
         return parser.parse(obj)
     except Exception:
-        rprint("Failed to parse JSON from LLM response. Returning raw text.")
-        traceback.print_exc()
+        logger.warning("Failed to parse JSON from LLM response. Returning raw text.")
+        logger.debug(traceback.format_exc())
 
 
 def get_rewritten_description(description, instructions: list[str] = []):
@@ -46,7 +44,6 @@ def get_rewritten_description(description, instructions: list[str] = []):
         rewritten_response: str = llm.generate_from_text(prompt)  # type: ignore
         return rewritten_response.strip()
     else:
-        # If no instructions are provided, just return the description
         return description
 
 
@@ -68,21 +65,23 @@ Return with the following format:
 
 
 def describe_segment(
+    mongo_collection,
     device: str,
     date: str,
     segment: list[str],
-    segment_idx: int,
+    segment_id: int,
     extra_info: list[str] = [],
 ):
+    logger.info(
+        f"[{device}/{date}] Describing segment {segment_id} ({len(segment)} images)"
+    )
+
     image_bytes = []
     if len(segment) > 20:
         segment = [segment[i] for i in sorted(random.sample(range(len(segment)), 20))]
+        logger.debug(f"Segment {segment_id}: downsampled to 20 images")
 
-    final_category = "Unclear"
     for image_path in segment:
-        # Read webp then convert to jpeg and send bytes
-        # img = open(f"{DIR}/{image_path}", "rb").read()
-        # image_bytes.append(img)
         if THUMBNAIL_DIR not in image_path:
             image_path = f"{THUMBNAIL_DIR}/{device}/{image_path}"
         try:
@@ -91,19 +90,28 @@ def describe_segment(
             image.save(buf, format="JPEG")
             image_bytes.append(buf.getvalue())
         except Exception as e:
-            rprint(f"Failed to process image {image_path}. Skipping. Error: {e}")
-            traceback.print_exc()
+            logger.warning(
+                f"Segment {segment_id}: failed to load image {image_path}: {e}"
+            )
+            logger.debug(traceback.format_exc())
 
+    if not image_bytes:
+        logger.error(f"Segment {segment_id}: no valid images, skipping.")
+        return ""
+
+    final_category = "Unclear"
     category = "Unclear"
     description = ""
     confidence = "Low"
     tries = 0
+
     while True:
         if tries >= 5:
-            rprint("Max retries reached. Skipping segment.")
+            logger.error(f"Segment {segment_id}: max retries reached, skipping.")
             break
         try:
             tries += 1
+            logger.debug(f"Segment {segment_id}: LLM attempt {tries}")
             parsed_obj = get_description_from_frames(
                 [
                     PROMPT.format(
@@ -118,27 +126,37 @@ def describe_segment(
                 category = parsed_obj.get("category", "Unclear")
                 description = parsed_obj.get("description", "")
                 confidence = parsed_obj.get("confidence", "Low")
+                logger.info(
+                    f"Segment {segment_id}: category={category}, confidence={confidence}"
+                )
+            else:
+                logger.warning(f"Segment {segment_id}: LLM returned no parsed object")
             break
+
         except KeyboardInterrupt as e:
             raise e
         except ClientError as e:
+            delay = 10
             for detail in e.details["error"]["details"]:
                 if "retryDelay" in detail:
-                    rprint(f"Retry after: {detail['retryDelay']}")
-                    delay = detail["retryDelay"]
-                    delay = int(delay.replace("s", "")) + 10
-                    time.sleep(delay)
-        except ServerError:
+                    delay = int(detail["retryDelay"].replace("s", "")) + 10
+            logger.warning(
+                f"Segment {segment_id}: ClientError, retrying in {delay}s: {e}"
+            )
+            time.sleep(delay)
+        except ServerError as e:
+            logger.warning(f"Segment {segment_id}: ServerError, retrying in 10s: {e}")
             time.sleep(10)
 
     possible_categories = [c for c in CATEGORIES if c.lower() in str(category).lower()]
     if possible_categories:
         final_category = possible_categories[0]
 
-    print(f"Segment {segment_idx}: {final_category}")
-    ImageRecord.update_many(
-        filter={"segment_id": segment_idx, "device": device, "date": date},
-        data={
+    logger.info(f"Segment {segment_id}: final category={final_category}")
+
+    mongo_collection.update_one(
+        {"segment_id": segment_id, "device": device, "date": date},
+        {
             "$set": {
                 "activity": final_category,
                 "activity_description": description,
