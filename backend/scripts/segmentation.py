@@ -282,7 +282,7 @@ def load_all_segments(
     tracked_files_set = set(tracked_files)
 
     for i, segment in tqdm(
-        enumerate(segments), desc="Updating segments", total=len(segments)
+        enumerate(segments), desc=f"Processing segments for {device_id} on {date}", total=len(segments)
     ):
         segment_id = max_id + i
         ImageRecord.update_many(

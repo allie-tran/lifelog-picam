@@ -123,6 +123,11 @@ class ProcessedInfo(BaseModel):
     encoded: bool = False
     sam3: bool = False
 
+class GPSInfo(BaseModel):
+    timestamp: float
+    latitude: float
+    longitude: float
+    elevation: Optional[float] = None
 
 class LifelogImage(CamelCaseModel):
     device: str
@@ -143,6 +148,8 @@ class LifelogImage(CamelCaseModel):
     activity: str = ""
     activity_description: str = ""
     activity_confidence: str = ""
+
+    gps: Optional[GPSInfo] = None
 
     processed: ProcessedInfo = ProcessedInfo()
     new: bool = True

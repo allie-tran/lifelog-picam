@@ -12,6 +12,13 @@ declare module '@mui/material/styles' {
     }
 }
 
+export type GPSData = {
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+    elevation: number;
+};
+
 type ImageObject = {
     imagePath: string;
     thumbnail: string;

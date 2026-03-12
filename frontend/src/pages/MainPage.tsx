@@ -21,6 +21,8 @@ import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
 import DeleteRange from 'components/DeleteRange';
 import dayjs from 'dayjs';
+import { GPSData } from '@utils/types';
+import GpsTrack from 'components/GpsTrack';
 
 function MainPage() {
     const navigate = useNavigate();
@@ -59,6 +61,7 @@ function MainPage() {
                     available_hours: [],
                     date: date || '',
                     total_pages: 1,
+                    gps: [] as GPSData[],
                 };
             }
         },
@@ -80,6 +83,7 @@ function MainPage() {
 
     const images = data?.images;
     const segments = data?.segments || [];
+    const gpsTrack = data?.gps || [];
     const availableHours = data?.available_hours || [];
 
     useEffect(() => {
@@ -161,6 +165,7 @@ function MainPage() {
                     ))}
                 </Stack>
                 <DeleteRange onDelete={() => mutate()} date={date || dayjs().format('YYYY-MM-DD')}/>
+                <GpsTrack gpsTrack={gpsTrack} />
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&
@@ -200,5 +205,6 @@ function MainPage() {
         </>
     );
 }
+
 
 export default MainPage;

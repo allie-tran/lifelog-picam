@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 
 from app_types import CustomFastAPI
 from constants import SEARCH_MODEL
@@ -27,9 +28,13 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
 
     # Segment images excluding deleted and low visual density images
     today = datetime.now().strftime("%Y-%m-%d")
-    days = [today, "2025-11-21"]
-    for day in days:
-        for device_id in app.features.keys():
+    for device_id in app.features.keys():
+        days = ImageRecord.aggregate(
+            [{"$match": {"device": device_id, "deleted": False}},
+             {"$group": {"_id": "$date"}}]
+        )
+        days = [d.id for d in days]
+        for day in days:
             load_all_segments(
                 device_id,
                 day,
@@ -50,20 +55,20 @@ def update_app(app: CustomFastAPI, job_id: str | None = None):
     if collection:
         delete_old_faces(collection, an_hour_ago.timestamp() * 1000)
 
-    # for device_id in app.features.keys():
-    #     # Let's do day-based
-    #     for date in os.listdir(os.path.join(DIR, device_id)):
-    #         load_all_segments(
-    #             device_id,
-    #             date,
-    #             app.features,
-    #             set(
-    #                 ImageRecord.find(
-    #                     filter={"deleted": True, "device": device_id, "date": date},
-    #                     distinct="image_path",
-    #                 )
-    #             ),
-    #             job_id=job_id,
-    #         )
+    for device_id in app.features.keys():
+        # Let's do day-based
+        for date in os.listdir(os.path.join(DIR, device_id)):
+            load_all_segments(
+                device_id,
+                date,
+                app.features,
+                set(
+                    ImageRecord.find(
+                        filter={"deleted": True, "device": device_id, "date": date},
+                        distinct="image_path",
+                    )
+                ),
+                job_id=job_id,
+            )
     app.last_saved = datetime.now()
     return app

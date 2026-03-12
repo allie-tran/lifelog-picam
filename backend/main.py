@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, List
 
-from pymongo import MongoClient
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
@@ -16,7 +15,6 @@ from fastapi.params import Body
 from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from redis import asyncio as aioredis
 from tqdm.auto import tqdm
 
 from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, LifelogImage
@@ -473,6 +471,20 @@ async def get_images_by_hour(
             data={"$set": {"new": False}},
         )
 
+    # Get gps lines
+    gps = []
+    new_segments = []
+    for segment in segments:
+        new_segments.append(
+            [
+                ImageRecord(**image.dict()).model_dump(
+                    exclude={"_id", "id"}, by_alias=True
+                )
+                for image in segment.images
+            ]
+        )
+        gps.extend([image["gps"] for image in new_segments[-1] if image.get("gps") is not None])
+
     return {
         "date": date,
         "hour": hour,
@@ -487,6 +499,7 @@ async def get_images_by_hour(
         ],
         "available_hours": sorted(all_hours, reverse=True),
         "total_pages": total_page,
+        "gps": gps
     }
 
 @app.post("/get-day-playback")
@@ -515,7 +528,7 @@ def get_day_playback(
 
     # 3. Define the codec and create VideoWriter object
     # 'VP80' is the standard fourcc for WebM
-    fourcc = cv2.VideoWriter_fourcc(*'VP80') 
+    fourcc = cv2.VideoWriter_fourcc(*'VP80')
     buffer = f"{DIR}/{device}/{date}/playback.webm"
     video = cv2.VideoWriter(buffer, fourcc, 1, (width, height))  # 1 fps
 
@@ -1224,5 +1237,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=LOCAL_PORT,
-        reload=False
+        reload=True
     )
