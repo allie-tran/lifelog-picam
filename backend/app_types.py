@@ -133,6 +133,7 @@ class LifelogImage(CamelCaseModel):
     device: str
     image_path: str  # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
     timestamp: float  # ISO 8601 format
+    seconds_from_midnight: int = Field(default=0, ge=0, lt=24*3600)  # Number of seconds since midnight
     thumbnail: str
     is_video: bool
 

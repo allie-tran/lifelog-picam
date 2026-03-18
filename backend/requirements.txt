@@ -30,3 +30,8 @@ deepface
 tf-keras
 timm
 PyNaCl
+nltk
+parsedatetime
+dateparser
+holidays
+pytimeparse

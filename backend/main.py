@@ -502,55 +502,6 @@ async def get_images_by_hour(
         "gps": gps
     }
 
-@app.post("/get-day-playback")
-def get_day_playback(
-    date: str,
-    device: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
-):
-    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
-        print("Access level:", access_level)
-        raise HTTPException(status_code=403, detail="Not authorized to access images.")
-
-    images = ImageRecord.find(
-        filter={"date": date, "deleted": False, "device": device},
-        sort=[("timestamp", 1)],
-    )
-
-    images = list(images)
-    if not images:
-        raise HTTPException(status_code=404, detail="No images found for the specified date.")
-
-    # create a webm
-    # 2. Read first image to get dimensions
-    frame = cv2.imread(os.path.join(THUMBNAIL_DIR, images[0].thumbnail))
-    height, width, layers = frame.shape
-
-    # 3. Define the codec and create VideoWriter object
-    # 'VP80' is the standard fourcc for WebM
-    fourcc = cv2.VideoWriter_fourcc(*'VP80')
-    buffer = f"{DIR}/{device}/{date}/playback.webm"
-    video = cv2.VideoWriter(buffer, fourcc, 1, (width, height))  # 1 fps
-
-    # 4. Write frames
-    for image in images:
-        img_path = os.path.join(THUMBNAIL_DIR, image.thumbnail)
-        frame = cv2.imread(img_path)
-        frame = cv2.resize(frame, (width, height))
-        video.write(frame)
-
-    # 5. Release everything
-    video.release()
-
-
-    # Return the video as base64
-    with open(buffer, "rb") as f:
-        video_bytes = f.read()
-    base64_video = base64.b64encode(video_bytes).decode("utf-8")
-    os.remove(buffer)
-    return f"data:video/webm;base64, {base64_video}"
-
-
 @app.post("/get-images-by-range", response_model=List[LifelogImage])
 def get_images_by_range(
     request: RangeRequest,
@@ -579,6 +530,22 @@ def get_images_by_range(
         data={"$set": {"new": False}},
     )
     return [LifelogImage.model_validate(image) for image in images]
+
+@app.get("/get-gps-by-date")
+def get_gps_by_date(
+    date: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    if access_level != AccessLevel.OWNER and access_level != AccessLevel.ADMIN:
+        print("Access level:", access_level)
+        raise HTTPException(status_code=403, detail="Not authorized to access images.")
+
+    gps_data = ImageRecord.find(
+        filter={"date": date, "deleted": False, "gps": {"$ne": None}, "device": device},
+        sort=[("timestamp", -1)],
+    )
+    return [image.gps for image in gps_data if image.gps is not None]
 
 
 @app.get("/get-all-dates")

@@ -1,65 +1,11 @@
-# from celery_app import celery
-# from pipelines.all import process_video, process_image
-# from pipelines.hourly import update_app
-# import zvec
-# from pymongo import MongoClient
-# from scripts.describe_segments import describe_segment
-
-
-# @celery.task(name="tasks.process_image_task")
-# def process_image_task(
-#     device, date, file_name, conclip_collection_name, face_collection_name
-# ):
-#     """
-#     Note: we pass collection *names* (strings) instead of collection objects
-#     because Celery tasks must be JSON-serializable.
-#     The task re-creates the DB connections in the worker process.
-#     """
-#     client = MongoClient("mongodb://localhost:27017/")
-#     mongo_collection = client["picam"]["images"]
-#     clip_collection = zvec.open(conclip_collection_name)
-#     face_collection = zvec.open(face_collection_name)
-#     process_image(
-#         device, date, file_name, mongo_collection, clip_collection, face_collection
-#     )
-#     print(f"Finished processing image: {file_name}")
-
-
-# @celery.task(name="tasks.process_video_task")
-# def process_video_task(
-#     device, date, file_name, conclip_collection_name, face_collection_name
-# ):
-#     client = MongoClient("mongodb://localhost:27017/")
-#     mongo_collection = client["picam"]["images"]
-#     clip_collection = zvec.open(conclip_collection_name)
-#     face_collection = zvec.open(face_collection_name)
-#     process_video(
-#         device, date, file_name, mongo_collection, clip_collection, face_collection
-#     )
-
-
-# @celery.task(name="tasks.update_app_task")
-# def update_app_task(
-#     clip_collection_paths: dict[str, str],
-#     face_collection_paths: dict[str, str],
-#     to_sync: bool = False,
-#     job_id=None,
-# ):
-#     print("Updating app with new data...")
-#     client = MongoClient("mongodb://localhost:27017/")
-#     update_app(
-#         client,
-#         devices=list(clip_collection_paths.keys()),
-#         clip_collection_paths=clip_collection_paths,
-#         face_collection_paths=face_collection_paths,
-#         to_sync=to_sync,
-#         job_id=job_id,
-#     )
-
+from auth.types import Person
 from celery_app import celery
+from scripts.anonymise import anonymise_image
 from scripts.describe_segments import describe_segment
 from pymongo import MongoClient
 import logging
+
+from scripts.object_detection import extract_object_from_images
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.info("Starting Celery worker for describe_segment_task...")
@@ -89,3 +35,59 @@ def describe_segment_task(
         )
     except Exception as e:
         logging.error(f"Error describing segment {segment_id} for {device} on {date}: {e}")
+
+@celery.task(name="tasks.yolo_process_images_task")
+def yolo_process_images_task(
+    device,
+    paths,
+    whitelist_names: list[str] = [],
+    whitelist_embeddings: list[list[list[float]]] = [],
+):
+    mongo_client = MongoClient("mongodb://localhost:27017/")
+    collection = mongo_client["picam"]["images"]
+    whitelist = [Person(name=name, embeddings=embedding, cropped=[""]) for name, embedding in zip(whitelist_names, whitelist_embeddings)]
+    results = extract_object_from_images(
+        paths, whitelist
+    )
+
+    for r in results:
+        image_path = r["image_path"]
+        objects = r["objects"]
+        people = r["people"]
+        relative_path = image_path.split(f"{device}/")[1]
+
+        collection.update_one(
+            {"device": device, "image_path": relative_path},
+            {
+                "$set": {
+                    "objects": [obj.model_dump() for obj in objects],
+                    "people": [person.model_dump() for person in people],
+                    "processed.yolo": True,
+                    "processed.insightface": True,
+                    "processed.deepface": False,
+                }
+            },
+        )
+
+        # if face_collection:
+        #     new_record = ImageRecord.find_one(
+        #         {"device": device_id, "image_path": relative_path}
+        #     )
+        #     assert new_record, "New record not found after YOLO processing"
+        #     index_face_embeddings(collection, new_record)
+
+@celery.task(name="tasks.anonymise_image_task")
+def anonymise_image_task(
+    path,
+    thumbnail_path,
+    boxes,
+    whitelist_boxes,
+    skip_sam3=False
+):
+    anonymise_image(
+        path,
+        thumbnail_path,
+        boxes,
+        whitelist_boxes,
+        skip_sam3=skip_sam3
+    )

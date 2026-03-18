@@ -23,6 +23,7 @@ import DeleteRange from 'components/DeleteRange';
 import dayjs from 'dayjs';
 import { GPSData } from '@utils/types';
 import GpsTrack from 'components/GpsTrack';
+import { getGPSByDate } from 'apis/process';
 
 function MainPage() {
     const navigate = useNavigate();
@@ -81,9 +82,29 @@ function MainPage() {
         }
     );
 
+    const { data: gpsTrack } = useSWR(
+        ['gps-track', deviceId, date],
+        async () => {
+            if (
+                deviceAccess === AccessLevel.ADMIN ||
+                deviceAccess === AccessLevel.OWNER
+            ) {
+                const data = await getGPSByDate(
+                    deviceId,
+                    date || '',
+                );
+                return data
+            } else {
+                return [] as GPSData[];
+            }
+        },
+        {
+            revalidateOnFocus: false,
+        }
+    );
+
     const images = data?.images;
     const segments = data?.segments || [];
-    const gpsTrack = data?.gps || [];
     const availableHours = data?.available_hours || [];
 
     useEffect(() => {
@@ -165,7 +186,7 @@ function MainPage() {
                     ))}
                 </Stack>
                 <DeleteRange onDelete={() => mutate()} date={date || dayjs().format('YYYY-MM-DD')}/>
-                <GpsTrack gpsTrack={gpsTrack} />
+                <GpsTrack gpsTrack={gpsTrack || []} currentTrack={data?.gps || []}/>
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&

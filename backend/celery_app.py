@@ -10,7 +10,11 @@ celery = Celery(
     include=["tasks"],
 )
 
+# remove all pending tasks on startup
+celery.control.purge()
+
 celery.conf.update(
+    worker_pool="solo",
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

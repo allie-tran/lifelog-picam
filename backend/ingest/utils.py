@@ -82,7 +82,8 @@ def process_file(
         if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".mp4")):
             return None
 
-        filename = filename.replace("._", "") # Remove MacOS hidden file prefix if present
+        if filename.startswith(".") or filename.startswith("__MACOSX"):
+            return None
 
         # Parse timestamp from filename (without extension)
         stem = Path(filename).stem

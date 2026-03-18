@@ -15,6 +15,8 @@ from database.vector_database import (
 from scripts.face_recognition import open_face_collection
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
+from query_parse.extract_info import Query
+from rich import print as rprint
 
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
@@ -56,6 +58,9 @@ def retrieve_image(
     normalizing_sum=None,
     remove=np.array([]),
 ):
+    query = Query(text)
+    time_filters, date_filters = query.time_to_filters()
+    print(f"Time filters: {time_filters}, Date filters: {date_filters}")
 
     query_vector = clip_model.encode_text(text, normalize=True)
     query_vector = apply_transformation(query_vector, get_matrix(device_id))

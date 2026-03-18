@@ -6,7 +6,7 @@ from typing import Optional
 import zvec
 from app_types import ProcessedInfo
 from auth.ortho import apply_transformation, get_matrix
-from auth.types import Device
+from auth.types import Device, Person
 from constants import DIR
 from database.types import ImageRecord
 from database.vector_database import insert_embedding
@@ -15,6 +15,7 @@ from scripts.anonymise import anonymise_image
 from scripts.face_recognition import index_face_embeddings
 from scripts.object_detection import extract_object_from_images
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
+from tasks import anonymise_image_task, yolo_process_images_task
 from visual import clip_model
 
 
@@ -80,44 +81,18 @@ def index_to_mongo(device_id: str, relative_path: str, skip_segmentation: bool =
     ).create()
 
 
-def yolo_process_images(device_id: str, relative_paths: list[str], collection: zvec.Collection | None = None):
-    whitelist = []
-    device = Device.find_one({"device_id": device_id})
-    if device:
-        whitelist = device.whitelist
-
+def yolo_process_images(device_id: str, white_list: list[Person], relative_paths: list[str], collection: zvec.Collection | None = None):
     paths = []
     for path in relative_paths:
         image_path = f"{DIR}/{device_id}/{path}"
         paths.append(image_path)
 
-    results = extract_object_from_images(
-        paths, whitelist
+    yolo_process_images_task.delay(
+        device_id,
+        paths,
+        [person.name for person in white_list],
+        [person.embeddings for person in white_list],
     )
-
-    for r in results:
-        image_path = r["image_path"]
-        objects = r["objects"]
-        people = r["people"]
-        relative_path = image_path.split(f"{device_id}/")[1]
-
-        ImageRecord.update_one(
-            filter={"device": device_id, "image_path": relative_path},
-            data={
-                "$set": {
-                    "objects": [obj.model_dump() for obj in objects],
-                    "people": [person.model_dump() for person in people],
-                    "processed.yolo": True,
-                }
-            },
-        )
-
-        if collection:
-            new_record = ImageRecord.find_one(
-                {"device": device_id, "image_path": relative_path}
-            )
-            assert new_record, "New record not found after YOLO processing"
-            index_face_embeddings(collection, new_record)
 
 
 def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
@@ -138,7 +113,7 @@ def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
             boxes.append(person.bbox)
 
     if not thumbnail_exists:
-        anonymise_image(
+        anonymise_image_task.delay(
             f"{DIR}/{device_id}/{relative_path}",
             thumbnail_path,
             boxes,
@@ -156,11 +131,11 @@ def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
         },
     )
 
-
 def encode_image(
     device_id: str,
     image_path: str,
     collection: zvec.Collection,
+    matrix: Optional[list[list[float]]] = None,
 ):
     try:
         path = f"{DIR}/{device_id}/{image_path}"
@@ -172,7 +147,7 @@ def encode_image(
 
         vector = clip_model.encode_image(path)
         vector = vector.flatten()
-        vector = apply_transformation(vector, get_matrix(device_id))
+        vector = apply_transformation(vector, matrix if matrix else get_matrix(device_id))
         insert_embedding(collection, vector, image_path)
     except Exception as e:
         print(e)
@@ -192,7 +167,11 @@ def process_image(
     assert collection, "Collection must be provided for processing images"
     try:
         index_to_mongo(device_id, relative_path)
-        yolo_process_images(device_id, [relative_path], face_collection)
+        white_list = []
+        device = Device.find_one({"device_id": device_id})
+        if device:
+            white_list = device.whitelist
+        yolo_process_images(device_id, white_list, [relative_path], face_collection)
         create_thumbnail(device_id, relative_path)
         encode_image(device_id, relative_path, collection)
     except FileNotFoundError as e:

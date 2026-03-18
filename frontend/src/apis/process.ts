@@ -1,4 +1,4 @@
-import { DaySummary } from '@utils/types';
+import { DaySummary, GPSData } from '@utils/types';
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
 
@@ -25,4 +25,18 @@ export const getDaySummary = async (deviceId: string, dateString: string) => {
         `${BACKEND_URL}/day-summary?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
     );
     return response.data as DaySummary;
+}
+
+export const getDayPlayback = async (deviceId: string, dateString: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-day-playback?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
+    );
+    return response.data;
+}
+
+export const getGPSByDate = async (deviceId: string, dateString: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-gps-by-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
+    );
+    return response.data as GPSData[];
 }

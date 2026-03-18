@@ -16,7 +16,7 @@ import {
     Typography,
 } from '@mui/material';
 import { CustomGoal, DaySummary, SummarySegment } from '@utils/types';
-import { getDaySummary, processDate } from 'apis/process';
+import { getDayPlayback, getDaySummary, processDate } from 'apis/process';
 import { CATEGORIES } from 'constants/activityColors';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -65,6 +65,18 @@ const DaySummaryComponent = () => {
     } = useSWR({ date, deviceId }, () => getDaySummary(deviceId, date || ''), {
         revalidateOnFocus: false,
     });
+
+    // const {
+    //     data: dayPlayback,
+    //     isLoading: playbackLoading,
+    //     error: playbackError,
+    // } = useSWR(
+    //     { date, deviceId, type: 'playback' },
+    //     () => getDayPlayback(deviceId, date || ''),
+    //     {
+    //         revalidateOnFocus: false,
+    //     }
+    // );
 
     const handleProcess = async (reprocess: boolean) => {
         setIsLoading(true);
