@@ -1,0 +1,330 @@
+from nltk import pos_tag
+from nltk.tokenize import WordPunctTokenizer
+import re
+from parsedatetime import Constants
+import dateparser
+from .utils import *
+import holidays
+import pytimeparse
+
+YEARS = [str(y) for y in range(2015, 2025)]
+months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+]
+short_months = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sept",
+    "oct",
+    "nov",
+    "dec",
+]
+
+
+more_timeofday = {
+    "early; morning": ["dawn", "sunrise", "daybreak"],
+    "morning": ["breakfast"],
+    "evening": ["nightfall", "dusk", "dinner", "dinnertime", "sunset", "twilight"],
+    "midday": ["lunchtime", "lunch"],
+    "night": ["nighttime"],
+    "afternoon": ["supper", "suppertime", "teatime"],
+}
+all_in_more_timeofday = [x for y in more_timeofday.values() for x in y]
+
+timeofday = {
+    "early; morning": "5am-10am",
+    "late; morning": "11am-12pm",
+    "morning": "5am-12pm",
+    "early; afternoon": "1pm-3pm",
+    "late; afternoon": "4pm-5pm",
+    "midafternoon": "2pm-3pm",
+    "afternoon": "12pm-5pm",
+    "early; evening": "5pm-7pm",
+    "midevening": "7pm-9pm",
+    "evening": "5pm-9pm",
+    "night": "9pm-4am",
+    "noon": "11am-1pm",
+    "midday": "10am-2pm",
+    "midnight": "11pm-1am",
+    "bedtime": "8pm-1am",
+}
+
+seasons = {
+    "spring": ["march", "april", "may"],
+    "summer": ["june", "july", "august"],
+    "fall": ["september", "october", "november"],
+    "autumn": ["september", "october", "november"],
+    "winter": ["december", "january", "february"],
+}
+
+
+holiday_names = set()
+all_holidays = dict()
+for holiday in holidays.Ireland(years=[int(y) for y in YEARS]).items():
+    all_holidays[f"{holiday[1]}, {holiday[0].year}".lower()] = holiday[0]
+    holiday_names.add(holiday[1])
+
+for t in more_timeofday:
+    for synonym in more_timeofday[t]:
+        timeofday[synonym] = timeofday[t]
+
+
+# Parse period expression
+def parse_period_expression(time_expression):
+    dt = pytimeparse.parse(time_expression)
+    return dt
+
+
+class TimeTagger:
+    def __init__(self):
+        regex_lib = Constants()
+        self.all_regexes = []
+        self.all_regexes.append(
+            ("DATE", r"(?:\bthe )?\b\d{1,2}(?:st|nd|rd|th)? of(?: year)? \d{4}\b")
+        )  # The 3rd of 2019
+        self.all_regexes.append(
+            ("HOLIDAY", r"\b(" + "|".join(holiday_names) + r")\b(?: in)?( \d{4}\b)?")
+        )  # Christmas 2019
+        self.all_regexes.append(
+            ("DATE", r"\b(" + "|".join(months) + r")\b(?: in)?( \d{4}\b)?")
+        )  # August 2019
+        self.all_regexes.append(
+            (
+                "DATE",
+                r"(?:\bthe )?\d{1,2}(?:st|nd|rd|th)?(?: of)? ("
+                + "|".join(months)
+                + r")\b((?: in)?( \d{4}\b)?)?",
+            )
+        )  # 5th Aust 20gu19
+
+        for key, r in regex_lib.cre_source.items():
+            # if key in ["CRE_MODIFIER"]:
+            #     self.all_regexes.append(("TIMEPREP", r))
+            if key in ["CRE_TIMEHMS", "CRE_TIMEHMS2", "CRE_RTIMEHMS", "CRE_RTIMEHMS"]:
+                # TIME (proper time oclock)
+                self.all_regexes.append(("TIME", r))
+            elif key in [
+                "CRE_DATE",
+                "CRE_DATE3",
+                "CRE_DATE4",
+                "CRE_MONTH",
+                "CRE_DAY",
+                "",
+                "CRE_RDATE",
+                "CRE_RDATE2",
+            ]:
+                self.all_regexes.append(("DATE", r))  # DATE (day in a month)
+            elif key in [
+                "CRE_TIMERNG1",
+                "CRE_TIMERNG2",
+                "CRE_TIMERNG3",
+                "CRE_TIMERNG4",
+                "CRE_DATERNG1",
+                "CRE_DATERNG2",
+                "CRE_DATERNG3",
+            ]:
+                self.all_regexes.append(("TIMERANGE", r))  # TIMERANGE
+            elif key in ["CRE_UNITS", "CRE_QUNITS"]:
+                self.all_regexes.append(("PERIOD", r))  # PERIOD
+            elif key in ["CRE_UNITS_ONLY"]:
+                self.all_regexes.append(("TIMEUNIT", r))  # TIMEUNIT
+        for word in [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]:
+            self.all_regexes.append(("WEEKDAY", word))  # WEEKDAY
+        for word in seasons:
+            self.all_regexes.append(("SEASON", word))  # SEASON
+        # Added by myself
+        timeofday_regex = set()
+        for t in timeofday:
+            if ";" in t:
+                t = t.split("; ")[-1]
+            timeofday_regex.add(t)
+
+        timeofday_regex = "|".join(timeofday_regex)
+        self.all_regexes.append(("TIMEOFDAY", r"\b(" + timeofday_regex + r")\b"))
+        self.all_regexes.append(
+            (
+                "DATEPREP",
+                r"\b((last|first)[ ]day[ ]of|(a|the)[ ]day[ ](before|after))\b",
+            )
+        )
+        self.all_regexes.append(
+            (
+                "TIMEPREP",
+                r"\b(before|after|while|late|early|later[ ]than|earlier[ ]than|sooner[ ]than)\b",
+            )
+        )
+        self.all_regexes.append(("DATE", r"\b(2015|2016|2018|2019|2020)\b"))
+        self.tags = [t for t, r in self.all_regexes]
+
+    def merge_interval(self, intervals):
+        if intervals:
+            intervals.sort(key=lambda interval: interval[0])
+            merged = [intervals[0]]
+            for current in intervals:
+                previous = merged[-1]
+                if current[0] <= previous[1] and current[-1] == previous[-1]:
+                    if current[1] > previous[1]:
+                        previous[1] = current[1]
+                        previous[2] = current[2]
+                else:
+                    merged.append(current)
+            return merged
+        return []
+
+    def find_time(self, sent):
+        results = []
+        for kind, r in self.all_regexes:
+            for t in find_regex(r, sent):
+                results.append([*t, kind])
+        return self.merge_interval(results)
+
+    def tag(self, sent):
+        times = self.find_time(sent)
+        intervals = dict([(time[0], time[1]) for time in times])
+        tag_dict = dict([(time[2], time[3]) for time in times])
+        tokenizer = WordPunctTokenizer()
+        # for a in [time[2] for time in times]:
+        #     tokenizer.add_mwe(a.split())
+
+        # --- FIXED ---
+        original_tokens = tokenizer.tokenize(sent)
+        try:
+            original_tags = pos_tag(original_tokens)
+        except LookupError:
+            nltk.download("averaged_perceptron_tagger_eng")
+            original_tags = pos_tag(original_tokens)
+        # --- END FIXED ---
+
+        tokens = []
+        current = 0
+        for span in tokenizer.span_tokenize(sent):
+            if span[0] < current:
+                continue
+            if span[0] in intervals:
+                tokens.append(f"__{sent[span[0]: intervals[span[0]]]}")
+                current = intervals[span[0]]
+            else:
+                tokens.append(sent[span[0] : span[1]])
+                current = span[1]
+
+        tags = pos_tag(tokens)
+
+        new_tags = []
+        for word, tag in tags:
+            if word[:2] == "__":
+                new_tags.append((word[2:], tag_dict[word[2:]]))
+            else:
+                tag = [t[1] for t in original_tags if t[0] == word][0]  # FIXED
+                new_tags.append((word, tag))
+        return new_tags
+
+
+def get_day_month(date_string):
+    if (date_string) in YEARS:
+        return int(date_string), None, None
+    today = dateparser.parse("today")
+    date = dateparser.parse(date_string, settings={"DATE_ORDER": "DMY"})
+    y, m, d = date.year, date.month, date.day
+
+    date_string = date_string.lower()
+    for ex_year in YEARS:
+        if ex_year in date_string:
+            y = int(ex_year)
+            break
+    if str(y) not in date_string:
+        y = None
+    if y:
+        date_string = date_string.replace(str(y), "")
+    # if m == today.tm_mon and str(num2month[m]) not in date_string and str(m) not in date_string:
+    #     m = None
+    if m == today.month:
+        if (
+            re.search(r"\b0?" + str(m) + r"\b", date_string)
+            or re.search(r"\b" + str(months[m - 1]) + r"\b", date_string)
+            or re.search(r"\b" + str(short_months[m - 1]) + r"\b", date_string)
+        ):
+            pass
+        else:
+            m = None
+    if str(d) not in date_string:
+        d = None
+    return y, m, d
+
+
+def am_pm_to_num(hour):
+    minute = 0
+    if ":" in hour:
+        minute = re.compile(r"\d+(:\d+).*").findall(hour)[0]
+        hour = hour.replace(minute, "")
+        minute = int(minute[1:])
+    if "am" in hour:
+        hour = int(hour.replace("am", ""))
+        if hour == 12:
+            hour = 0
+    elif "pm" in hour:
+        hour = int(hour.replace("pm", "")) + 12
+        if hour == 24:
+            hour = 12
+    else:
+        hour = int(hour)
+    return hour, minute
+
+
+def adjust_start_end(mode, original, hour, minute):
+    if mode == "start":
+        if original[0] == hour:
+            return hour, max(original[1], minute)
+        elif hour > original[0]:
+            return hour, minute
+        else:
+            return original
+    if original[0] == hour:
+        return hour, min(original[1], minute)
+    elif hour < original[0]:
+        return hour, minute
+    else:
+        return original
+
+
+def holiday_text_to_datetime(text):
+    regex = r"\b(" + "|".join(holiday_names) + r")\b(?: in)?( \d{4}\b)?"
+    res = re.findall(regex, text, re.IGNORECASE)
+    if res:
+        holiday_name = res[0][0]
+        year = res[-1][-1]
+
+        false_year = False
+        if year:
+            year = int(year)
+            if f"{holiday_name}, {year}" in all_holidays:
+                datetime = all_holidays[f"{holiday_name}, {year}"]
+                if false_year:
+                    return None, datetime.month, datetime.day
+                else:
+                    return datetime.year, datetime.month, datetime.day
+    return None, None, None
