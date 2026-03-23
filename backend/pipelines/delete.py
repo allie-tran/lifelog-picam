@@ -6,7 +6,9 @@ import zvec
 from datetime import datetime, timezone
 
 
-def remove_physical_image(device_id: str, image_path: str, collection: zvec.Collection):
+def remove_physical_image(
+    device_id: str, image_path: str, collection: zvec.Collection, session
+):
     """Full cleanup"""
     # Physical file
     full_path = os.path.join(DIR, device_id, image_path)
@@ -14,7 +16,7 @@ def remove_physical_image(device_id: str, image_path: str, collection: zvec.Coll
         os.remove(full_path)
 
     # MongoDB
-    ImageRecord.delete_many({"image_path": image_path, "device": device_id})
+    ImageRecord.delete_many(session, image_path=image_path, device=device_id)
 
     # Thumbnail
     thumbnail_path = os.path.join(
@@ -28,7 +30,7 @@ def remove_physical_image(device_id: str, image_path: str, collection: zvec.Coll
     print(f"Deleted {image_path} from physical storage, MongoDB, thumbnail, and ZVec.")
 
 
-def mark_error(device_id: str, date: str, image_path: str, timestamp: float):
+def mark_error(device_id: str, date: str, image_path: str, timestamp: float, session):
     """
     This function adds a MongoDB placeholder entry just to tell the device to not keep sending the same image over and over again. It doesn't do any cleanup.
     """
@@ -36,18 +38,18 @@ def mark_error(device_id: str, date: str, image_path: str, timestamp: float):
         f"Marking {image_path} for device {device_id} as deleted in MongoDB to prevent reprocessing."
     )
     ImageRecord.update_one(
+        session,
         filter={"device": device_id, "image_path": image_path},
-        data={
-            "$set": {
-                "device": device_id,
-                "image_path": image_path,
-                "deleted": True,
-                "delete_time": datetime.now().replace(tzinfo=timezone.utc).timestamp() * 1000,
-                "timestamp": timestamp,
-                "isVideo": False,
-                "thumbnail": "",
-                "date": date,
-            }
+        update={
+            "device": device_id,
+            "image_path": image_path,
+            "deleted": True,
+            "delete_time": datetime.now().replace(tzinfo=timezone.utc).timestamp()
+            * 1000,
+            "timestamp": timestamp,
+            "isVideo": False,
+            "thumbnail": "",
+            "date": date,
         },
         upsert=True,
     )

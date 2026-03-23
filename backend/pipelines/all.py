@@ -72,16 +72,26 @@ def index_to_mongo(device_id: str, relative_path: str, skip_segmentation: bool =
         device=device_id,
         image_path=relative_path,
         thumbnail=relative_path.replace(".jpg", ".webp"),
-        timestamp=timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000,  # Convert to milliseconds
+        timestamp=timestamp.replace(tzinfo=timezone.utc).timestamp()
+        * 1000,  # Convert to milliseconds
         is_video=False,
         objects=[],
         people=[],
         processed=ProcessedInfo(yolo=False, encoded=False, sam3=False),
-        segment_id=None if skip_segmentation else find_segment(device_id, timestamp.timestamp() * 1000),
+        segment_id=(
+            None
+            if skip_segmentation
+            else find_segment(device_id, timestamp.timestamp() * 1000)
+        ),
     ).create()
 
 
-def yolo_process_images(device_id: str, white_list: list[Person], relative_paths: list[str], collection: zvec.Collection | None = None):
+def yolo_process_images(
+    device_id: str,
+    white_list: list[Person],
+    relative_paths: list[str],
+    collection: zvec.Collection | None = None,
+):
     paths = []
     for path in relative_paths:
         image_path = f"{DIR}/{device_id}/{path}"
@@ -118,7 +128,7 @@ def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
             thumbnail_path,
             boxes,
             whitelist_boxes,
-            skip_sam3=skip_sam3
+            skip_sam3=skip_sam3,
         )
 
     ImageRecord.update_one(
@@ -130,6 +140,7 @@ def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
             }
         },
     )
+
 
 def encode_image(
     device_id: str,
@@ -147,7 +158,9 @@ def encode_image(
 
         vector = clip_model.encode_image(path)
         vector = vector.flatten()
-        vector = apply_transformation(vector, matrix if matrix else get_matrix(device_id))
+        vector = apply_transformation(
+            vector, matrix if matrix else get_matrix(device_id)
+        )
         insert_embedding(collection, vector, image_path)
     except Exception as e:
         print(e)
@@ -162,6 +175,7 @@ def process_image(
     file_name: str,
     collection: zvec.Collection,
     face_collection: zvec.Collection,
+    session,
 ):
     relative_path = f"{date}/{file_name}"
     assert collection, "Collection must be provided for processing images"
@@ -178,7 +192,7 @@ def process_image(
         print(
             f"Error processing image {file_name} for device {device_id} on date {date}: {e}"
         )
-        remove_physical_image(device_id, relative_path, collection)
+        remove_physical_image(device_id, relative_path, collection, session)
 
 
 def process_video(

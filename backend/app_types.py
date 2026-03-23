@@ -84,6 +84,7 @@ class DeviceFeatures(DictRootModel[CLIPFeatures]):
 class AppFeatures(DictRootModel[DeviceFeatures]):
     _default_factory: ClassVar[Callable[[], DeviceFeatures]] = DeviceFeatures
 
+
 class CustomFastAPI(FastAPI):
     models: List[str] = ["conclip"]
     features: AppFeatures = AppFeatures.model_validate({})
@@ -123,17 +124,30 @@ class ProcessedInfo(BaseModel):
     encoded: bool = False
     sam3: bool = False
 
+
 class GPSInfo(BaseModel):
     timestamp: float
     latitude: float
     longitude: float
     elevation: Optional[float] = None
 
+
+class LocationInfo(CamelCaseModel):
+    name: str
+    info: str = ""
+    region: list[str]
+    city: list[str]
+    address: str = ""
+    country: str
+
+
 class LifelogImage(CamelCaseModel):
     device: str
     image_path: str  # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
     timestamp: float  # ISO 8601 format
-    seconds_from_midnight: int = Field(default=0, ge=0, lt=24*3600)  # Number of seconds since midnight
+    seconds_from_midnight: int = Field(
+        default=0, ge=0, lt=24 * 3600
+    )  # Number of seconds since midnight
     thumbnail: str
     is_video: bool
 
@@ -144,6 +158,7 @@ class LifelogImage(CamelCaseModel):
     delete_time: Optional[float] = None
 
     date: str
+    hour: str
 
     segment_id: Optional[int] = None
     activity: str = ""
@@ -151,14 +166,8 @@ class LifelogImage(CamelCaseModel):
     activity_confidence: str = ""
 
     gps: Optional[GPSInfo] = None
-
-    processed: ProcessedInfo = ProcessedInfo()
+    location: Optional[LocationInfo] = None
     new: bool = True
-
-    @computed_field
-    @property
-    def hour(self) -> str:
-        return self.image_path.split("_")[1][:2]
 
 
 class SummarySegment(CamelCaseModel):
@@ -170,15 +179,18 @@ class SummarySegment(CamelCaseModel):
     representative_image: LifelogImage | None = None
     representative_images: list[LifelogImage] = []
 
+
 class ActionType(str, Enum):
-    BURST = "burst"   # Frequency: e.g., "drinking water"
-    PERIOD = "period" # Duration/Segments: e.g., "eating"
-    BINARY = "binary" # State: e.g., "social vs alone"
+    BURST = "burst"  # Frequency: e.g., "drinking water"
+    PERIOD = "period"  # Duration/Segments: e.g., "eating"
+    BINARY = "binary"  # State: e.g., "social vs alone"
+
 
 class CustomTarget(NamedTuple):
     name: str
     action_type: ActionType
     query_prompt: str  # The prompt for CLIP/Classifier
+
 
 class DaySummary(CamelCaseModel):
     date: str
@@ -206,4 +218,3 @@ class DaySummary(CamelCaseModel):
     category_minutes: Dict[str, float] = {}
     total_images: int = 0
     total_minutes: float = 0.0
-
