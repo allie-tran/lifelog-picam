@@ -3,8 +3,9 @@ import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import React from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import '../App.css';
+import { useAppSelector } from 'reducers/hooks';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -84,6 +85,7 @@ const CustomDatePicker = ({
     allDates: string[] | undefined;
 }) => {
     const navigate = useNavigate();
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
     const allMonths = React.useMemo(() => {
         if (!allDates) return [];
@@ -110,7 +112,7 @@ const CustomDatePicker = ({
             onChange={(newValue) => {
                 setPage(1);
                 setHour(null);
-                navigate(`/?date=${newValue?.format('YYYY-MM-DD') || ''}`);
+                navigate(`/?device_id=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`);
             }}
             slots={{
                 day: (props) => (

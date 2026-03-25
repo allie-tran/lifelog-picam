@@ -22,7 +22,7 @@ export type GPSData = {
 type ImageObject = {
     imagePath: string;
     thumbnail: string;
-    timestamp: number;
+    timestamp: string;
     isVideo: boolean;
     activity?: string;
     activityConfidence?: number;

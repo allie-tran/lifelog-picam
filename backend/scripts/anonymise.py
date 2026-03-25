@@ -11,19 +11,29 @@ from ultralytics.models import FastSAM
 
 from scripts.utils import to_base64
 
-# Initialize predictor with configuration
-overrides = dict(
-    conf=0.25,
-    task="segment",
-    mode="predict",
-    model="sam3.pt",
-    half=True,  # Use FP16 for faster inference
-    save=False,
-    verbose=False,
-    imgsz=644,  # Set to a multiple of 14 to stop the warning
-)
-sam3 = SAM3SemanticPredictor(overrides=overrides)
 
+class SamWrapper:
+    def __init__(self):
+        self.model = None
+        # Initialize predictor with configuration
+        self.overrides = dict(
+            conf=0.25,
+            task="segment",
+            mode="predict",
+            model="sam3.pt",
+            half=True,  # Use FP16 for faster inference
+            save=False,
+            verbose=False,
+            imgsz=644,  # Set to a multiple of 14 to stop the warning
+        )
+        self.loaded = False
+
+    def load_model(self):
+        if self.model is None:
+            self.model = SAM3SemanticPredictor(overrides=self.overrides)
+            self.loaded = True
+
+sam3 = SamWrapper()
 
 def blur_image_mosaic(image, mask, scale_ratio=0.05):
     """
@@ -139,13 +149,17 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     full_mask = create_blur_mask(boxes, img.shape[0], img.shape[1])
     if not skip_sam3:
         try:
-            sam3.set_image(image_path)
+            if not sam3.loaded:
+                sam3.load_model()
+
+            assert sam3.model is not None, "SAM model failed to load"
+            sam3.model.set_image(image_path)
             batch_size = 4
             # Query with multiple text prompts
             with torch.no_grad():  # Disable gradients for inference
                 for i in range(0, len(ALL_PRIVATE_LABELS), batch_size):
                     batch_labels = ALL_PRIVATE_LABELS[i : i + batch_size]
-                    results = sam3(
+                    results = sam3.model(
                         text=batch_labels,
                         stream=True,
                     )
@@ -168,7 +182,7 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
                             if to_blur:
                                 full_mask |= mask  # Combine masks using logical OR
                             del mask
-            sam3.reset_image()
+            sam3.model.reset_image()
 
         except torch.cuda.OutOfMemoryError:
             print(f"CUDA Out of Memory while processing {image_path}. Skipping.")
@@ -176,12 +190,8 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     # Apply mosaic blur to the original image using the combined mask
     anonymised_image = blur_image_mosaic(img, full_mask)
 
-    if "results" in locals():
-        del results
-
     gc.collect()
     torch.cuda.empty_cache()
-    sam3.reset_image()
 
     os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
     # 4. Resize to max 800x800 while maintaining aspect ratio

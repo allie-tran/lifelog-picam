@@ -1,5 +1,9 @@
 from collections import defaultdict
 import calendar
+
+from sqlalchemy import func, or_
+
+from database.models import Image
 from .utils import *
 from .time import *
 from datetime import datetime, timedelta
@@ -50,8 +54,7 @@ def rreplace(s, old, new, occurrence):
 
 def range_filter(start, end, field, boost=1.0):
     # return {"range": {field: {"gte": start, "lte": end, "boost": boost}}}
-    # use mongodb range query format
-    return {"$and": [{field: {"$gte": start}}, {field: {"$lte": end}}]}
+    return lambda stmt: stmt.where(getattr(Image, field) >= start, getattr(Image, field) <= end)
 
 def parse_tags(query):
     # Split the query into individual words
@@ -364,7 +367,9 @@ class Query:
             # self.time_filters = {
             #     "bool": {"should": self.time_filters, "minimum_should_match": 1}
             # }
-            self.time_filters = {"$or": self.time_filters}
+            self.time_filters = lambda stmt: stmt.where(
+                or_(*[f(stmt) for f in self.time_filters])
+            )
 
             # Date
             # Preprocess the dates: if there is only one year available, add that year to all dates
@@ -396,38 +401,37 @@ class Query:
                     ymd_filter = []
                     # date format in database is yyyy/MM/dd HH:mm:00Z
                     if y and m and d:
-                        date_string = f"{y}-{m:02d}-{d:02d}"
-                        ymd_filter = {"date": {"$regex": f"^{date_string}"}}
+                        ymd_filter = lambda stmt: stmt.where(Image.year == y, Image.month == m, Image.day == d)
                         self.query_visualisation["DATE"].append(f"{d:02d}/{m:02d}/{y}")
                     elif y and m:
-                        date_string = f"{m:02d}/{y}"
-                        ymd_filter = {"date": {"$regex": f"^{y}-{m:02d}"}}  # match any day in that month and year
+                        ymd_filter = lambda stmt: stmt.where(Image.year == y, Image.month == m)
                         self.query_visualisation["DATE"].append(f"{m:02d}/{y}")
                     elif y and d:
-                        date_string = f"{d:02d}/{y}"
-                        ymd_filter = {"date": {"$regex": f"^{y}-.*/{d:02d}"}}  # match any month in that year with that day
+                        ymd_filter = lambda stmt: stmt.where(Image.year == y, Image.day == d)
                         self.query_visualisation["DATE"].append(f"{d:02d}/-/{y}")
                     elif m and d:
-                        date_string = f"{d:02d}/{m:02d}"
-                        ymd_filter = {"date": {"$regex": f"^\\d{{4}}-{m:02d}-{d:02d}"}}  # match any year with that month and day
+                        ymd_filter = lambda stmt: stmt.where(Image.month == m, Image.day == d)
                         self.query_visualisation["DATE"].append(f"{d:02d}/{m:02d}")
                     elif y:
-                        ymd_filter = {"date": {"$regex": f"^{y}"}}  # match any month and day in that year
+                        ymd_filter = lambda stmt: stmt.where(Image.year == y)
                         self.query_visualisation["DATE"].append(f"{y}")
                     elif m:
-                        ymd_filter = {"date": {"$regex": f"^\\d{{4}}-{m:02d}"}}  # match any year and day in that month
+                        ymd_filter = lambda stmt: stmt.where(Image.month == m)
                         self.query_visualisation["DATE"].append(
                             months[m - 1].capitalize()
                         )
                     elif d:
-                        ymd_filter = {"date": {"$regex": f"^\\d{{4}}-\\d{{2}}-{d:02d}"}}  # match any year and month with that day
+                        ymd_filter = lambda stmt: stmt.where(Image.day == d)
                         self.query_visualisation["DATE"].append(f"{d:02d}")
 
                     self.date_filters.append(ymd_filter)
                 # combine the date filters using a bool should clause
-                self.date_filters = {
-                    "bool": {"should": self.date_filters, "minimum_should_match": 1}
-                }
+                # self.date_filters = {
+                #     "bool": {"should": self.date_filters, "minimum_should_match": 1}
+                # }
+                self.date_filters = lambda stmt: stmt.where(
+                    or_(*[f(stmt) for f in self.date_filters])
+                )
 
             if (
                 self.start[0] != 0

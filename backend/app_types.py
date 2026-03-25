@@ -144,29 +144,25 @@ class LocationInfo(CamelCaseModel):
 class LifelogImage(CamelCaseModel):
     device: str
     image_path: str  # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
-    timestamp: float  # ISO 8601 format
+    timestamp: datetime
+    local_timestamp: datetime
     seconds_from_midnight: int = Field(
         default=0, ge=0, lt=24 * 3600
-    )  # Number of seconds since midnight
+    )
     thumbnail: str
     is_video: bool
 
-    objects: list[ObjectDetection] = []
-    people: list[ObjectDetection] = []
-
     deleted: bool = False
-    delete_time: Optional[float] = None
+    deleted_time: Optional[datetime] = None
 
     date: str
-    hour: str
+    hour: int
 
     segment_id: Optional[int] = None
-    activity: str = ""
-    activity_description: str = ""
-    activity_confidence: str = ""
+    activity: Optional[str] = None
+    activity_description: Optional[str] = None
+    activity_confidence: Optional[str] = None
 
-    gps: Optional[GPSInfo] = None
-    location: Optional[LocationInfo] = None
     new: bool = True
 
 

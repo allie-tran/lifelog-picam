@@ -2,129 +2,110 @@ import os
 from typing import List
 
 import numpy as np
+from sqlalchemy import and_, select
 
-from app_types import AppFeatures, CLIPFeatures, CustomFastAPI, DeviceFeatures
+
+from app_types import (
+    AppFeatures,
+    CustomFastAPI,
+    LifelogImage,
+)
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
+from database.models import Image, ImageEmbedding
 from database.types import ImageRecord
-from database.vector_database import (
-    open_collection,
-    search_similar_embeddings,
-    search_similar_embeddings_by_id,
-)
-from scripts.face_recognition import open_face_collection
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
 from query_parse.extract_info import Query
-from rich import print as rprint
+from database.types import _orm_to_lifelog
 
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
+
 def load_features(app: CustomFastAPI) -> AppFeatures:
     feature_dir = "features"
     app_features = AppFeatures()
-    for device in os.listdir(feature_dir):
-        device_features = DeviceFeatures()
-        app_features[device] = device_features
+    # for device in os.listdir(feature_dir):
+    #     device_features = DeviceFeatures()
+    #     app_features[device] = device_features
 
-        app_features[device]["conclip"] = CLIPFeatures(
-            collection=open_collection(device, "conclip")
-        )
-        app_features[device]["faces"] = CLIPFeatures(
-            collection=open_face_collection(device)
-        )
+    #     app_features[device]["conclip"] = CLIPFeatures(
+    #         collection=open_collection(device, "conclip")
+    #     )
+    #     app_features[device]["faces"] = CLIPFeatures(
+    #         collection=open_face_collection(device)
+    #     )
 
     app.features = app_features
     return app_features
 
 
 def save_features(app: CustomFastAPI):
-    for device, device_features in app.features.items():
-        for model_name, features in device_features.items():
-            if features.collection:
-                features.collection.flush()
-                features.collection.optimize()
+    pass
+    # for device, device_features in app.features.items():
+    #     for model_name, features in device_features.items():
+    #         if features.collection:
+    #             features.collection.flush()
+    #             features.collection.optimize()
 
 
-def retrieve_image(
-    device_id: str,
-    text: str,
-    features: CLIPFeatures,
-    sort_by,
-    deleted_images: set[str],
-    k=100,
-    retrieved_videos=None,
-    normalizing_sum=None,
-    remove=np.array([]),
-):
+def retrieve_image(session, device_id: str, text: str, sort_by, k):
     query = Query(text)
     time_filters, date_filters = query.time_to_filters()
     print(f"Time filters: {time_filters}, Date filters: {date_filters}")
 
-    query_vector = clip_model.encode_text(text, normalize=True)
-    query_vector = apply_transformation(query_vector, get_matrix(device_id))
+    emb = clip_model.encode_text(text)
+    emb = apply_transformation(emb, get_matrix(session, device_id))
 
-    docs = search_similar_embeddings(
-        features.collection,
-        query_vector.flatten(),
-        top_k=k,
+    records = search_by_embedding(session, emb, device_id, k, sort_by)
+
+    # group by segment id
+    segments: dict[str, List[LifelogImage]] = {}
+    for record in records:
+        segment_key = f"{record.date}_{record.segment_id}"
+        if segment_key in segments:
+            segments[segment_key].append(record)
+        else:
+            segments[segment_key] = [record]
+
+    return list(segments.values())
+
+
+def search_by_embedding(session, emb, device_id, k, sort_by):
+    stmt = (
+        select(
+            ImageEmbedding.embedding.cosine_distance(emb).label("distance"),
+            ImageEmbedding.image_id,
+            Image,
+        )
+        .where(
+            and_(
+                ImageEmbedding.embedding.isnot(None),
+                Image.deleted == False,
+                Image.device == device_id,
+            )
+        )
+        .order_by("distance")
+        .join(Image, Image.id == ImageEmbedding.image_id)
+        .limit(k)
     )
-    image_paths = [doc.fields["image_path"] for doc in docs]
-    top_images = [
-        path
-        for path in image_paths
-        if path not in deleted_images and path not in remove
-    ]
+
+    rows = session.execute(stmt).fetchall()
 
     sort_by_timestamp = sort_by == "time"
     if sort_by_timestamp:
-        image_records = ImageRecord.find(
-            filter={
-                "device": device_id,
-                "image_path": {"$in": top_images},
-            },
-            sort=[("timestamp", -1)],
-        )
-        # group by segment id
-        segments: dict[str, List[ImageRecord]] = {}
-        for image_record in image_records:
-            if image_record.segment_id in segments:
-                segments[image_record.segment_id].append(image_record)
-            else:
-                segments[image_record.segment_id] = [image_record]
-        return list(segments.values())
-    else:
-        # sort by relevance
-        image_records = ImageRecord.find(
-            filter={
-                "device": device_id,
-                "image_path": {"$in": top_images},
-            }
-        )
-        image_to_image_record = {img.image_path: img for img in image_records}
-        segments: dict[str, List[ImageRecord]] = {}
-        for image in top_images:
-            image_record = image_to_image_record.get(image)
-            if image_record:
-                segment_id = image_record.segment_id
-                if segment_id in segments:
-                    segments[segment_id].append(image_record)
-                else:
-                    segments[segment_id] = [image_record]
+        rows = sorted(rows, key=lambda row: row.Image.timestamp, reverse=True)
 
-        return list(segments.values())
+    records = [_orm_to_lifelog(row.Image) for row in rows]
+    return records
 
 
 def get_similar_images(
+    session,
     device_id: str,
     image: str,
-    features: CLIPFeatures,
-    deleted_images: set[str],
-    k=100,
-    retrieved_videos=None,
-    normalizing_sum=None,
-    remove=np.array([]),
+    k,
 ):
     if "temp" in image:
         # query_vector, *_ = encode_image(device_id, image, np.empty((0, DIM)), [])
@@ -136,34 +117,22 @@ def get_similar_images(
                 if new_path:
                     path = new_path
 
-            query_vector = clip_model.encode_image(path)
-            query_vector = query_vector / np.linalg.norm(query_vector)
-            query_vector = query_vector.flatten()
-            query_vector = apply_transformation(query_vector, get_matrix(device_id))
+            emb = clip_model.encode_image(path)
+            emb = emb / np.linalg.norm(emb)
+            emb = emb.flatten()
+            emb = apply_transformation(emb, get_matrix(session, device_id))
         except Exception as e:
             print(f"Error encoding image {image}: {e}")
-            return []
-
-        docs = search_similar_embeddings(
-            features.collection,
-            query_vector,
-            top_k=k,
-        )
+            results: List[LifelogImage] = []
+            return results
     else:
-        docs = search_similar_embeddings_by_id(
-            features.collection,
-            image,
-            top_k=k,
-        )
+        emb = session.execute(
+            select(ImageEmbedding.embedding)
+            .join(Image, Image.id == ImageEmbedding.image_id)
+            .where(Image.device == device_id)
+            .where(Image.image_path == image)
+        ).scalar_one_or_none()
+        print(emb)
+        emb = np.frombuffer(emb, dtype=np.float32) if emb is not None else None
 
-    top_images = [doc.fields["image_path"] for doc in docs]
-    top_images = [
-        path for path in top_images if path not in deleted_images and path not in remove
-    ]
-    return ImageRecord.find(
-        filter={
-            "device": device_id,
-            "image_path": {"$in": top_images},
-        },
-        sort=[("timestamp", -1)],
-    )
+    return search_by_embedding(session, emb, device_id, k, sort_by="relevance")

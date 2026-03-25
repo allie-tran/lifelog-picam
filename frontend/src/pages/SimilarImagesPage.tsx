@@ -10,11 +10,11 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 
-const toTimestamp = (imagePath: string): number => {
+const toTimestamp = (imagePath: string): string => {
     const str = imagePath.split('/').pop()?.split('.')[0] || '';
     const date = dayjs(str, 'YYYYMMDD_HHmmss');
-    // to timestamp (number of milliseconds since epoch)
-    return date.unix() * 1000;
+    // to ISO string
+    return date.toISOString();
 };
 
 const SimilarImages = () => {

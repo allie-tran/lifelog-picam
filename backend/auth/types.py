@@ -63,15 +63,15 @@ class Person(CamelCaseModel):
     embeddings: list[list[float]] = []
     cropped: list[str]
 
-class Device(Document):
-    device_id: str
-    public_key: str = ""
-    last_seen: datetime | None = None
-    whitelist: list[Person] = []
-    transform_matrix: bytes | None = None
+# class Device(Document):
+#     device_id: str
+#     public_key: str = ""
+#     last_seen: datetime | None = None
+#     whitelist: list[Person] = []
+#     transform_matrix: bytes | None = None
 
-    class ODMConfig(Document.ODMConfig):
-        collection_name = "devices"
+#     class ODMConfig(Document.ODMConfig):
+#         collection_name = "devices"
 
 class DeviceResponse(CamelCaseModel):
     device_id: str

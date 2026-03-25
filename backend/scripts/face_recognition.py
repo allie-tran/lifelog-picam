@@ -1,12 +1,13 @@
+from datetime import datetime
 from typing import List
 from fastapi import UploadFile
-import zvec
-from auth.types import Device
+from sqlalchemy import insert, select
+from app_types import LifelogImage
 from constants import EMBEDDING_DIR
-from database.types import ImageRecord
+from database.models import DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImagePerson, Device
+from database.types import _orm_to_lifelog
 import cv2
 import numpy as np
-from datetime import datetime
 
 from scripts.object_detection import get_face_data_from_person_crop
 from scripts.utils import to_base64
@@ -15,112 +16,44 @@ from scripts.utils import to_base64
 directory = EMBEDDING_DIR
 
 
-def create_zvec_collection(device):
-    collection_schema = zvec.CollectionSchema(
-        f"{device}_faces",
-        vectors=[
-            zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, 512),
-        ],
-        fields=[
-            zvec.FieldSchema("timestamp", zvec.DataType.FLOAT, index_param=zvec.InvertIndexParam(enable_range_optimization=True)),
-            zvec.FieldSchema("image_path", zvec.DataType.STRING),
-            zvec.FieldSchema("bbox", zvec.DataType.STRING),
-            zvec.FieldSchema("whitelist", zvec.DataType.BOOL, index_param=zvec.InvertIndexParam()),
-        ],
+def delete_old_faces(session, device, cutoff_timestamp: datetime):
+    stmt = (
+        select(ImagePerson.id)
+        .where(Image.device == device, Image.timestamp < cutoff_timestamp)
+        .join(Image, Image.id == ImagePerson.image_id)
+        .where(Image.deleted == False)
     )
+    id_list = [row.id for row in session.execute(stmt).fetchall()]
+    if id_list:
+        print(f"TEST: Would delete {len(id_list)} old face embeddings for device {device}.")
+        print("This does nothing for now.")
+        # TODO
+        # res = session.execute(delete(ImagePerson).where(ImagePerson.id.in_(id_list)))
+        # session.commit()
+        # print(f"Deleted {res.rowcount} old face embeddings for device {device}.")
 
-    name = f"{directory}/{device}_faces"
-    zvec_collection = zvec.create_and_open(name, collection_schema)
-    print(f"Created ZVec collection for device {device} at {name}")
-
-    recent = datetime.now().timestamp() - 24 * 3600  # only index the last hour of data
-    agg = ImageRecord.aggregate(
-        [
-            {
-                "$match": {
-                    "people": {"$exists": True, "$ne": []},
-                    "device": device,
-                    "timestamp": {"$gte": recent * 1000},
-                }
-            },
-            {"$unwind": "$people"},
-            {
-                "$project": {
-                    "embedding": "$people.embedding",
-                    "image_path": 1,
-                    "bbox": "$people.bbox",
-                    "label": "$people.label",
-                    "timestamp": 1,
-                }
-            },
-        ]
-    )
-
-    # Insert all embeddings into Zvec
-    for doc in agg:
-        zvec_doc = zvec.Doc(
-            id=str(doc.id),
-            vectors={"embedding": doc.embedding},
-            fields={
-                "image_path": doc.image_path,
-                "bbox": ",".join(map(str, doc.bbox)),
-                "whitelist": doc.label != "redacted face" and doc.label != "face",
-                "timestamp": doc.timestamp,
-            },
+def search_face_embedding(session, device: str, emb: list[float], top_k: int = 5):
+    rows = session.execute(
+        select(
+            ImagePerson.image_id,
+            Image,
+            ImagePerson.label,
+            ImagePerson.confidence,
+            ImagePerson.embedding.cosine_distance(emb).label("face_distance"),
         )
-        zvec_collection.insert(zvec_doc)
-    doc_count = zvec_collection.stats.doc_count
-    print(f"Inserted {doc_count} face embeddings into ZVec collection for device {device}")
-    return zvec_collection
+        .join(Image, Image.id == ImagePerson.image_id)
+        .where(Image.deleted == False)
+        .where(Image.device == device)
+        .where(ImagePerson.embedding.isnot(None))
+        .order_by(ImagePerson.embedding.cosine_distance(emb))
+        .limit(top_k)
+    ).fetchall()
+    return [_orm_to_lifelog(row.Image) for row in rows]  # type: ignore
 
 
-def open_face_collection(device):
-    try:
-        collection = zvec.open(path=f"{directory}/{device}_faces")
-        print(collection.path, collection.stats)
-        return collection
-    except ValueError:
-        return create_zvec_collection(device)
-
-
-def index_face_embeddings(
-    zvec_collection: zvec.Collection, image_record: ImageRecord
-):
-    for i, person in enumerate(image_record.people):
-        embedding = person.embedding
-        bbox = person.bbox
-
-        zvec_doc = zvec.Doc(
-            id=f"{image_record.id}_{i}",
-            vectors={"embedding": embedding},
-            fields={
-                "timestamp": image_record.timestamp,
-                "image_path": image_record.image_path,
-                "bbox": ",".join(map(str, bbox)),
-                "whitelist": person.label != "redacted face" and person.label != "face",
-            },
-        )
-        zvec_collection.insert(zvec_doc)
-
-
-def delete_old_faces(zvec_collection: zvec.Collection, cutoff_timestamp: float):
-    before = zvec_collection.stats.doc_count
-    zvec_collection.delete_by_filter(filter=f'timestamp < {cutoff_timestamp} AND whitelist = false')
-    after = zvec_collection.stats.doc_count
-    print(f"Deleted {before - after} old face embeddings")
-
-
-def search_face_embedding(
-    zvec_collection: zvec.Collection, embedding: list[float], top_k: int = 5
-):
-    results = zvec_collection.query(
-        vectors=zvec.VectorQuery(field_name="embedding", vector=embedding),
-        topk=top_k,
-    )
-    return results
-
-
-def search_for_faces(zvec_collection: zvec.Collection, files: List[UploadFile]):
+def search_for_faces(
+    session, device: str, files: List[UploadFile]
+) -> list[LifelogImage]:
     results = []
     for file in files:
         cv_image = cv2.imdecode(
@@ -131,13 +64,14 @@ def search_for_faces(zvec_collection: zvec.Collection, files: List[UploadFile]):
         if not faces:
             continue
         face = faces[0].embedding
-        results += search_face_embedding(zvec_collection, face, top_k=5)
-    return [doc.fields["image_path"] for doc in results]
+        results += search_face_embedding(session, device, face, top_k=5)
+    return results
 
 
-def add_face_to_whitelist(device: str, name: str, files: List[UploadFile]):
+def add_face_to_whitelist(session, device: str, name: str, files: List[UploadFile]):
     cropped = []
     embeddings = []
+
     for file in files:
         cv_image = cv2.imdecode(
             np.frombuffer(file.file.read(), np.uint8), cv2.IMREAD_COLOR
@@ -164,15 +98,21 @@ def add_face_to_whitelist(device: str, name: str, files: List[UploadFile]):
         embeddings.append(face)
         cropped.append(to_base64(image_bytes))
 
-    Device.update_one(
-        {"device_id": device},
-        {
-            "$addToSet": {
-                "whitelist": {
-                    "name": name,
-                    "embeddings": embeddings,
-                    "cropped": cropped,
-                }
-            }
-        },
+    # Update the whitelist entry first
+    res = session.execute(
+        insert(DeviceWhitelistEntry)
+        .values(
+            device_id=session.execute(select(Device.id).where(Device.device_id == device)).scalar_one(),
+            name=name,
+            cropped=cropped,
+        )
     )
+    session.commit()
+    entry_id = res.inserted_primary_key[0]
+    for embedding in embeddings:
+        session.execute(
+            insert(DeviceWhitelistEmbedding).values(
+                entry_id=entry_id,
+                embedding=embedding,
+            )
+        )

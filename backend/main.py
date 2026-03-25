@@ -3,7 +3,7 @@ import io
 import os
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 
 import uvicorn
@@ -14,28 +14,28 @@ from fastapi.params import Body
 from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
-from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, LifelogImage
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
-from auth.types import AccessLevel, Device, User
-from constants import DIR, LOCAL_PORT, SEARCH_MODEL, THUMBNAIL_DIR
-from database import init_db, get_session
+from auth.types import AccessLevel, User
+from constants import DIR, LOCAL_PORT, SEARCH_MODEL
+from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import Image as ImageModel
+from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS
 from dependencies import CamelCaseModel
+from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from tasks import describe_segment_task
 from ingest import app as ingest_app
 from pipelines.all import process_video, process_image
-from pipelines.delete import mark_error, remove_physical_image
+from pipelines.delete import mark_error, remove_physical_images
 from pipelines.hourly import update_app
 from preprocess import get_similar_images, load_features, retrieve_image, save_features
 from scripts.anonymise import segment_image_with_sam
-from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
@@ -46,6 +46,11 @@ from scripts.utils import get_thumbnail_path
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
+
+
+from sqlalchemy import select, desc, update
+from datetime import datetime, timezone
+from database.types import _orm_to_lifelog
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +115,7 @@ DEFAULT_TARGETS = [
 ]
 
 
-def _require_owner_or_admin(access_level: AccessLevel):
+def _require_owner(access_level: AccessLevel):
     if access_level not in (AccessLevel.OWNER, AccessLevel.ADMIN):
         raise HTTPException(status_code=403, detail="Not authorized.")
 
@@ -155,17 +160,6 @@ def _mark_images_not_new(session: Session, image_paths: list[str], device: str):
     session.flush()
 
 
-def _bulk_delete(session: Session, image_paths: list[str], device: str):
-    now = datetime.now(timezone.utc).timestamp() * 1000
-    session.execute(
-        update(ImageModel)
-        .where(ImageModel.image_path.in_(image_paths))
-        .where(ImageModel.device == device)
-        .values(deleted=True, delete_time=now)
-    )
-    session.flush()
-
-
 def _get_last_n_summaries(
     session: Session,
     date: str,
@@ -174,7 +168,6 @@ def _get_last_n_summaries(
     segment_id_lt: Optional[int] = None,
 ) -> list[str]:
     """Get the last n activity descriptions for context, optionally filtered by segment_id."""
-    from sqlalchemy import select, desc
 
     stmt = (
         select(ImageModel.segment_id, ImageModel.activity_description)
@@ -211,6 +204,7 @@ async def lifespan(app: CustomFastAPI):
             )
     app.features = load_features(app)
     yield
+    close_db()
     save_features(app)
 
 
@@ -288,17 +282,23 @@ async def upload_image(
             image = Image.open(file.file)
         except UnidentifiedImageError:
             try:
-                device_doc = Device.find_one({"device_id": device})
+                device_doc = session.execute(
+                    select(Device).where(Device.device_id == device)
+                ).fetchone()
                 if not device_doc or not device_doc.public_key:
                     raise HTTPException(
                         status_code=403, detail="Device public key not found."
                     )
                 box = Box(server_sk, PublicKey(bytes.fromhex(device_doc.public_key)))
                 image = decrypt_image(box, file)
-            except Exception as e:
+            except Exception:
                 traceback.print_exc()
                 mark_error(
-                    device, date, f"{date}/{file_name}", timestamp.timestamp() * 1000
+                    session,
+                    device,
+                    date,
+                    f"{date}/{file_name}",
+                    timestamp.timestamp() * 1000,
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
@@ -311,26 +311,17 @@ async def upload_image(
 
         image.save(f"{folder}/{file_name}", exif=exif)
 
-        conclip_collection = app.features[device]["conclip"].collection
-        face_collection = app.features[device]["faces"].collection
-        assert conclip_collection is not None, "Conclip collection not initialized"
-        assert (
-            face_collection is not None
-        ), f"Face collection not initialized for {device}"
-
         background_tasks.add_task(
             process_image,
+            session,
             device,
             date,
             file_name,
-            conclip_collection,
-            face_collection,
-            session,
         )
 
     now = datetime.now()
     if (now - app.last_saved).seconds > 60 * 10:
-        update_app(app)
+        update_app(session, app)
         app.last_saved = now
 
     return get_mode()
@@ -374,8 +365,12 @@ async def upload_video(
 
 
 @app.post("/update-app")
-async def update_app_endpoint(job_id: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(update_app, app, job_id=job_id)
+async def update_app_endpoint(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    background_tasks.add_task(update_app, session, app, job_id=job_id)
     return {"message": "App update scheduled."}
 
 
@@ -462,12 +457,12 @@ def get_image(
 async def get_images_by_hour(
     device: str,
     date: str = "",
-    hour: int = 0,
+    hour: str = "",
     page: int = 1,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
 
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
@@ -476,10 +471,10 @@ async def get_images_by_hour(
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
-    all_hours = sorted(
-        ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device),
-        reverse=True,
+    all_hours = list(
+        ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)
     )
+    all_hours = sorted([h for h in all_hours if h is not None], reverse=True)
 
     if not hour:
         if not all_hours:
@@ -543,10 +538,7 @@ def get_images_by_range(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-
-    from sqlalchemy import select
-    from datetime import datetime, timezone
+    _require_owner(access_level)
 
     start_dt = datetime.fromtimestamp(request.start_time / 1000, tz=timezone.utc)
     end_dt = datetime.fromtimestamp(request.end_time / 1000, tz=timezone.utc)
@@ -564,11 +556,9 @@ def get_images_by_range(
         .all()
     )
 
-    _mark_images_not_new(session, [r.image_path for r in rows], device)
-
-    from database.types import _orm_to_lifelog
-
-    return [_orm_to_lifelog(r) for r in rows]
+    records = [_orm_to_lifelog(r) for r in rows]
+    _mark_images_not_new(session, [r.image_path for r in records], device)
+    return records
 
 
 @app.get("/get-gps-by-date")
@@ -578,18 +568,16 @@ def get_gps_by_date(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-
-    images = ImageRecord.find(
-        session,
-        date=date,
-        deleted=False,
-        device=device,
-        sort="timestamp",
-        sort_desc=True,
-    )
-    return [img.gps for img in images if img.gps is not None]
-
+    _require_owner(access_level)
+    gps = session.execute(
+        select(ImageGPS)
+        .where(ImageModel.date == date)
+        .where(ImageModel.deleted == False)
+        .where(ImageModel.device == device)
+        .join(ImageModel, ImageModel.id == ImageGPS.image_id)
+        .order_by(ImageModel.timestamp.desc())
+    ).scalars().all()
+    return [GPSInfo.model_validate(g.__dict__) for g in gps]
 
 @app.get("/get-all-dates")
 def get_all_dates(
@@ -621,25 +609,17 @@ def search(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
 
     if not query:
         return []
 
-    deleted_set = set(
-        ImageRecord.distinct(session, "image_path", deleted=True, device=device)
-    )
-
     return retrieve_image(
+        session,
         device,
         query,
-        app.features[device][SEARCH_MODEL],
         sort_by,
-        deleted_set,
         k=1000,
-        retrieved_videos=app.retrieved_videos[device],
-        normalizing_sum=app.normalizing_sum[device],
-        remove=app.low_visual_indices[device],
     )
 
 
@@ -650,23 +630,13 @@ def similar_images(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
 
-    delete_set = set(
-        ImageRecord.distinct(session, "image_path", deleted=True, device=device)
-    )
-
-    return list(
-        get_similar_images(
-            device,
-            image,
-            app.features[device][SEARCH_MODEL],
-            delete_set,
-            k=100,
-            retrieved_videos=app.retrieved_videos[device],
-            normalizing_sum=app.normalizing_sum[device],
-            remove=app.low_visual_indices[device],
-        )
+    return get_similar_images(
+        session,
+        device,
+        image,
+        k=100,
     )
 
 
@@ -677,28 +647,20 @@ def similar_images_by_upload(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
 
-    delete_set = set(
-        ImageRecord.distinct(session, "image_path", deleted=True, device=device)
-    )
     temp_path = f"{DIR}/{device}/temp_{file.filename}"
 
     with open(temp_path, "wb") as f:
         f.write(file.file.read())
     try:
-        results = list(
-            get_similar_images(
-                device,
-                temp_path,
-                app.features[device][SEARCH_MODEL],
-                delete_set,
-                k=100,
-                retrieved_videos=app.retrieved_videos[device],
-                normalizing_sum=app.normalizing_sum[device],
-                remove=app.low_visual_indices[device],
-            )
+        results = get_similar_images(
+            session,
+            device,
+            temp_path,
+            k=100,
         )
+
     except UnidentifiedImageError:
         raise HTTPException(status_code=400, detail="Invalid image file.")
     finally:
@@ -729,9 +691,19 @@ def delete_image(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-    original = _resolve_image_path(device, request.image_path)
-    _bulk_delete(session, [original], device)
+    _require_owner(access_level)
+    stmt = (
+        update(ImageModel)
+        .where(ImageModel.image_path == request.image_path)
+        .where(ImageModel.device == device)
+        .values(deleted=True, deleted_time=datetime.now(timezone.utc))
+    )
+    print(stmt)
+    res = session.execute(stmt)
+    session.commit()
+    print(
+        f"Marked {res.rowcount} record(s) as deleted for image {request.image_path} on device {device}."
+    )
 
 
 @app.delete("/delete-images")
@@ -741,9 +713,14 @@ def delete_images(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
     paths = [_resolve_image_path(device, p) for p in request.image_paths]
-    _bulk_delete(session, paths, device)
+    session.execute(
+        update(ImageModel)
+        .where(ImageModel.image_path.in_(paths))
+        .where(ImageModel.device == device)
+        .values(deleted=True, deleted_time=datetime.now(timezone.utc))
+    )
 
 
 @app.get("/get-deleted-images")
@@ -752,30 +729,35 @@ def get_deleted_images(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-
-    deleted_list = list(
-        ImageRecord.find(
-            session, deleted=True, device=device, sort="image_path", sort_desc=True
-        )
+    _require_owner(access_level)
+    now = datetime.now(timezone.utc)
+    deleted_list = ImageRecord.find(
+        session,
+        deleted=True,
+        device=device,
     )
+    deleted_list = list(deleted_list)
+    print(
+        f"Took {(datetime.now(timezone.utc) - now).total_seconds():.2f} seconds to query deleted images."
+    )
+    print(f"Found {len(deleted_list)} deleted images for device {device}.")
 
-    now_ms = datetime.now(timezone.utc).timestamp() * 1000
-    threshold = now_ms - 30 * 24 * 60 * 60 * 1000  # 30 days
+    now_ms = datetime.now(timezone.utc)
+    threshold = now_ms - timedelta(days=7)  # 7 days ago
 
     final_list = []
-    collection = app.features[device][SEARCH_MODEL].collection
-    assert collection is not None, "Collection not initialized"
 
+    to_delete = []
     for image in deleted_list:
         full_path = os.path.join(DIR, device, image.image_path)
         if not os.path.exists(full_path):
-            continue
-        if image.delete_time and image.delete_time < threshold:
-            remove_physical_image(device, image.image_path, collection, session)
+            to_delete.append(image.image_path)
+        elif image.deleted_time and image.deleted_time < threshold:
+            to_delete.append(image.image_path)
         else:
             final_list.append(image)
-
+    if to_delete:
+        remove_physical_images(session, device, to_delete)
     return final_list
 
 
@@ -786,14 +768,14 @@ def restore_image(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
     session.execute(
         update(ImageModel)
         .where(ImageModel.image_path == request.image_path)
         .where(ImageModel.device == device)
-        .values(deleted=False, delete_time=None)
+        .values(deleted=False, deleted_time=None)
     )
-    session.flush()
+    session.commit()
 
 
 @app.delete("/force-delete-image")
@@ -803,10 +785,8 @@ def force_delete_image(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-    collection = app.features[device][SEARCH_MODEL].collection
-    assert collection is not None, "Collection not initialized"
-    remove_physical_image(device, request.image_path, collection, session)
+    _require_owner(access_level)
+    remove_physical_images(session, device, [request.image_path])
 
 
 @app.delete("/force-delete-images")
@@ -816,11 +796,9 @@ def force_delete_images(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-    collection = app.features[device][SEARCH_MODEL].collection
-    assert collection is not None, "Collection not initialized"
-    for image_path in request.image_paths:
-        remove_physical_image(device, image_path, collection, session)
+    _require_owner(access_level)
+    remove_physical_images(session, device, request.image_paths)
+    # remove_physical_image(device, image_path, collection, session)
 
 
 # ---------------------------------------------------------------------------
@@ -873,7 +851,13 @@ def process_segments(session: Session, date: str, device: str):
         )
         all_summaries = [*all_summaries, new_description][-10:]
 
-        DaySummaryRecord.upsert(session, date=date, device=device, updated=True)
+        DaySummaryRecord.update_one(
+            {
+                "date": date,
+                "device": device,
+            },
+            data={"$set": {"updated": True}},
+        )
 
 
 @app.get("/process-date")
@@ -881,13 +865,19 @@ def process_date(
     date: str,
     device: str,
     reset: bool,
-    background_tasks: BackgroundTasks,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
     _require_any_access(access_level)
 
-    DaySummaryRecord.upsert(session, date=date, device=device, updated=True)
+    DaySummaryRecord.update_one(
+        {
+            "date": date,
+            "device": device,
+        },
+        data={"$set": {"updated": True}},
+        upsert=True,
+    )
 
     if reset:
         session.execute(
@@ -904,13 +894,7 @@ def process_date(
         )
         session.flush()
 
-    deleted_set = set(
-        ImageRecord.distinct(session, "image_path", deleted=True, device=device)
-    )
-    load_all_segments(
-        device, date, app.features, deleted_set | app.images_with_low_density
-    )
-
+    load_all_segments(session, device, date)
     return {"message": f"Processing segments for date {date} in background."}
 
 
@@ -927,10 +911,6 @@ def get_day_summary(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    return DaySummary(
-        device=device, date=date, segments=[], summary_text="", updated=False
-    )
-
     _require_any_access(access_level)
 
     if not date:
@@ -943,19 +923,24 @@ def get_day_summary(
     summary = DaySummary(
         device=device, date=date, segments=[], summary_text="", updated=False
     )
-    summary.segments = create_day_timeline(app, device, date)
+    summary.segments = create_day_timeline(session, app, device, date)
     if not summary.segments:
         raise HTTPException(status_code=404, detail="No segments found for this date.")
 
-    summary = summarize_day_by_text(summary)
+    summary = summarize_day_by_text(session, summary)
     my_targets = user.goal_targets or DEFAULT_TARGETS
 
     summary = summarize_lifelog_by_day(
         summary, app.features[device][SEARCH_MODEL], my_targets
     )
 
-    DaySummaryRecord.upsert(
-        session, date=date, device=device, **summary.model_dump(by_alias=True)
+    DaySummaryRecord.update_one(
+        {
+            "date": date,
+            "device": device,
+        },
+        data={"$set": {"updated": False}},
+        upsert=True,
     )
 
     return summary
@@ -981,7 +966,7 @@ def update_targets(
     user=Depends(get_user),
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
     targets = targets or DEFAULT_TARGETS
     user.goal_targets = targets
     User.update_one({"username": user.username}, {"$set": {"goal_targets": targets}})
@@ -1000,7 +985,7 @@ async def change_segment_activity(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
 
     segment = ImageRecord.find_one(
         session, segment_id=request.segment_id, device=device, date=request.date
@@ -1046,8 +1031,13 @@ async def change_segment_activity(
         )
     )
     session.flush()
-
-    DaySummaryRecord.upsert(session, date=request.date, device=device, updated=True)
+    DaySummaryRecord.update_one(
+        {
+            "date": request.date,
+            "device": device,
+        },
+        data={"$set": {"updated": True}},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1063,22 +1053,8 @@ def get_faces(
     session: Session = Depends(get_session),
 ):
     _require_any_access(access_level)
-
-    collection = app.features[device]["faces"].collection
-    assert collection is not None, "Face collection not initialized"
-
-    image_paths = search_for_faces(collection, files)
-    return list(
-        ImageRecord.find(
-            session,
-            device=device,
-            deleted=False,
-            sort="timestamp",
-            sort_desc=True,
-            # image_path__in handled via find_by_paths below
-        )
-    )
-    # NOTE: add image_path__in filter support to ImageRecord.find() for this endpoint
+    images = search_for_faces(session, device, files)
+    return images
 
 
 @app.put("/add-to-whitelist")
@@ -1087,29 +1063,40 @@ def add_to_whitelist(
     device: str,
     name: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
-    add_face_to_whitelist(device, name, files)
+    _require_owner(access_level)
+    add_face_to_whitelist(session, device, name, files)
 
 
 @app.get("/get-whitelist", response_model=List[WhitelistEntry])
 def get_whitelist(
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
+    ids = session.execute(
+        select(Device.id).where(Device.device_id == device)
+    ).fetchone()
 
-    collection = app.features[device]["faces"].collection
-    assert collection is not None, "Face collection not initialized"
-    device_obj = Device.find_one({"device_id": device})
-    assert device_obj is not None, "Device not found"
+    if not ids:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    entrys = (
+        session.execute(
+            select(DeviceWhitelistEntry).where(DeviceWhitelistEntry.device_id == ids[0])
+        )
+        .scalars()
+        .all()
+    )
 
     return [
         {
             "name": e.name,
             "images": [f"data:image/jpeg;base64, {img}" for img in e.cropped[:2]],
         }
-        for e in device_obj.whitelist
+        for e in entrys
     ]
 
 
@@ -1118,17 +1105,22 @@ def remove_from_whitelist(
     device: str,
     name: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
 ):
-    _require_owner_or_admin(access_level)
+    _require_owner(access_level)
+    device_id = session.execute(
+        select(Device.id).where(Device.device_id == device)
+    ).scalar()
 
-    device_obj = Device.find_one({"device_id": device})
-    assert device_obj is not None, "Device not found"
-    new_whitelist = [e for e in device_obj.whitelist if e.name != name]
-    Device.update_one(
-        {"device_id": device},
-        {"$set": {"whitelist": [e.model_dump() for e in new_whitelist]}},
+    if not device_id:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    session.execute(
+        delete(DeviceWhitelistEntry)
+        .where(DeviceWhitelistEntry.device_id == device_id)
+        .where(DeviceWhitelistEntry.name == name)
     )
-    return {"message": f"Removed {name} from whitelist."}
+    session.commit()
 
 
 @app.post("/segment-image")

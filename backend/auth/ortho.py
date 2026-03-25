@@ -1,4 +1,3 @@
-
 import numpy as np
 
 import secrets
@@ -7,9 +6,9 @@ import pickle
 import numpy as np
 from pymongo.client_session import Binary
 from scipy.stats import ortho_group
+from sqlalchemy import select
 
-from auth.types import Device
-
+from database.models import DeviceSecret, Device
 
 def generate_secure_transformation_matrix(dimension):
     """
@@ -48,15 +47,20 @@ def apply_transformation(embedding, transform_matrix):
 def generate_and_store_matrix(device: str, dimension: int):
     matrix = generate_secure_transformation_matrix(dimension)
     binary_matrix = Binary(pickle.dumps(matrix, protocol=2))
-    Device.update_one(
-        {"device_id": device},
-        {"$set": {"transform_matrix": binary_matrix}},
-        upsert=True,
-    )
+    # Device.update_one(
+    #     {"device_id": device},
+    #     {"$set": {"transform_matrix": binary_matrix}},
+    #     upsert=True,
+    # )
 
-def get_matrix(device: str):
-    device_record = Device.find_one({"device_id": device})
-    if device_record and device_record.transform_matrix:
-        return pickle.loads(device_record.transform_matrix)
-    else:
+
+def get_matrix(session, device: str):
+    transform_matrix = session.execute(
+        select(DeviceSecret.transform_matrix)
+        .where(DeviceSecret.device_id == Device.id)
+        .join(Device, Device.id == DeviceSecret.device_id)
+        .where(Device.device_id == device)
+    ).scalar_one_or_none()
+    if transform_matrix is None:
         return None
+    return pickle.loads(transform_matrix)

@@ -1,96 +1,84 @@
 from datetime import datetime, timezone
-import cv2
 import os
 from typing import Optional
 
+from sqlalchemy import insert, update
+from sqlalchemy.sql import select
 import zvec
-from app_types import ProcessedInfo
 from auth.ortho import apply_transformation, get_matrix
-from auth.types import Device, Person
+from auth.types import Person
 from constants import DIR
-from database.types import ImageRecord
-from database.vector_database import insert_embedding
-from pipelines.delete import remove_physical_image
-from scripts.anonymise import anonymise_image
-from scripts.face_recognition import index_face_embeddings
-from scripts.object_detection import extract_object_from_images
+from pipelines.delete import remove_physical_images
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from tasks import anonymise_image_task, yolo_process_images_task
 from visual import clip_model
+from database.models import Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 
 
-def find_segment(device_id: str, timestamp: float) -> int | None:
-    # Find the segment ID for the given image path and timestamp
-    end = ImageRecord.find(
-        filter={
-            "timestamp": {"$gte": timestamp},
-            "segment_id": {"$exists": True},
-            "device": device_id,
-        },
-        sort=[("timestamp", 1)],
-        limit=1,
-    )
-    end = list(end)
-    end = end[0] if end else None
-    if not end:
-        # This should belong to a new segment
-        return None
+# def find_segment(session, device_id: str, timestamp: float) -> int | None:
+#     # Find the segment ID for the given image path and timestamp
+#     end = session.select(Image).where(
+#         Image.timestamp >= timestamp,
+#         Image.segment_id.isnot(None),
+#         Image.device == device_id,
+#     ).order_by(Image.timestamp.asc()).limit(1)
+#     end = session.execute(end).scalars().first()
+#     if not end:
+#         # This should belong to a new segment
+#         return None
 
-    start = ImageRecord.find(
-        filter={
-            "timestamp": {"$lte": timestamp},
-            "segment_id": {"$exists": True},
-            "device": device_id,
-        },
-        sort=[("timestamp", -1)],
-        limit=1,
-    )
-    start = list(start)
-    start = start[0] if start else None
+#     start = session.select(Image).where(
+#         Image.timestamp <= timestamp,
+#         Image.segment_id.isnot(None),
+#         Image.device == device_id,
+#     ).order_by(Image.timestamp.desc()).limit(1)
 
-    if not start:
-        # This should never happen, but just in case
-        print("Warning: No start segment found for timestamp", timestamp)
-        return None
+#     if not start:
+#         # This should never happen, but just in case
+#         print("Warning: No start segment found for timestamp", timestamp)
+#         return None
 
-    if start.segment_id == end.segment_id:
-        return start.segment_id
+#     if start.segment_id == end.segment_id:
+#         return start.segment_id
 
-    # Reset all the segments that are greater than end.segment_id
-    ImageRecord.update_many(
-        filter={"segment_id": {"$gt": end.segment_id}, "device": device_id},
-        data={"$inc": {"segment_id": 1}},
-    )
-    return None
+#     # Reset all the segments that are greater than end.segment_id
+#     session.execute(
+#         update(Image)
+#         .where(Image.segment_id > end.segment_id, Image.device == device_id)
+#         .values(segment_id=Image.segment_id + 1)
+#     )
 
 
-def index_to_mongo(device_id: str, relative_path: str, skip_segmentation: bool = False):
+def index_to_postgres(
+    session, device_id: str, relative_path: str, skip_segmentation: bool = False
+):
     date, file_name = relative_path.split("/")
     timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
-    ImageRecord(
-        date=date,
-        device=device_id,
-        image_path=relative_path,
-        thumbnail=relative_path.replace(".jpg", ".webp"),
-        timestamp=timestamp.replace(tzinfo=timezone.utc).timestamp()
-        * 1000,  # Convert to milliseconds
-        is_video=False,
-        objects=[],
-        people=[],
-        processed=ProcessedInfo(yolo=False, encoded=False, sam3=False),
-        segment_id=(
-            None
-            if skip_segmentation
-            else find_segment(device_id, timestamp.timestamp() * 1000)
-        ),
-    ).create()
+
+    session.execute(
+        insert(Image).values(
+            date=date,
+            device=device_id,
+            image_path=relative_path,
+            thumbnail=relative_path.replace(".jpg", ".webp"),
+            timestamp=timestamp.replace(tzinfo=timezone.utc),
+            is_video=False,
+            objects=[],
+            people=[],
+            proc_yolo=False,
+            proc_encoded=False,
+            proc_sam3=False,
+            proc_ocr=False,
+            proc_insightface=False,
+            segment_id=None,
+        )
+    )
 
 
 def yolo_process_images(
     device_id: str,
     white_list: list[Person],
     relative_paths: list[str],
-    collection: zvec.Collection | None = None,
 ):
     paths = []
     for path in relative_paths:
@@ -105,18 +93,19 @@ def yolo_process_images(
     )
 
 
-def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
+def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=False):
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
         f"{DIR}/{device_id}/{relative_path}"
     )
     # get whitelist people
-    image_record = ImageRecord.find_one(
-        {"device": device_id, "image_path": relative_path}
-    )
-    people = image_record.people if image_record else []
+    res = session.execute(
+        select(ImagePerson)
+        .where(Image.image_path == relative_path, Image.device == device_id)
+        .join(Image, Image.id == ImagePerson.image_id)
+    ).fetchall()
     boxes = []
     whitelist_boxes = []
-    for person in people:
+    for person in res:
         if person.label != "redacted face" and person.label != "face":
             whitelist_boxes.append(person.bbox)
         else:
@@ -131,21 +120,18 @@ def create_thumbnail(device_id: str, relative_path: str, skip_sam3=False):
             skip_sam3=skip_sam3,
         )
 
-    ImageRecord.update_one(
-        filter={"device": device_id, "image_path": relative_path},
-        data={
-            "$set": {
-                "processed.sam3": True,
-                "thumbnail": relative_path.replace(".jpg", ".webp"),
-            }
-        },
+    session.execute(
+        update(Image)
+        .where(Image.image_path == relative_path, Image.device == device_id)
+        .values(proc_sam3=True, thumbnail=relative_path.replace(".jpg", ".webp"))
     )
+    session.commit()
 
 
 def encode_image(
+    session,
     device_id: str,
     image_path: str,
-    collection: zvec.Collection,
     matrix: Optional[list[list[float]]] = None,
 ):
     try:
@@ -161,7 +147,18 @@ def encode_image(
         vector = apply_transformation(
             vector, matrix if matrix else get_matrix(device_id)
         )
-        insert_embedding(collection, vector, image_path)
+        session.execute(
+            insert(ImageEmbedding).values(
+                image_id=session.execute(
+                    select(Image.id).where(
+                        Image.image_path == image_path, Image.device == device_id
+                    )
+                ).scalar_one(),
+                embedding=vector,
+            )
+        )
+        session.commit()
+
     except Exception as e:
         print(e)
         print(f"Error encoding image {image_path}")
@@ -170,45 +167,65 @@ def encode_image(
 
 
 def process_image(
+    session,
     device_id: str,
     date: str,
     file_name: str,
-    collection: zvec.Collection,
-    face_collection: zvec.Collection,
-    session,
 ):
     relative_path = f"{date}/{file_name}"
-    assert collection, "Collection must be provided for processing images"
     try:
-        index_to_mongo(device_id, relative_path)
+        index_to_postgres(session, device_id, relative_path)
+        # white_list = []
+        # if device:
+        #     white_list = device.whitelist
         white_list = []
-        device = Device.find_one({"device_id": device_id})
-        if device:
-            white_list = device.whitelist
-        yolo_process_images(device_id, white_list, [relative_path], face_collection)
-        create_thumbnail(device_id, relative_path)
-        encode_image(device_id, relative_path, collection)
+
+        white_list_entrys = session.execute(
+            select(DeviceWhitelistEntry)
+            .where(DeviceWhitelistEntry.device_id == session.execute(select(Device.id).where(Device.id == device_id)).scalar_one())
+        ).fetchall()
+
+        white_list_embeddings = session.execute(
+            select(DeviceWhitelistEmbedding)
+            .where(DeviceWhitelistEmbedding.entry_id.in_([entry.id for entry in white_list_entrys]))
+        ).fetchall()
+        embeddings_by_entry = {entry.entry_id: entry.embedding for entry in white_list_embeddings}
+
+        for entry in white_list_entrys:
+            white_list.append(
+                Person(
+                    name=entry.name,
+                    cropped=entry.crop,
+                    embeddings=embeddings_by_entry.get(entry.id, []),
+                )
+            )
+
+        yolo_process_images(device_id, white_list, [relative_path])
+        create_thumbnail(session, device_id, relative_path)
+        encode_image(session, device_id, relative_path)
+
     except FileNotFoundError as e:
         print(
             f"Error processing image {file_name} for device {device_id} on date {date}: {e}"
         )
-        remove_physical_image(device_id, relative_path, collection, session)
+        remove_physical_images(session, device_id, [relative_path])
 
 
 def process_video(
     device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]
 ):
-    output_path = f"{DIR}/{device_id}/{date}/{file_name}"
-    assert collection, "Collection must be provided for processing images"
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
-    make_video_thumbnail(output_path)
-    ImageRecord(
-        device=device_id,
-        image_path=f"{date}/{file_name}",
-        thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
-        date=date,
-        timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
-        is_video=True,
-    ).create()
+    raise NotImplementedError("Video processing is not implemented yet")
+    # output_path = f"{DIR}/{device_id}/{date}/{file_name}"
+    # assert collection, "Collection must be provided for processing images"
+    # timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    # make_video_thumbnail(output_path)
+    # ImageRecord(
+    #     device=device_id,
+    #     image_path=f"{date}/{file_name}",
+    #     thumbnail=f"{date}/{file_name.split('.')[0]}.webp",
+    #     date=date,
+    #     timestamp=timestamp.timestamp() * 1000,  # Convert to milliseconds
+    #     is_video=True,
+    # ).create()
 
-    encode_image(device_id, f"{date}/{file_name}", collection)
+    # encode_image(device_id, f"{date}/{file_name}", collection)

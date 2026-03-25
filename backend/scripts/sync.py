@@ -1,110 +1,106 @@
 from pymongo import MongoClient
 import glob
 import os
-import time
-import zvec
 from auth.ortho import get_matrix
 from constants import DIR, THUMBNAIL_DIR
-from pipelines.all import index_to_mongo, create_thumbnail, encode_image, yolo_process_images
+from pipelines.all import (
+    create_thumbnail,
+    encode_image,
+    index_to_postgres,
+    yolo_process_images,
+)
 from tqdm import tqdm
-from PIL import Image
+from PIL import Image as PILImage
+from database.models import Image, ImageEmbedding
+from sqlalchemy import delete, select
+
 
 client = MongoClient("mongodb://localhost:27017/")
 db = client["picam"]
 mongo_collection = db["images"]
 
+
 def to_id(image_path):
     return image_path.replace("/", "_")
 
 
-def sync_images(device: str, zvec_collection: zvec.Collection):
-    # zvec_collection.flush()
-    # zvec_collection.optimize()
-    # def in_zvec(image_path):
-    #     docs = zvec_collection.fetch(to_id(image_path))
-    #     if docs:
-    #         return True
-    #     return False
-
+def sync_images(session, device: str):
     print(f"Syncing images for device: {device}")
+
     # 1. Collect all the "databases"
     raw_images = glob.glob(f"{DIR}/{device}/**/*.jpg", recursive=True)
     raw_images = set(raw_images)
     raw_images = set(image.split(device + "/")[1] for image in raw_images)
     print(f"Total raw images: {len(raw_images)}")
 
-    mongo_images = mongo_collection.aggregate([
-        {"$match": {"device": device}},
-        {"$group": {"_id": "$image_path"}},
-    ])
-    mongo_image_paths = set(image["_id"] for image in mongo_images)
-    print(f"MongoDB: {len(mongo_image_paths)} images")
+    # 2. Start with missing in Postgres
+    postgres_images = session.execute(
+        select(Image.image_path).where(Image.device == device)
+    ).fetchall()
+    postgres_image_paths = set(image.image_path for image in postgres_images)
+    print(f"Postgres: {len(postgres_image_paths)} images")
+    missing_in_postgres = raw_images - postgres_image_paths
+    print(f"Missing in Postgres: {len(missing_in_postgres)}")
+    bad_images = set()
+    for image in tqdm(missing_in_postgres, desc="Indexing to Postgres"):
+        try:
+            PILImage.open(f"{DIR}/{device}/{image}").verify()
+        except Exception:
+            print(f"Corrupted image found and removed: {DIR}/{device}/{image}")
+            os.remove(f"{DIR}/{device}/{image}")
+            bad_images.add(image)
+            continue
+        index_to_postgres(session, device, image, skip_segmentation=True)
+    session.commit()
 
+    # 3. Process missing in YOLO
+    missing_in_yolo = session.execute(
+        select(Image.image_path).where(Image.device == device, Image.proc_yolo == False)
+    ).fetchall()
+    missing_in_yolo = set(image.image_path for image in missing_in_yolo)
+    missing_in_yolo = missing_in_yolo - bad_images
+    missing_in_yolo = list(missing_in_yolo)
+    batch_size = 16
+    whitelist = []
+    for i in tqdm(range(0, len(missing_in_yolo), batch_size), desc="Processing YOLO"):
+        batch = missing_in_yolo[i : i + batch_size]
+        yolo_process_images(device, whitelist, batch)
+
+    # 4. Check missing in thumbnail
     thumbnail_images = glob.glob(f"{THUMBNAIL_DIR}/{device}/**/*.webp", recursive=True)
     thumbnail_images = set(thumbnail_images)
     thumbnail_images = set(image.split(device + "/")[1] for image in thumbnail_images)
     thumbnail_images = set(image.replace(".webp", ".jpg") for image in thumbnail_images)
     print(f"Total thumbnail images: {len(thumbnail_images)}")
-
-    # 2. Base on raw_images, find the missing ones in mongo and zvec
-    print("-" * 30)
-    missing_in_mongo = raw_images - mongo_image_paths
-    print(f"Missing in MongoDB: {len(missing_in_mongo)}")
-    # missing_in_mongo_yolo = raw_images - yolo_processed_images
-    mongo_images = mongo_collection.aggregate([
-        {"$match": {"device": device, "processed.yolo": True, "processed.deepface": True}},
-        {"$group": {"_id": "$image_path"}},
-    ])
-    missing_in_mongo_yolo = set(image["_id"] for image in mongo_images)
-    print(f"Missing in MongoDB and not processed by YOLO: {len(missing_in_mongo_yolo)}")
     missing_in_thumbnail = raw_images - thumbnail_images
+    missing_in_thumbnail = missing_in_thumbnail - bad_images
     print(f"Missing in Thumbnail: {len(missing_in_thumbnail)}")
-    start = time.time()
-    # missing_in_zvec = raw_images - set(image for image in raw_images if in_zvec(image))
-    # print(f"Checked ZVec in {time.time() - start:.2f} seconds")
-    # print(f"Missing in ZVec: {len(missing_in_zvec)}")
+    for image in tqdm(missing_in_thumbnail, desc="Creating Thumbnails"):
+        create_thumbnail(session, device, image)
 
+    # 5. Missing in embeddings
+    missing_in_embeddings = session.execute(
+        select(Image.image_path)
+        .where(Image.device == device)
+        .where(ImageEmbedding.image_id.isnot(None))
+        .join(ImageEmbedding, Image.id == ImageEmbedding.image_id)
+    ).fetchall()
+    missing_in_embeddings = set(image.image_path for image in missing_in_embeddings)
+    missing_in_embeddings = missing_in_embeddings - bad_images
 
-    # all_missing = missing_in_mongo | missing_in_thumbnail | missing_in_zvec
-    # for image in all_missing:
-    #     # Try opening the image to see if it's corrupted
-    #     image_path = f"{DIR}/{device}/{image}"
-    #     try:
-    #         Image.open(image_path).verify()
-    #     except Exception:
-    #         print(f"Corrupted image found and removed: {image_path}")
-    #         os.remove(image_path)
-    #         if image in missing_in_mongo:
-    #             missing_in_mongo.remove(image)
-    #         if image in missing_in_thumbnail:
-    #             missing_in_thumbnail.remove(image)
-    #         if image in missing_in_zvec:
-    #             missing_in_zvec.remove(image)
+    matrix = get_matrix(device)
+    for image in tqdm(missing_in_embeddings, desc="Encoding images"):
+        encode_image(session, device, image, matrix)
 
-    for image in tqdm(missing_in_mongo, desc="Indexing to MongoDB"):
-        index_to_mongo(device, image, skip_segmentation=True)
-
-    return
-
-    batch_size = 16
-    whitelist = []
-    for i in tqdm(range(0, len(missing_in_mongo_yolo), batch_size), desc="Processing YOLO"):
-        batch = list(missing_in_mongo_yolo)[i:i + batch_size]
-        yolo_process_images(device, whitelist, batch)
-
-    # for image in tqdm(missing_in_thumbnail, desc="Creating Thumbnails"):
-    #     create_thumbnail(device, image, skip_sam3=True)
-
-    # matrix = get_matrix(device)
-    # for image in tqdm(missing_in_zvec, desc="Encoding to ZVec"):
-    #     encode_image(device, image, zvec_collection, matrix)
-
-    # 3. Base on raw_images, find the extra ones in mongo and zvec
+    # 6. Base on raw_images, find the extra ones in mongo and zvec
     print("-" * 30)
-    extra_in_mongo = mongo_image_paths - raw_images
-    print(f"Extra in MongoDB: {len(extra_in_mongo)}")
-    for image in tqdm(extra_in_mongo):
-        mongo_collection.delete_many({"device": device, "image_path": image})
+    extra_in_postgres = postgres_image_paths - raw_images
+    print(f"Extra in Postgres: {len(extra_in_postgres)}")
+    session.execute(
+        delete(Image).where(
+            Image.device == device, Image.image_path.in_(extra_in_postgres)
+        )
+    )
 
     extra_in_thumbnail = thumbnail_images - raw_images
     print(f"Extra in Thumbnail: {len(extra_in_thumbnail)}")
@@ -113,11 +109,18 @@ def sync_images(device: str, zvec_collection: zvec.Collection):
         if os.path.exists(thumbnail_path):
             os.remove(thumbnail_path)
 
-    start = time.time()
-    extra_in_zvec = set(image for image in mongo_image_paths if in_zvec(image)) - raw_images
-    print(f"Checked ZVec in {time.time() - start:.2f} seconds")
-    print(f"Extra in ZVec: {len(extra_in_zvec)}")
-    for image in tqdm(extra_in_zvec):
-        zvec_collection.delete(to_id(image))
-
-    print("Sync complete!")
+    extra_in_embedding = session.execute(
+        select(Image.image_path)
+        .where(Image.device == device)
+        .where(ImageEmbedding.image_id.isnot(None))
+        .join(ImageEmbedding, Image.id == ImageEmbedding.image_id)
+    ).fetchall()
+    extra_in_embedding = set(image.image_path for image in extra_in_embedding)
+    extra_in_embedding = extra_in_embedding - raw_images
+    print(f"Extra in Embeddings: {len(extra_in_embedding)}")
+    session.execute(
+        delete(ImageEmbedding)
+        .where(ImageEmbedding.image_id.in_(
+            select(Image.id).where(Image.device == device, Image.image_path.in_(extra_in_embedding))
+        ))
+    )

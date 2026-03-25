@@ -11,21 +11,33 @@ import os
 
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
 
-detect_model = YOLO("yolo11x.pt", task="detect", verbose=False)
-classify_model = YOLO("yolo11x-cls.pt", task="classify", verbose=False)
-print("Model loaded successfully.")
 
-# Initialize once, not inside the function
-face_app = FaceAnalysis(
-    name="buffalo_l", providers=["CUDAExecutionProvider"]  # or ["CPUExecutionProvider"]
-)
 
-face_app.prepare(ctx_id=0)
+class ModelWrapper:
+    def __init__(self):
+        self.detect_model = None
+        self.face_app = None
+        self.loaded = False
 
+    def load_models(self):
+        if self.loaded:
+            return
+        self.detect_model = YOLO("yolo11x.pt", task="detect", verbose=False)
+        print("Detection model loaded successfully.")
+        self.face_app = FaceAnalysis(
+            name="buffalo_l", providers=["CUDAExecutionProvider"]  # or ["CPUExecutionProvider"]
+        )
+        self.face_app.prepare(ctx_id=0)
+
+models_wrapper = ModelWrapper()
 
 def extract_object_from_images(image_paths, whitelist: list[Person] = []):
     final_results = []
-    results = detect_model(image_paths, verbose=False)  # Adjust confidence and iou as needed
+    if not models_wrapper.loaded:
+        models_wrapper.load_models()
+
+    assert models_wrapper.detect_model is not None, "Detection model failed to load"
+    results = models_wrapper.detect_model(image_paths, verbose=False)  # Adjust confidence and iou as needed
 
     for i, r in enumerate(results):
         objects = []
@@ -38,7 +50,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = []):
 
             conf = box.conf[0]  # Confidence score
             cls = int(box.cls[0])
-            class_name = detect_model.names[cls]  # Get class name from model
+            class_name = models_wrapper.detect_model.names[cls]  # Get class name from model
             h, w, _ = frame.shape
             x1 = max(0, x1)
             y1 = max(0, y1)
@@ -104,11 +116,15 @@ def get_face_data_from_person_crop(person_crop):
     """
     Detects faces in the person_crop, extracts aligned faces and their embeddings.
     Returns a list of ObjectDetection objects.
+    person_crop: numpy array of the cropped person image
     """
     face_data = []
+    if not models_wrapper.loaded:
+        models_wrapper.load_models()
+    assert models_wrapper.face_app is not None, "Face analysis model failed to load"
 
     try:
-        faces = face_app.get(person_crop)
+        faces = models_wrapper.face_app.get(person_crop)
         for face in faces:
             confidence = float(face.det_score)
 

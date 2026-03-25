@@ -4,9 +4,11 @@ from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
+from sqlalchemy import select
 from app_types import ActionType, CLIPFeatures, CustomFastAPI, CustomTarget, DaySummary, SummarySegment
 from constants import DIR, GROUPED_CATEGORIES, SEARCH_MODEL
-from database.types import ImageRecord
+from database.models import Image
+from database.types import ImageRecord, _orm_to_lifelog
 from database.vector_database import fetch_embeddings
 from llm import llm
 from llm.gemini import MixedContent, get_visual_content
@@ -229,33 +231,46 @@ def time_to_ms(date_str, time_str):
     )
 
 
-def create_day_timeline(app: CustomFastAPI, device: str, date: str):
-    activities = ImageRecord.aggregate(
-        [
+def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
+    records = session.execute(
+        select(Image).where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id != None,
+        ).order_by(Image.timestamp.asc())
+        ).fetchall()
+
+    records = [_orm_to_lifelog(r.Image) for r in records]
+
+    # Group by segment_id and aggregate activities, start_time, end_time, and image_paths
+    groups = {}
+    for record in records:
+        if record.segment_id not in groups:
+            groups[record.segment_id] = {
+                "activity": record.activity,
+                "time": [record.timestamp],
+                "image_paths": [record.image_path],
+            }
+        else:
+            groups[record.segment_id]["time"].append(record.timestamp)
+            groups[record.segment_id]["image_paths"].append(record.image_path)
+
+    activities = []
+    for data in groups.values():
+        activities.append(
             {
-                "$match": {
-                    "date": date,
-                    "deleted": False,
-                    "segment_id": {"$ne": None},
-                    "device": device,
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$segment_id",
-                    "activity": {"$first": "$activity"},
-                    "start_time": {"$min": "$timestamp"},
-                    "end_time": {"$max": "$timestamp"},
-                    "image_paths": {"$push": "$image_path"},
-                }
-            },
-            {"$sort": {"start_time": 1}},
-        ]
-    )
+                "activity": data["activity"],
+                "start_time": min(data["time"]),
+                "end_time": max(data["time"]),
+                "image_paths": data["image_paths"],
+            }
+        )
+
+    # Sort activities by start_time
+    activities.sort(key=lambda x: x["start_time"])
 
     print("Aggregated activities for day summary.")
-    activities = list(activities)
-
     if not activities:
         print("No activities found for the day.")
         return []
@@ -264,14 +279,14 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
     earliest_hour = 0
     latest_hour = 24
     if activities:
-        earliest_hour = datetime.fromtimestamp(activities[0].start_time / 1000).hour
-        latest_hour = datetime.fromtimestamp(activities[-1].end_time / 1000).hour + 1
+        earliest_hour = datetime.fromtimestamp(activities[0]["start_time"]).hour
+        latest_hour = datetime.fromtimestamp(activities[-1]["end_time"]).hour + 1
 
     print("Creating time slots from", earliest_hour, "to", latest_hour)
     time_slots = []
-    slot_duration = 5 * 60 * 1000
+    slot_duration = 5 * 60
     for slot_start in range(
-        earliest_hour * 60 * 60 * 1000, latest_hour * 60 * 60 * 1000, slot_duration
+        earliest_hour * 60 * 60, latest_hour * 60 * 60, slot_duration
     ):
         slot_end = slot_start + slot_duration
         time_slots.append((slot_start, slot_end))
@@ -282,12 +297,11 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
 
         seg_paths = []
         for segment in activities:
-            segment = segment.dict()
             if (
                 segment["end_time"]
-                >= slot_start + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
+                >= slot_start + datetime.strptime(date, "%Y-%m-%d").timestamp()
                 and segment["start_time"]
-                < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000
+                < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp()
             ):
                 slot_activities.append(segment["activity"] or "Unclear")
                 seg_paths.extend(segment["image_paths"])
@@ -315,18 +329,16 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
                 seg_feats,
                 encoded_activities_dict.get(activity),
             )
-            representative_image = ImageRecord.find_one(
-                filter={
-                    "device": device,
-                    "image_path": representative_image_paths[0],
-                }
-            )
-            representative_images = ImageRecord.find(
-                filter={
-                    "device": device,
-                    "image_path": {"$in": representative_image_paths},
-                },
-                sort=[("timestamp", 1)],
+            representative_image = session.execute(select(Image).where(
+                Image.device == device,
+                Image.image_path == representative_image_paths[0],
+            )).scalar_one_or_none()
+
+            representative_images = session.execute(
+                select(Image).where(
+                     Image.device == device,
+                     Image.image_path.in_(representative_image_paths),
+                ).order_by(Image.timestamp.asc())
             )
         else:
             representative_image = None
@@ -360,39 +372,69 @@ def create_day_timeline(app: CustomFastAPI, device: str, date: str):
     return merged_summary
 
 
-def summarize_day_by_text(day_summay: DaySummary):
+def summarize_day_by_text(session, day_summay: DaySummary):
     try:
-        raw_activities = ImageRecord.aggregate(
-            [
-                {
-                    "$match": {
-                        "date": day_summay.date,
-                        "deleted": False,
-                        "segment_id": {"$ne": None},
-                        "device": day_summay.device,
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": "$segment_id",
-                        "activity": {"$first": "$activity"},
-                        "activity_description": {"$first": "$activity_description"},
-                        "start_time": {"$min": "$timestamp"},
-                        "end_time": {"$max": "$timestamp"},
-                    }
-                },
-                {"$sort": {"start_time": 1}},
-            ]
-        )
+        # raw_activities = ImageRecord.aggregate(
+        #     [
+        #         {
+        #             "$match": {
+        #                 "date": day_summay.date,
+        #                 "deleted": False,
+        #                 "segment_id": {"$ne": None},
+        #                 "device": day_summay.device,
+        #             }
+        #         },
+        #         {
+        #             "$group": {
+        #                 "_id": "$segment_id",
+        #                 "activity": {"$first": "$activity"},
+        #                 "activity_description": {"$first": "$activity_description"},
+        #                 "start_time": {"$min": "$timestamp"},
+        #                 "end_time": {"$max": "$timestamp"},
+        #             }
+        #         },
+        #         {"$sort": {"start_time": 1}},
+        #     ]
+        # )
 
+        records = session.execute(
+            select(Image).where(
+                Image.device == day_summay.device,
+                Image.date == day_summay.date,
+                Image.deleted == False,
+                Image.segment_id != None,
+            ).order_by(Image.timestamp.asc())
+        ).fetchall()
+
+        recods = [_orm_to_lifelog(r.Image) for r in records]
+        groups = {}
+        for record in recods:
+            if record.segment_id not in groups:
+                groups[record.segment_id] = {
+                    "activity": record.activity,
+                    "activity_description": record.activity_description,
+                    "time": [record.timestamp],
+                }
+            else:
+                groups[record.segment_id]["time"].append(record.timestamp)
+
+        raw_activities = []
+        for data in groups.values():
+            raw_activities.append({
+                "activity": data["activity"],
+                "activity_description": data["activity_description"],
+                "start_time": min(data["time"]),
+                "end_time": max(data["time"]),
+            })
+        raw_activities.sort(key=lambda x: x["start_time"])
         day_summary = llm.generate_from_text(
             "What are 3 key activities I did during the day? Use note-style, avoid full sentences, less than 50 words in total, and focus on key activities.\n"
             "Ignore unclear activities.\n"
             + "\n".join(
                 [
-                    f"{seg.start_time} to {seg.end_time}: {seg.activity_description}"
+                    f'{seg["start_time"]} to {seg["end_time"]}: {seg["activity_description"]}'
                     for seg in raw_activities
-                    if seg.activity != "No Activity"
+                    if seg["activity"] != "No Activity"
                 ]
             )
         )
