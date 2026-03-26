@@ -20,6 +20,5 @@ def get_session():
 def close_db():
     engine.dispose()
 
-
 def init_db():
     connect("mongodb://localhost:27017/picam")

@@ -24,7 +24,6 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 
 def load_features(app: CustomFastAPI) -> AppFeatures:
-    feature_dir = "features"
     app_features = AppFeatures()
     # for device in os.listdir(feature_dir):
     #     device_features = DeviceFeatures()
@@ -41,24 +40,15 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
     return app_features
 
 
-def save_features(app: CustomFastAPI):
-    pass
-    # for device, device_features in app.features.items():
-    #     for model_name, features in device_features.items():
-    #         if features.collection:
-    #             features.collection.flush()
-    #             features.collection.optimize()
-
 
 def retrieve_image(session, device_id: str, text: str, sort_by, k):
     query = Query(text)
-    time_filters, date_filters = query.time_to_filters()
-    print(f"Time filters: {time_filters}, Date filters: {date_filters}")
+    filters = query.time_to_filters()
 
     emb = clip_model.encode_text(text)
     emb = apply_transformation(emb, get_matrix(session, device_id))
 
-    records = search_by_embedding(session, emb, device_id, k, sort_by)
+    records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
     # group by segment id
     segments: dict[str, List[LifelogImage]] = {}
@@ -72,7 +62,7 @@ def retrieve_image(session, device_id: str, text: str, sort_by, k):
     return list(segments.values())
 
 
-def search_by_embedding(session, emb, device_id, k, sort_by):
+def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
     stmt = (
         select(
             ImageEmbedding.embedding.cosine_distance(emb).label("distance"),
@@ -88,8 +78,15 @@ def search_by_embedding(session, emb, device_id, k, sort_by):
         )
         .order_by("distance")
         .join(Image, Image.id == ImageEmbedding.image_id)
-        .limit(k)
     )
+
+    for sql_filter in filters:
+        print(f"Applying filter: {sql_filter}")
+        if sql_filter is not None:
+            stmt = sql_filter(stmt)
+
+    stmt = stmt.limit(k)
+    print(f"Executing SQL: {stmt}")
 
     rows = session.execute(stmt).fetchall()
 

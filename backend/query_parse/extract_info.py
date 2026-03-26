@@ -1,7 +1,8 @@
 from collections import defaultdict
 import calendar
+from typing import Callable
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_, extract
 
 from database.models import Image
 from .utils import *
@@ -9,6 +10,7 @@ from .time import *
 from datetime import datetime, timedelta
 
 time_tagger = TimeTagger()
+weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 def filter_locations(location, disabled):
     if location in ["", "the house", "restaurant"] + disabled:
@@ -354,22 +356,14 @@ class Query:
             # Time
             s = self.start[0] * 3600 + self.start[1] * 60
             e = self.end[0] * 3600 + self.end[1] * 60
-            print(self.start, self.end, s, e)
             if s <= e:
                 # OR (should queries)
-                self.time_filters = [range_filter(s, e, "seconds_from_midnight")]
+                self.time_filters = range_filter(s, e, "seconds_from_midnight")
             else:  # either from midnight to end or from start to midnight
-                self.time_filters = [
-                    range_filter(0, e, "seconds_from_midnight"),
-                    range_filter(s, 24 * 3600, "seconds_from_midnight"),
-                ]
-            # combine the time filters using a bool should clause
-            # self.time_filters = {
-            #     "bool": {"should": self.time_filters, "minimum_should_match": 1}
-            # }
-            self.time_filters = lambda stmt: stmt.where(
-                or_(*[f(stmt) for f in self.time_filters])
-            )
+                self.time_filters = lambda stmt: stmt.where(or_(
+                    and_(Image.seconds_from_midnight >= 0, Image.seconds_from_midnight <= e),
+                    and_(Image.seconds_from_midnight >= s, Image.seconds_from_midnight <= 24 * 3600),
+                ))
 
             # Date
             # Preprocess the dates: if there is only one year available, add that year to all dates
@@ -391,9 +385,10 @@ class Query:
                     self.dates = new_dates
 
             # create a list to store the date filters
-            self.date_filters = []
+            self.date_filters : list[Callable] = []
             if self.dates:
                 self.query_visualisation["DATE"] = []
+                date_filters = []
                 for date in self.dates:
                     y, m, d = date
                     if not y and common_year:
@@ -424,14 +419,8 @@ class Query:
                         ymd_filter = lambda stmt: stmt.where(Image.day == d)
                         self.query_visualisation["DATE"].append(f"{d:02d}")
 
-                    self.date_filters.append(ymd_filter)
-                # combine the date filters using a bool should clause
-                # self.date_filters = {
-                #     "bool": {"should": self.date_filters, "minimum_should_match": 1}
-                # }
-                self.date_filters = lambda stmt: stmt.where(
-                    or_(*[f(stmt) for f in self.date_filters])
-                )
+                    date_filters.append(ymd_filter)
+                self.date_filters = [lambda stmt: stmt.where(or_(*[date_filter(stmt).whereclause for date_filter in date_filters]))]
 
             if (
                 self.start[0] != 0
@@ -443,7 +432,16 @@ class Query:
                     f"{self.start[0]:02d}:{self.start[1]:02d} - {self.end[0]:02d}:{self.end[1]:02d}"
                 ]
 
-        return self.time_filters, self.date_filters
+            # weekdays
+            if self.weekdays:
+                self.query_visualisation["WEEKDAY"].extend(self.weekdays)
+                weekday_nums = []
+                for weekday in self.weekdays:
+                    weekday_num = weekdays.index(weekday) + 1
+                    weekday_nums.append(weekday_num)
+                self.date_filters.append(lambda stmt: stmt.where(extract("dow", Image.local_timestamp).in_(weekday_nums)))
+
+        return [self.time_filters] + self.date_filters
 
     def make_location_query(self):
         if not self.location_filters:

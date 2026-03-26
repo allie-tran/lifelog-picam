@@ -34,7 +34,7 @@ const ImageWithDate = ({
     console.log('ImageWithDate rendered with image:', image);
     const formattedDate = timeOnly
         ? dayjs(image.timestamp).format('HH:mm')
-        : dayjs(image.timestamp).format('DD MMM YYYY HH:mm');
+        : dayjs(image.timestamp).format('dd DD MMM YYYY HH:mm');
 
     const handleDelete = async () => {
         setDeleted(true);

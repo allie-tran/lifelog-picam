@@ -34,7 +34,7 @@ from ingest import app as ingest_app
 from pipelines.all import process_video, process_image
 from pipelines.delete import mark_error, remove_physical_images
 from pipelines.hourly import update_app
-from preprocess import get_similar_images, load_features, retrieve_image, save_features
+from preprocess import get_similar_images, load_features, retrieve_image
 from scripts.anonymise import segment_image_with_sam
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
@@ -205,7 +205,6 @@ async def lifespan(app: CustomFastAPI):
     app.features = load_features(app)
     yield
     close_db()
-    save_features(app)
 
 
 # ---------------------------------------------------------------------------

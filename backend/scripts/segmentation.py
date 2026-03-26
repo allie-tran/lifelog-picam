@@ -59,8 +59,8 @@ def segment_images(
 
     # Get physical boundaries first (time difference too large)
     boundaries = set()
-    time_threshold = 2 * 60 * 1000  # 15 minutes in milliseconds
-    min_time = 2 * 60 * 1000  # 5 minutes in milliseconds
+    time_threshold = timedelta(minutes=5)
+    min_time = timedelta(minutes=2)
 
     records = session.execute(
         select(Image.image_path, Image.timestamp).where(
@@ -223,7 +223,7 @@ def load_all_segments(
 
     # Reset all the segments after the first unsegmented timestamp
     print(
-        f"First unsegmented image timestamp: {datetime.fromtimestamp(int(first_unsegmented_time / 1000))}"
+        f"First unsegmented image timestamp: {first_unsegmented_time}. Resetting segments for all images from this timestamp onwards..."
     )
     session.execute(
         update(Image)
@@ -299,12 +299,10 @@ def load_all_segments(
         session.execute(
             select(ImageEmbedding.embedding, Image.image_path).where(
                 ImageEmbedding.image_id.in_(_ids),
-            )
+            ).join(Image, ImageEmbedding.image_id == Image.id)
         )
-        .scalars()
-        .all()
     )
-    image_to_feats = {path: feat for feat, path in feats}
+    image_to_feats = {row.image_path: row.embedding for row in feats}
     feats = np.array([image_to_feats[path] for path in paths])
 
     print(f"Segmenting {len(feats)} images...")

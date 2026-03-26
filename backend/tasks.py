@@ -80,10 +80,13 @@ def yolo_process_images_task(
             if image_id_map.get(relative_path) is None:
                 continue
 
+            image_id = image_id_map[relative_path]
+
             for obj in objects:
+                obj = obj.model_dump()
                 object_rows.append(
                     {
-                        "image_id": image_id_map[relative_path],
+                        "image_id": image_id,
                         "label": obj["label"],
                         "confidence": obj["confidence"],
                         "bbox": obj["bbox"],
@@ -91,27 +94,32 @@ def yolo_process_images_task(
                 )
 
             for person in people:
+                person = person.model_dump()
                 person_rows.append(
                     {
-                        "image_id": image_id_map[relative_path],
+                        "image_id": image_id,
                         "label": person["label"],
                         "confidence": person["confidence"],
                         "bbox": person["bbox"],
-                        "embeddings": person["embeddings"],
+                        "embedding": person["embedding"],
                         "cluster_label": None,
                     }
                 )
             image_rows.append(relative_path)
 
-        session.execute(insert(ImageObject).values(object_rows))
-        session.execute(insert(ImagePerson).values(person_rows))
+        if object_rows:
+            session.execute(insert(ImageObject).values(object_rows))
+            logging.info(f"Inserted {len(object_rows)} objects into the database")
+        if person_rows:
+            session.execute(insert(ImagePerson).values(person_rows))
+            logging.info(f"Inserted {len(person_rows)} people into the database")
         session.execute(
             update(Image)
             .where(Image.image_path.in_(image_rows), Image.device == device)
             .values(
-                processed_yolo=True,
-                processed_insightface=True,
-                processed_deepface=False,
+                proc_yolo=True,
+                proc_insightface=True,
+                proc_deepface=False,
             )
         )
 
