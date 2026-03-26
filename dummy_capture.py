@@ -3,7 +3,7 @@ import signal
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from datetime import datetime
+from datetime import datetime, timezone
 import cv2
 
 import requests
@@ -44,7 +44,7 @@ def check_if_camera_connected():
     return False
 
 def capture_image():
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + IMAGE_EXTENSION
+    file_name = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S_%Z") + IMAGE_EXTENSION
     DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
@@ -72,7 +72,7 @@ def capture_image():
     return os.path.join(DATE_DIR, file_name)
 
 def record_video_until_interrupt(grace_period=5.0):
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".h264"
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S_%Z") + ".h264"
     DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
@@ -145,7 +145,7 @@ def main():
     mode = check_capturing_mode(timeout=5)
     print(f"Initial capturing mode: {mode}")
     last_capture_time = time.time()
-    CAPTURE_INTERVAL = 60
+    CAPTURE_INTERVAL = 10
     while True:
         try:
             current_time = time.time()

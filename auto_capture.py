@@ -21,7 +21,7 @@ def check_if_camera_connected():
         return False
 
 def capture_image():
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S_%Z.jpg")
+    file_name = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S_%Z.jpg")
     DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
