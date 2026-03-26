@@ -70,7 +70,7 @@ class LocationRegion(Base):
 class Location(Base):
     __tablename__ = "locations"
     __table_args__ = (
-        UniqueConstraint("name", "country", name="uq_location_name_country"),
+        UniqueConstraint("name", "address", name="uq_location_name_address"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -83,7 +83,9 @@ class Location(Base):
     icon_prefix = Column(Text)
     icon_suffix = Column(Text)
     icon_type = Column(Text)
+
     timezone = Column(Text)
+    address = Column(Text)
 
     cities = relationship(
         "LocationCity", back_populates="location", cascade="all, delete-orphan"
@@ -177,6 +179,7 @@ class DeviceWhitelistEmbedding(Base):
         nullable=False,
     )
     embedding = Column(Vector(512), nullable=False)
+
     entry = relationship("DeviceWhitelistEntry", back_populates="embeddings")
 
 
@@ -196,14 +199,9 @@ class Image(Base):
     thumbnail = Column(Text, nullable=False)
     is_video = Column(Boolean, nullable=False, default=False)
 
-    # # Image-level embedding (768-dim, from .npy files)
-    # embedding = Column(Vector(768), nullable=True)
-
     # Time
-    timestamp = Column(DateTime(timezone=False))  # stored in UTC, no timezone info
-    local_timestamp = Column(
-        DateTime(timezone=True)
-    )  # stored with timezone info, for display
+    timestamp = Column(DateTime(timezone=False)) # stored in UTC, no timezone info
+    local_timestamp = Column(DateTime(timezone=True)) # stored with timezone info, for display
 
     # Time from local_timestamp
     date = Column(Text)
@@ -259,7 +257,6 @@ class Image(Base):
 # Embedding
 # ---------------------------------------------------------------------------
 
-
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
 
@@ -277,8 +274,9 @@ class ImageGPS(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
-        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False, unique=True
     )
+
 
     # Raw scalars kept for debugging / display
     latitude = Column(Float, nullable=False)

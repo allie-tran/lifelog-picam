@@ -1,5 +1,5 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import numpy as np
@@ -192,7 +192,7 @@ def reset_all_segments(device_id):
     # )
 
 
-def find_first_unsegmented_timestamp(device_id, date: Optional[str] = None):
+def find_first_unsegmented_timestamp(session, device_id, date: Optional[str] = None):
     stmt = (
         select(Image.timestamp)
         .where(
@@ -204,7 +204,7 @@ def find_first_unsegmented_timestamp(device_id, date: Optional[str] = None):
         .order_by(Image.timestamp.asc())
         .limit(1)
     )
-    result = session.execute(stmt).scalar_one_or_none()
+    result = session.execute(stmt).scalars().first()
     return result
 
 
@@ -216,7 +216,7 @@ def load_all_segments(
     job_id: Optional[str] = None,
 ):
     # reset_all_segments()
-    first_unsegmented_time = find_first_unsegmented_timestamp(device_id, date)
+    first_unsegmented_time = find_first_unsegmented_timestamp(session, device_id, date)
     if first_unsegmented_time is None:
         print("All images are already segmented. Exiting.")
         return
@@ -285,12 +285,12 @@ def load_all_segments(
         print("No new images to segment. Exiting.")
         return
 
-    now = datetime.now(timezone.utc).timestamp() * 1000
+    now = datetime.now(timezone.utc)
     last_image_time = new_records[-1].timestamp
 
-    if len(paths) < 20 and now - last_image_time < 15 * 60 * 1000:
+    if len(paths) < 20 and now - last_image_time < timedelta(minutes=15):
         print(
-            f"Not enough new images to segment ({len(paths)}), and last image is new ({datetime.fromtimestamp(int(last_image_time / 1000))}). Skipping segmentation for now."
+            f"Not enough new images to segment ({len(paths)}), and last image is new ({last_image_time}). Skipping segmentation for now."
         )
         return
 

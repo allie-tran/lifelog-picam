@@ -272,7 +272,7 @@ async def upload_image(
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{device}/{date}"
     os.makedirs(folder, exist_ok=True)
@@ -284,12 +284,13 @@ async def upload_image(
             try:
                 device_doc = session.execute(
                     select(Device).where(Device.device_id == device)
-                ).fetchone()
-                if not device_doc or not device_doc.public_key:
+                ).scalar_one_or_none()
+                public_key = device_doc.public_key if device_doc else None
+                if public_key is None:
                     raise HTTPException(
                         status_code=403, detail="Device public key not found."
                     )
-                box = Box(server_sk, PublicKey(bytes.fromhex(device_doc.public_key)))
+                box = Box(server_sk, PublicKey(bytes.fromhex(str(public_key))))
                 image = decrypt_image(box, file)
             except Exception:
                 traceback.print_exc()
@@ -298,7 +299,7 @@ async def upload_image(
                     device,
                     date,
                     f"{date}/{file_name}",
-                    timestamp.timestamp() * 1000,
+                    timestamp.astimezone(timezone.utc).timestamp(),
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
@@ -337,7 +338,7 @@ async def upload_video(
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{device}/{date}"
     os.makedirs(folder, exist_ok=True)
@@ -515,11 +516,23 @@ async def get_images_by_hour(
     )
 
     serialized_segments = []
-    gps = []
+    all_images = []
     for segment in segments:
         serialized = [img.model_dump(by_alias=True) for img in segment["images"]]
         serialized_segments.append(serialized)
-        gps.extend(img["gps"] for img in serialized if img.get("gps") is not None)
+        all_images.extend([img.image_path for img in segment["images"]])
+
+
+    segment_gps = session.execute(
+        select(ImageGPS)
+        .where(ImageModel.date == date)
+        .where(ImageModel.deleted == False)
+        .where(ImageModel.device == device)
+        .where(ImageModel.image_path.in_(all_images))
+        .join(ImageModel, ImageModel.id == ImageGPS.image_id)
+        .order_by(ImageModel.timestamp.desc())
+    ).scalars().all()
+    gps = [GPSInfo.model_validate(g.__dict__) for g in segment_gps]
 
     return {
         "date": date,
@@ -931,6 +944,7 @@ def get_day_summary(
     my_targets = user.goal_targets or DEFAULT_TARGETS
 
     summary = summarize_lifelog_by_day(
+        session,
         summary, app.features[device][SEARCH_MODEL], my_targets
     )
 

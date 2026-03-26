@@ -32,6 +32,7 @@ encoded_activities_dict = {
 
 
 def summarize_lifelog_by_day(
+    session,
     summary: DaySummary,
     features: CLIPFeatures,
     targets: List[CustomTarget],
@@ -47,6 +48,7 @@ def summarize_lifelog_by_day(
     paths = [
         record.image_path
         for record in ImageRecord.find(
+            session,
             filter={"device": summary.device, "date": summary.date, "deleted": False}
         )
     ]
@@ -131,7 +133,7 @@ def summarize_lifelog_by_day(
                 seg_paths, seg_feats, query_vec
             )
             seg.representative_images = list(
-                ImageRecord.find({"image_path": {"$in": rep_indices}})
+                ImageRecord.find(session, {"image_path": {"$in": rep_indices}})
             )
             seg.representative_image = (
                 seg.representative_images[0] if seg.representative_images else None

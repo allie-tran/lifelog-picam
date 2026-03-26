@@ -101,7 +101,7 @@ def mark_error(
                 deleted=True,
                 deleted_time=datetime.now(timezone.utc),
                 timestamp=timestamp,
-                isVideo=False,
+                is_video=False,
                 date=date,
             )
         )

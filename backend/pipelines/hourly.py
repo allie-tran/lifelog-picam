@@ -35,23 +35,23 @@ def update_app(session, app: CustomFastAPI, job_id: str | None = None):
 
     # Segment images excluding deleted and low visual density images
     today = datetime.now().strftime("%Y-%m-%d")
-    for device_id in os.listdir(DIR):
-        days = session.execute(
-            select(Image.date)
-            .where(
-                Image.device == device_id,
-                Image.deleted == False,
-            )
-            .distinct()
-            .order_by(Image.date.desc())
-        )
-        for day in days:
-            load_all_segments(
-                session,
-                device_id,
-                day,
-                job_id=job_id,
-            )
+    # for device_id in os.listdir(DIR):
+    #     days = session.execute(
+    #         select(Image.date)
+    #         .where(
+    #             Image.device == device_id,
+    #             Image.deleted == False,
+    #         )
+    #         .distinct()
+    #         .order_by(Image.date.desc())
+    #     )
+    #     for day in days:
+    #         load_all_segments(
+    #             session,
+    #             device_id,
+    #             day,
+    #             job_id=job_id,
+    #         )
 
     # delete old faces
     an_hour_ago = datetime.now() - timedelta(hours=1)
@@ -59,13 +59,11 @@ def update_app(session, app: CustomFastAPI, job_id: str | None = None):
     delete_old_faces(session, device_id, an_hour_ago)
 
     for device in os.listdir(DIR):
-        # Let's do day-based
-        for date in os.listdir(os.path.join(DIR, device_id)):
-            load_all_segments(
-                session,
-                device_id,
-                date,
-                job_id=job_id,
-            )
+        load_all_segments(
+            session,
+            device_id,
+            today,
+            job_id=job_id,
+        )
     app.last_saved = datetime.now()
     return app

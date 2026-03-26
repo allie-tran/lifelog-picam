@@ -145,7 +145,7 @@ class LifelogImage(CamelCaseModel):
     device: str
     image_path: str  # YYYY-MM-DD/YYMMDD_HHMMSS.jpg
     timestamp: datetime
-    local_timestamp: datetime
+    local_timestamp: Optional[datetime] = None
     seconds_from_midnight: int = Field(
         default=0, ge=0, lt=24 * 3600
     )

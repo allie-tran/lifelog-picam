@@ -99,7 +99,7 @@ def process_file(
             return None
 
         date = dt.strftime("%Y-%m-%d")
-        new_filename = dt.strftime("%Y%m%d_%H%M%S") + Path(filename).suffix
+        new_filename = dt.strftime("%Y%m%d_%H%M%S_%Z") + Path(filename).suffix
         out_path = out_dir / date / new_filename
         if not out_path.parent.exists():
             out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime, timezone
 import os
 from typing import Optional
@@ -53,7 +54,8 @@ def index_to_postgres(
     session, device_id: str, relative_path: str, skip_segmentation: bool = False
 ):
     date, file_name = relative_path.split("/")
-    timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
+    local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S_%Z.jpg")
+    timestamp = local_timestamp.astimezone(timezone.utc)
 
     session.execute(
         insert(Image).values(
@@ -62,9 +64,13 @@ def index_to_postgres(
             image_path=relative_path,
             thumbnail=relative_path.replace(".jpg", ".webp"),
             timestamp=timestamp.replace(tzinfo=timezone.utc),
+            local_timestamp=local_timestamp,
+            year=local_timestamp.year,
+            month=local_timestamp.month,
+            day=local_timestamp.day,
+            hour=local_timestamp.hour,
+            seconds_from_midnight=local_timestamp.hour * 3600 + local_timestamp.minute * 60 + local_timestamp.second,
             is_video=False,
-            objects=[],
-            people=[],
             proc_yolo=False,
             proc_encoded=False,
             proc_sam3=False,
@@ -145,7 +151,7 @@ def encode_image(
         vector = clip_model.encode_image(path)
         vector = vector.flatten()
         vector = apply_transformation(
-            vector, matrix if matrix else get_matrix(device_id)
+            vector, matrix if matrix else get_matrix(session, device_id)
         )
         session.execute(
             insert(ImageEmbedding).values(
@@ -182,20 +188,23 @@ def process_image(
 
         white_list_entrys = session.execute(
             select(DeviceWhitelistEntry)
-            .where(DeviceWhitelistEntry.device_id == session.execute(select(Device.id).where(Device.id == device_id)).scalar_one())
-        ).fetchall()
+            .where(DeviceWhitelistEntry.device_id == session.execute(select(Device.id).where(Device.device_id == device_id)).scalar_one())
+        ).scalars().all()
+        ids = [entry.id for entry in white_list_entrys]
 
         white_list_embeddings = session.execute(
             select(DeviceWhitelistEmbedding)
-            .where(DeviceWhitelistEmbedding.entry_id.in_([entry.id for entry in white_list_entrys]))
-        ).fetchall()
-        embeddings_by_entry = {entry.entry_id: entry.embedding for entry in white_list_embeddings}
+            .where(DeviceWhitelistEmbedding.entry_id.in_(ids))
+        ).scalars().all()
+        embeddings_by_entry = defaultdict(list)
+        for embedding in white_list_embeddings:
+            embeddings_by_entry[embedding.entry_id].append(embedding.embedding)
 
         for entry in white_list_entrys:
             white_list.append(
                 Person(
                     name=entry.name,
-                    cropped=entry.crop,
+                    cropped=entry.cropped,
                     embeddings=embeddings_by_entry.get(entry.id, []),
                 )
             )
@@ -217,7 +226,7 @@ def process_video(
     raise NotImplementedError("Video processing is not implemented yet")
     # output_path = f"{DIR}/{device_id}/{date}/{file_name}"
     # assert collection, "Collection must be provided for processing images"
-    # timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S")
+    # timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
     # make_video_thumbnail(output_path)
     # ImageRecord(
     #     device=device_id,

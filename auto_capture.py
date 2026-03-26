@@ -2,7 +2,7 @@ import os
 import signal
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import cv2
 from picamzero import Camera
@@ -21,8 +21,8 @@ def check_if_camera_connected():
         return False
 
 def capture_image():
-    file_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
-    DATE_DIR = os.path.join(OUTPUT, datetime.now().strftime("%Y-%m-%d"))
+    file_name = datetime.now().strftime("%Y%m%d_%H%M%S_%Z.jpg")
+    DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     if not os.path.exists(DATE_DIR):
         os.makedirs(DATE_DIR)

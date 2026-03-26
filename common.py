@@ -28,9 +28,8 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         return "photo"
 
     timestamp = datetime.strptime(
-        os.path.basename(image_path).replace(IMAGE_EXTENSION, ""), "%Y%m%d_%H%M%S"
+        os.path.basename(image_path).replace(IMAGE_EXTENSION, ""), "%Y%m%d_%H%M%S_%Z"
     )
-    timestamp = int(timestamp.timestamp() * 1000)
 
     # Send form-data request
     with open(image_path, "rb") as img_file:
