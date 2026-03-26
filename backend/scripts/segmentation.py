@@ -286,7 +286,7 @@ def load_all_segments(
         return
 
     now = datetime.now(timezone.utc)
-    last_image_time = new_records[-1].timestamp
+    last_image_time = new_records[-1].local_timestamp or new_records[-1].timestamp.astimezone(timezone.utc)
 
     if len(paths) < 20 and now - last_image_time < timedelta(minutes=15):
         print(

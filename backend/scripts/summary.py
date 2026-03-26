@@ -1,20 +1,19 @@
 # Summary of various activities in the day
 
 from datetime import datetime, timedelta
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, List
 
+import os
 import numpy as np
 from sqlalchemy import select
 from app_types import ActionType, CLIPFeatures, CustomFastAPI, CustomTarget, DaySummary, SummarySegment
-from constants import DIR, GROUPED_CATEGORIES, SEARCH_MODEL
-from database.models import Image
+from constants import DIR, GROUPED_CATEGORIES
+from database.models import Image, ImageEmbedding
 from database.types import ImageRecord, _orm_to_lifelog
-from database.vector_database import fetch_embeddings
 from llm import llm
 from llm.gemini import MixedContent, get_visual_content
 from visual import clip_model
 
-from scripts.clip_classifier import ClipPromptClassifier
 from scripts.segmentation import pick_representative_index_for_segment
 
 SocialClassifier = Callable[[np.ndarray], bool]
@@ -52,7 +51,15 @@ def summarize_lifelog_by_day(
             filter={"device": summary.device, "date": summary.date, "deleted": False}
         )
     ]
-    paths, feats = fetch_embeddings(collection, paths, summary.device)
+
+    feats = session.execute(
+        select(ImageEmbedding.embedding, Image.image_path).where(
+            Image.image_path.in_(paths),
+        ).join(Image, ImageEmbedding.image_id == Image.id)
+    )
+    image_to_feats = {row.image_path: row.embedding for row in feats}
+    feats = np.array([image_to_feats[path] for path in paths])
+
 
     # 1. Handle BINARY and BURST targets (Frame-by-frame analysis)
     # We pre-encode the prompts for efficiency
@@ -83,7 +90,12 @@ def summarize_lifelog_by_day(
                 if action_type == ActionType.BINARY:
                     summary.binary_metrics[name] += 1
                 elif action_type == ActionType.BURST:
-                    timestamp = float(paths[idx].split("_")[-1].replace(".jpg", ""))
+                    basename = os.path.basename(paths[idx]).split(".")[0]
+                    if len(basename) > 15:
+                        # timezone info
+                        timestamp = datetime.strptime(basename, "%Y%m%d_%H%M%S_%Z").timestamp()
+                    else:
+                        timestamp = datetime.strptime(basename, "%Y%m%d_%H%M%S").timestamp()
                     if summary.burst_metrics[name] and timestamp - summary.burst_metrics[name][-1] < 30:
                         summary.burst_metrics[name][-1] = timestamp
                     else:
@@ -128,7 +140,7 @@ def summarize_lifelog_by_day(
         query_vec = clip_model.encode_text(f"a photo of {target_name}", normalize=True)
         for seg in merged:
             # (Selection logic for representative images remains same as your snippet)
-            seg_paths, seg_feats = get_segment_data(summary, seg, collection)
+            seg_paths, seg_feats = get_segment_data(session, summary, seg)
             rep_indices = pick_representative_index_for_segment(
                 seg_paths, seg_feats, query_vec
             )
@@ -211,9 +223,10 @@ def generate_period_description(target_name: str, segments: List[SummarySegment]
 
 
 
-def get_segment_data(summary, segment, collection):
+def get_segment_data(session, summary, segment):
     # Helper to fetch embeddings for a specific time range
     records = ImageRecord.find(
+        session,
         filter={
             "device": summary.device,
             "timestamp": {
@@ -223,7 +236,15 @@ def get_segment_data(summary, segment, collection):
         }
     )
     paths = [r.image_path for r in records]
-    return fetch_embeddings(collection, paths, summary.device)
+
+    feats = session.execute(
+        select(ImageEmbedding.embedding, Image.image_path).where(
+            Image.image_path.in_(paths),
+        ).join(Image, ImageEmbedding.image_id == Image.id)
+    )
+    image_to_feats = {row.image_path: row.embedding for row in feats}
+    seg_feats = np.array([image_to_feats[path] for path in paths])
+    return paths, seg_feats
 
 
 def time_to_ms(date_str, time_str):
@@ -281,12 +302,13 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
     earliest_hour = 0
     latest_hour = 24
     if activities:
-        earliest_hour = datetime.fromtimestamp(activities[0]["start_time"]).hour
-        latest_hour = datetime.fromtimestamp(activities[-1]["end_time"]).hour + 1
+        earliest_hour = activities[0]["start_time"].hour
+        latest_hour = activities[-1]["end_time"].hour + 1
 
     print("Creating time slots from", earliest_hour, "to", latest_hour)
     time_slots = []
     slot_duration = 5 * 60
+
     for slot_start in range(
         earliest_hour * 60 * 60, latest_hour * 60 * 60, slot_duration
     ):
@@ -300,10 +322,8 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
         seg_paths = []
         for segment in activities:
             if (
-                segment["end_time"]
-                >= slot_start + datetime.strptime(date, "%Y-%m-%d").timestamp()
-                and segment["start_time"]
-                < slot_end + datetime.strptime(date, "%Y-%m-%d").timestamp()
+                segment["end_time"] >= datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
+                and segment["start_time"] < datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
             ):
                 slot_activities.append(segment["activity"] or "Unclear")
                 seg_paths.extend(segment["image_paths"])
@@ -322,10 +342,22 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
         ).strftime("%H:%M:%S")
 
         if seg_paths:
-            seg_paths, seg_feats = fetch_embeddings(
-                app.features[device][SEARCH_MODEL].collection, seg_paths,
-                device,
+            # seg_paths, seg_feats = fetch_embeddings(
+            #     app.features[device][SEARCH_MODEL].collection, seg_paths,
+            #     device,
+            # )
+
+            # Get features
+            feats = (
+                session.execute(
+                    select(ImageEmbedding.embedding, Image.image_path).where(
+                        Image.image_path.in_(seg_paths),
+                    ).join(Image, ImageEmbedding.image_id == Image.id)
+                )
             )
+            image_to_feats = {row.image_path: row.embedding for row in feats}
+            seg_feats = np.array([image_to_feats[path] for path in seg_paths])
+
             representative_image_paths = pick_representative_index_for_segment(
                 seg_paths,
                 seg_feats,
@@ -335,13 +367,17 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
                 Image.device == device,
                 Image.image_path == representative_image_paths[0],
             )).scalar_one_or_none()
+            representative_image = _orm_to_lifelog(representative_image) if representative_image else None
 
             representative_images = session.execute(
                 select(Image).where(
                      Image.device == device,
                      Image.image_path.in_(representative_image_paths),
                 ).order_by(Image.timestamp.asc())
-            )
+            ).scalars().all()
+            representative_images = [
+                _orm_to_lifelog(img) for img in representative_images
+            ]
         else:
             representative_image = None
             representative_images = []

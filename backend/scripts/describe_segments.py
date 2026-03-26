@@ -65,7 +65,6 @@ Return with the following format:
 
 
 def describe_segment(
-    mongo_collection,
     device: str,
     date: str,
     segment: list[str],
@@ -97,7 +96,11 @@ def describe_segment(
 
     if not image_bytes:
         logger.error(f"Segment {segment_id}: no valid images, skipping.")
-        return ""
+        return {
+            "activity": "Unclear",
+            "activity_description": "",
+            "activity_confidence": "Low",
+        }
 
     final_category = "Unclear"
     category = "Unclear"
@@ -154,14 +157,8 @@ def describe_segment(
 
     logger.info(f"Segment {segment_id}: final category={final_category}")
 
-    mongo_collection.update_one(
-        {"segment_id": segment_id, "device": device, "date": date},
-        {
-            "$set": {
+    return {
                 "activity": final_category,
                 "activity_description": description,
                 "activity_confidence": confidence,
             }
-        },
-    )
-    return description

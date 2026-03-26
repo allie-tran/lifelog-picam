@@ -17,6 +17,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logging.info("Starting Celery worker for describe_segment_task...")
+PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
 
 
 @celery.task(name="tasks.describe_segment_task")
@@ -24,24 +25,38 @@ def describe_segment_task(
     device, date, thumbnail_paths, segment_id, extra_info: list[str] = []
 ):
     mongo_client = MongoClient("mongodb://localhost:27017/")
-    try:
-        describe_segment(
-            mongo_client["picam"]["users"],
-            device,
-            date,
-            thumbnail_paths,
-            segment_id=segment_id,
-            extra_info=extra_info,
-        )
-        mongo_client["picam"]["day_summaries"].update_one(
-            {"date": date, "device": device},
-            {"$set": {"updated": True}},
-            upsert=True,
-        )
-    except Exception as e:
-        logging.error(
-            f"Error describing segment {segment_id} for {device} on {date}: {e}"
-        )
+    engine = create_engine(PG_URI)
+    with Session(engine) as session:
+        try:
+            activity_obj = describe_segment(
+                device,
+                date,
+                thumbnail_paths,
+                segment_id=segment_id,
+                extra_info=extra_info,
+            )
+
+            stmt = update(Image).where(
+                    Image.device == device,
+                    Image.segment_id == segment_id,
+                    Image.date == date,
+                ).values(activity=activity_obj["activity"], activity_description=activity_obj["activity_description"], activity_confidence=activity_obj["activity_confidence"])
+
+            logging.info(f"Updating database for segment {segment_id} with activity '{activity_obj['activity']}' and confidence '{activity_obj['activity_confidence']}'")
+            pg_result = session.execute(stmt)
+            logging.info(f"Updated {pg_result.rowcount} rows in the database for segment {segment_id}")
+            session.commit()
+            session.flush()
+
+            mongo_client["picam"]["day_summaries"].update_one(
+                {"date": date, "device": device},
+                {"$set": {"updated": True}},
+                upsert=True,
+            )
+        except Exception as e:
+            logging.error(
+                f"Error describing segment {segment_id} for {device} on {date}: {e}"
+            )
 
 
 @celery.task(name="tasks.yolo_process_images_task")
@@ -51,7 +66,6 @@ def yolo_process_images_task(
     whitelist_names: list[str] = [],
     whitelist_embeddings: list[list[list[float]]] = [],
 ):
-    PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
     engine = create_engine(PG_URI)
 
     whitelist = [

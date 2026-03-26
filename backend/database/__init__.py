@@ -15,6 +15,7 @@ def get_session():
     try:
         yield session
     finally:
+        session.flush()
         session.close()
 
 def close_db():

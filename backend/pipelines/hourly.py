@@ -1,13 +1,8 @@
 from datetime import datetime, timedelta
 import os
 
-from sqlalchemy import select
-
-
 from app_types import CustomFastAPI
-from constants import DIR, SEARCH_MODEL
-from database.models import Image
-from database.types import ImageRecord
+from constants import DIR
 from scripts.face_recognition import delete_old_faces
 from scripts.segmentation import load_all_segments
 from scripts.sync import sync_images
@@ -25,33 +20,12 @@ def update_app(session, app: CustomFastAPI, job_id: str | None = None):
         to_sync = True
 
     if to_sync:
-        for device in app.features.keys():
+        for device in os.listdir(DIR):
             if device == "allie" or (job_id and job_id.startswith(device)):
-                collection = app.features[device][SEARCH_MODEL].collection
-                assert (
-                    collection is not None
-                ), f"ZVec collection for device {device} is not initialized"
                 sync_images(session, device)
 
     # Segment images excluding deleted and low visual density images
     today = datetime.now().strftime("%Y-%m-%d")
-    # for device_id in os.listdir(DIR):
-    #     days = session.execute(
-    #         select(Image.date)
-    #         .where(
-    #             Image.device == device_id,
-    #             Image.deleted == False,
-    #         )
-    #         .distinct()
-    #         .order_by(Image.date.desc())
-    #     )
-    #     for day in days:
-    #         load_all_segments(
-    #             session,
-    #             device_id,
-    #             day,
-    #             job_id=job_id,
-    #         )
 
     # delete old faces
     an_hour_ago = datetime.now() - timedelta(hours=1)

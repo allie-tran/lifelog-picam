@@ -85,34 +85,6 @@ def check_if_exists(collection, image_path):
     doc = collection.get(to_id(image_path))
     return doc is not None
 
-
-def fetch_embeddings(collection, image_paths, device_id):
-    collection.flush()
-    ids = [to_id(image_path) for image_path in image_paths]
-    docs = collection.fetch(ids=ids)
-    vectors = {id: doc.vectors["embedding"] for (id, doc) in docs.items()}
-
-    missing = [id for id in ids if id not in docs]
-    for id in missing:
-        try:
-            path = id.replace("_", "/", 1)
-            path = f"{DIR}/{device_id}/{path}"
-            vector = clip_model.encode_image(path)
-            vector = vector.astype(np.float32).flatten()
-            insert_embedding(collection, vector, id.replace("_", "/", 1))
-            vectors[id] = vector
-        except Exception:
-            continue
-
-    valid_paths = [id for id in ids if id in vectors]
-    # TODO! remove
-
-    arrays = [vectors[id] for id in valid_paths]
-    arrays = [np.array(arr) for arr in arrays]
-
-    valid_paths = [id.replace("_", "/", 1) for id in valid_paths]
-    return valid_paths, np.vstack(arrays) if arrays else np.empty((0, 768), dtype=np.float32)
-
 def backup_collection(collection):
     backup_path = f"{collection.path}_backup"
     path = collection.path
