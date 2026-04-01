@@ -19,6 +19,14 @@ export type GPSData = {
     elevation: number;
 };
 
+export type LocationData = {
+    name: string;
+    address: string;
+    country: string;
+    info?: string;
+    timezone?: string;
+};
+
 type ImageObject = {
     imagePath: string;
     thumbnail: string;
@@ -30,6 +38,11 @@ type ImageObject = {
     segmentId?: string;
     new?: boolean;
 };
+
+export type ResultSegment = {
+    images: ImageObject[];
+    location: LocationData;
+}
 
 type SummarySegment = {
     representativeImage: ImageObject;

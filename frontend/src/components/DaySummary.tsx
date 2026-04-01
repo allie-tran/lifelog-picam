@@ -80,10 +80,13 @@ const DaySummaryComponent = () => {
 
     const handleProcess = async (reprocess: boolean) => {
         setIsLoading(true);
-        return processDate(deviceId, date || '', reprocess).then(() => {
+        try {
+            await processDate(deviceId, date || '', reprocess);
             mutate();
-            setIsLoading(false);
-        });
+        } catch (error) {
+            console.error('Error processing date:', error);
+        }
+        setIsLoading(false);
     };
 
     const handleGoalSave = async (goals: CustomGoal[]) => {

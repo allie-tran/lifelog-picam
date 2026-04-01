@@ -32,12 +32,15 @@ def update_app(session, app: CustomFastAPI, job_id: str | None = None):
     device_id = "allie"
     delete_old_faces(session, device_id, an_hour_ago)
 
+    # Segment images for today
     for device in os.listdir(DIR):
         load_all_segments(
             session,
             device_id,
             today,
+            skip_annotations=False,
             job_id=job_id,
         )
+
     app.last_saved = datetime.now()
     return app

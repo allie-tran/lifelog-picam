@@ -76,6 +76,7 @@ class Location(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(Text)
     country = Column(Text)
+    address = Column(Text)
     fsq_id = Column(Text, unique=True, nullable=True)
     info = Column(Text)
     stop = Column(Boolean)
@@ -263,7 +264,7 @@ class Image(Base):
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
 
-    image_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_id = Column(UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), primary_key=True)
     embedding = Column(Vector(768), nullable=False)
 
 

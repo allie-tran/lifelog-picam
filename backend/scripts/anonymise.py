@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ExifTags
 from ultralytics.models.sam import SAM3SemanticPredictor
 from ultralytics.models import FastSAM
 
@@ -200,8 +200,15 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
     )  # Convert to RGB for PIL
     img = Image.fromarray(anonymised_image)
     img.thumbnail((1080, 1080))
-    img.save(thumbnail_path, "WEBP", quality=quality)
-
+    # copy EXIF data from original image
+    image = Image.open(image_path)
+    exif = image.getexif()
+    # remove size related EXIF data to prevent issues with thumbnail
+    for tag in ExifTags.TAGS.keys():
+        if ExifTags.TAGS[tag] in ["ExifImageWidth", "ExifImageHeight", "ImageWidth", "ImageLength"]:
+            if tag in exif:
+                del exif[tag]
+    img.save(thumbnail_path, "WEBP", quality=quality, exif=exif)
 
 # Create a FastSAM model
 model = FastSAM("FastSAM-x.pt")  # or FastSAM-x.pt

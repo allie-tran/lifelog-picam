@@ -105,9 +105,12 @@ def assign_gps_to_images(date, points, point_timestamps):
                     img_gap = (img_ts - left["timestamp"]).total_seconds()
                     ratio = img_gap / total_gap
                     closest = {
-                        "latitude": left["latitude"] + ratio * (right["latitude"] - left["latitude"]),
-                        "longitude": left["longitude"] + ratio * (right["longitude"] - left["longitude"]),
-                        "elevation": left["elevation"] + ratio * (right["elevation"] - left["elevation"]),
+                        "latitude": left["latitude"]
+                        + ratio * (right["latitude"] - left["latitude"]),
+                        "longitude": left["longitude"]
+                        + ratio * (right["longitude"] - left["longitude"]),
+                        "elevation": left["elevation"]
+                        + ratio * (right["elevation"] - left["elevation"]),
                         "timestamp": img_ts,
                         "date": date,
                         "interpolated": True,
@@ -137,36 +140,16 @@ def assign_gps_to_images(date, points, point_timestamps):
                     "interpolated": True,
                 }
 
-        closest["timestamp"] = closest["timestamp"].replace(tzinfo=timezone.utc).timestamp()
+        closest["timestamp"] = (
+            closest["timestamp"].replace(tzinfo=timezone.utc).timestamp()
+        )
         closest["image_id"] = image.id
         closest["gaps_s"] = gap_s.total_seconds()
-        closest["formatted_time"] = datetime.utcfromtimestamp(closest["timestamp"]).strftime("%Y%m%d_%H%M%S")
+        closest["formatted_time"] = datetime.utcfromtimestamp(
+            closest["timestamp"]
+        ).strftime("%Y%m%d_%H%M%S")
         closest["date"] = date
         rows.append(closest)
-
-    # gaps = [gap.total_seconds() for gap in gaps]
-    # total = len(images)
-    # print(f"Date:             {date}")
-    # print(f"Total images:     {total}")
-    # print(f"GPS points:       {len(points)}")
-    # print(
-    #     f"  within 30s:     {stats['within_30s']} ({100*stats['within_30s']//total}%)"
-    # )
-    # print(
-    #     f"  within 60s:     {stats['within_60s']} ({100*stats['within_60s']//total}%)"
-    # )
-    # print(
-    #     f"  gap too large:  {stats['gap_too_large']} ({100*stats['gap_too_large']//total}%)"
-    # )
-    # print(
-    #     f"  no gps data:    {stats['no_gps_data']} ({100*stats['no_gps_data']//total}%)"
-    # )
-    # if gaps:
-    #     print(f"Median gap:       {sorted(gaps)[len(gaps)//2]:.2f}s")
-    #     print(f"Max gap:          {max(gaps):.2f}s")
-    #     print(f"Mean gap:         {sum(gaps)/len(gaps):.2f}s")
-    # print(rows[:2])  # print first 2 rows for sanity check
-    # print(f"Inserted {len(rows)} GPS records for {date}\n")
 
     session.execute(insert(ImageGPS), rows)
     session.commit()
@@ -211,19 +194,3 @@ if __name__ == "__main__":
     dates = sorted(set(dates))
     for date in tqdm(dates):
         assign_gps_to_images(date, all_points, point_timestamps)
-
-
-    # export to CSV for analysis
-    # with open("gps_points.csv", "w") as f:
-    #     f.write(",".join(field_names) + "\n")
-    #     for point in all_points:
-    #         f.write(",".join(str(point.get(name, "")) for name in field_names) + "\n")
-
-    # # After processing all dates, print overall stats, counting how many images have GPS data and how many don't
-    # total_images = session.execute(select(Image).where(Image.device == "cathal")).fetchall()
-    # total_images = len(total_images)
-    # gps_count = session.execute(select(ImageGPS).join(Image, ImageGPS.image_id == Image.id).where(Image.device == "cathal")).fetchall()
-    # gps_count = len(gps_count)
-    # print("\nOverall Stats:")
-    # print(f"Total images: {total_images}")
-    # print(f"Images with GPS: {gps_count} ({100*gps_count//total_images}%)")

@@ -1,5 +1,5 @@
 import { Button, Divider, Stack, TextField, Typography } from '@mui/material';
-import { ImageObject } from '@utils/types';
+import { ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import { CONFIDENCE_COLOURS } from 'constants/activityColors';
@@ -16,11 +16,13 @@ const LifelogEvent = ({
     onChange,
     deleteRow,
     fullTime = false,
+    location,
 }: {
     segment: ImageObject[];
     onChange: () => void;
     deleteRow: (imagePaths: string[]) => void;
     fullTime?: boolean;
+    location?: LocationData;
 }) => {
     const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId);
@@ -30,7 +32,6 @@ const LifelogEvent = ({
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
     const color = CONFIDENCE_COLOURS[firstImage?.activityConfidence || 0];
-
 
     return (
         <React.Fragment>
@@ -48,7 +49,12 @@ const LifelogEvent = ({
                     justifyContent="space-between"
                     alignItems="center"
                 >
-                    <Stack direction="row" spacing={1} flexShrink={0} alignItems="center">
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        flexShrink={0}
+                        alignItems="center"
+                    >
                         <Typography variant="subtitle1" fontWeight="bold">
                             {firstImage.activity
                                 ? `${firstImage.activity}`
@@ -72,9 +78,33 @@ const LifelogEvent = ({
                         {dayjs(lastImage.timestamp).format('HH:mm:ss')} -{' '}
                         {dayjs(firstImage.timestamp).format('HH:mm:ss')}{' '}
                         {fullTime && (
-                            <strong>{dayjs(firstImage.timestamp).format('ll')}</strong>
+                            <strong>
+                                {dayjs(firstImage.timestamp).format('ll')}
+                            </strong>
                         )}
                     </Typography>
+                </Stack>
+                <Stack direction="row" spacing={1} alignItems="center">
+                    {location ? (
+                        <Stack spacing={1}>
+                            <Typography
+                                variant="subtitle2"
+                                color="textSecondary"
+                            >
+                                {location.name}, {location.country} ({location.info})
+                            </Typography>
+                            <Typography
+                                variant="subtitle2"
+                                color="textSecondary"
+                            >
+                                {location.address}
+                            </Typography>
+                        </Stack>
+                    ) : (
+                        <Typography variant="subtitle2" color="textSecondary">
+                            No location data
+                        </Typography>
+                    )}
                 </Stack>
                 <Typography>{firstImage.activityDescription}</Typography>
                 <Stack direction="row" spacing={2} alignItems="center">

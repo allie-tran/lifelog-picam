@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { ActionType, CustomGoal, GPSData, ImageObject, Point } from 'utils/types';
+import { ActionType, CustomGoal, GPSData, ImageObject, Point, ResultSegment } from 'utils/types';
 import { getCookie, parseErrorResponse } from 'utils/misc';
 
 axios.defaults.headers.common['Authorization'] = `Bearer ${getCookie('token')}`;
@@ -52,7 +52,7 @@ export const getImagesByHour = async (
         date: string;
         hour: number;
         images: ImageObject[];
-        segments: ImageObject[][];
+        segments: ResultSegment[];
         available_hours: number[];
         total_pages: number;
         gps: GPSData[];

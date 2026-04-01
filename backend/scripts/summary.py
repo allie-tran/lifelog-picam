@@ -5,8 +5,10 @@ from typing import Callable, List
 
 import os
 import numpy as np
+from pydantic import BaseModel
 from sqlalchemy import select
-from app_types import ActionType, CLIPFeatures, CustomFastAPI, CustomTarget, DaySummary, SummarySegment
+from app_types import ActionType, CustomTarget, DaySummary, SummarySegment
+from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, GROUPED_CATEGORIES
 from database.models import Image, ImageEmbedding
 from database.types import ImageRecord, _orm_to_lifelog
@@ -14,7 +16,7 @@ from llm import llm
 from llm.gemini import MixedContent, get_visual_content
 from visual import clip_model
 
-from scripts.segmentation import pick_representative_index_for_segment
+from scripts.segmentation import fetch_embeddings, pick_representative_index_for_segment
 
 SocialClassifier = Callable[[np.ndarray], bool]
 ActivityClassifier = Callable[[np.ndarray], str]  # returns a category label
@@ -33,16 +35,11 @@ encoded_activities_dict = {
 def summarize_lifelog_by_day(
     session,
     summary: DaySummary,
-    features: CLIPFeatures,
     targets: List[CustomTarget],
-    *,
-    seconds_per_image: int = 10,
 ) -> DaySummary:
     """
     Summarize lifelog with custom targets: Bursts, Periods, and Binary.
     """
-    collection = features.collection
-
     # Fetch all image paths and embeddings for the day
     paths = [
         record.image_path
@@ -51,15 +48,7 @@ def summarize_lifelog_by_day(
             filter={"device": summary.device, "date": summary.date, "deleted": False}
         )
     ]
-
-    feats = session.execute(
-        select(ImageEmbedding.embedding, Image.image_path).where(
-            Image.image_path.in_(paths),
-        ).join(Image, ImageEmbedding.image_id == Image.id)
-    )
-    image_to_feats = {row.image_path: row.embedding for row in feats}
-    feats = np.array([image_to_feats[path] for path in paths])
-
+    paths, feats = fetch_embeddings(session, summary.device, paths)
 
     # 1. Handle BINARY and BURST targets (Frame-by-frame analysis)
     # We pre-encode the prompts for efficiency
@@ -70,6 +59,10 @@ def summarize_lifelog_by_day(
         action_type = target.action_type
         encoded_query = clip_model.encode_text(f"a photo of {name}", normalize=True)
         encoded_negative_query = clip_model.encode_text(f"a photo without {name}", normalize=True)
+
+        encoded_query = apply_transformation(encoded_query, get_matrix(session, summary.device))
+        encoded_negative_query = apply_transformation(encoded_negative_query, get_matrix(session, summary.device))
+
         target_configs.append((name, action_type, encoded_query, encoded_negative_query))
 
         if action_type == ActionType.BINARY:
@@ -79,6 +72,7 @@ def summarize_lifelog_by_day(
 
     all_feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)  # Normalize for cosine similarity
     summary.total_images = len(paths)
+
     for name, action_type, query_vec, neg_query_vec in target_configs:
         print(f"Processing target: {name} with action type {action_type}")
         all_pos_sim = all_feats @ query_vec
@@ -126,9 +120,7 @@ def summarize_lifelog_by_day(
         current_seg = target_segments[0]
 
         for next_seg in target_segments[1:]:
-            current_end = datetime.strptime(current_seg.end_time, "%H:%M:%S")
-            next_start = datetime.strptime(next_seg.start_time, "%H:%M:%S")
-            if (next_start - current_end).total_seconds() <= 30 * 60:
+            if (next_seg.start_time - current_seg.end_time) <= timedelta(minutes=30):
                 current_seg.end_time = next_seg.end_time
                 current_seg.duration += next_seg.duration
             else:
@@ -144,9 +136,14 @@ def summarize_lifelog_by_day(
             rep_indices = pick_representative_index_for_segment(
                 seg_paths, seg_feats, query_vec
             )
-            seg.representative_images = list(
-                ImageRecord.find(session, {"image_path": {"$in": rep_indices}})
-            )
+            seg.representative_images = [_orm_to_lifelog(img) for img in
+                                         session.execute(
+                    select(Image).where(
+                        Image.device == summary.device,
+                        Image.image_path.in_(rep_indices),
+                    )
+                ).scalars().all()]
+
             seg.representative_image = (
                 seg.representative_images[0] if seg.representative_images else None
             )
@@ -208,8 +205,9 @@ def generate_period_description(target_name: str, segments: List[SummarySegment]
     # 3. Request specialized summary based on the target name
     prompt = (
         f"Based on these images of '{target_name}', describe the activity briefly. "
-        "Focus on the specific nature of the task, environment, and any notable details. "
-        "Use note-style, be objective, and keep it under 30 words."
+        "Focus on the health-relevant aspects and nature of the task, environment, and any notable details that are useful for understanding the context of this activity. "
+        "Use note-style, be objective, and keep it under 30 words. "
+        "Ignore dates, keep time only. "
     )
 
     try:
@@ -225,25 +223,15 @@ def generate_period_description(target_name: str, segments: List[SummarySegment]
 
 def get_segment_data(session, summary, segment):
     # Helper to fetch embeddings for a specific time range
-    records = ImageRecord.find(
-        session,
-        filter={
-            "device": summary.device,
-            "timestamp": {
-                "$gte": time_to_ms(summary.date, segment.start_time),
-                "$lte": time_to_ms(summary.date, segment.end_time),
-            },
-        }
+    records = session.execute(
+        select(Image.image_path).where(
+            Image.device == summary.device,
+            Image.timestamp >= segment.start_time,
+            Image.timestamp <= segment.end_time,
+        )
     )
     paths = [r.image_path for r in records]
-
-    feats = session.execute(
-        select(ImageEmbedding.embedding, Image.image_path).where(
-            Image.image_path.in_(paths),
-        ).join(Image, ImageEmbedding.image_id == Image.id)
-    )
-    image_to_feats = {row.image_path: row.embedding for row in feats}
-    seg_feats = np.array([image_to_feats[path] for path in paths])
+    paths, seg_feats = fetch_embeddings(session, summary.device, paths)
     return paths, seg_feats
 
 
@@ -253,8 +241,15 @@ def time_to_ms(date_str, time_str):
         * 1000
     )
 
+class TempActivitySegment(BaseModel):
+    activity: str
+    start_time: datetime
+    end_time: datetime
+    image_paths: List[str]
+    duration: int = 0
 
-def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
+
+def create_day_timeline(session, device: str, date: str):
     records = session.execute(
         select(Image).where(
             Image.device == device,
@@ -279,19 +274,19 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
             groups[record.segment_id]["time"].append(record.timestamp)
             groups[record.segment_id]["image_paths"].append(record.image_path)
 
-    activities = []
+    activities: list[TempActivitySegment] = []
     for data in groups.values():
         activities.append(
-            {
-                "activity": data["activity"],
-                "start_time": min(data["time"]),
-                "end_time": max(data["time"]),
-                "image_paths": data["image_paths"],
-            }
+            TempActivitySegment(
+                activity=data["activity"],
+                start_time=min(data["time"]),
+                end_time=max(data["time"]),
+                image_paths=data["image_paths"],
+                )
         )
 
     # Sort activities by start_time
-    activities.sort(key=lambda x: x["start_time"])
+    activities.sort(key=lambda x: x.start_time)
 
     print("Aggregated activities for day summary.")
     if not activities:
@@ -302,12 +297,12 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
     earliest_hour = 0
     latest_hour = 24
     if activities:
-        earliest_hour = activities[0]["start_time"].hour
-        latest_hour = activities[-1]["end_time"].hour + 1
+        earliest_hour = activities[0].start_time.hour
+        latest_hour = activities[-1].end_time.hour + 1
 
     print("Creating time slots from", earliest_hour, "to", latest_hour)
     time_slots = []
-    slot_duration = 5 * 60
+    slot_duration = 10 * 60
 
     for slot_start in range(
         earliest_hour * 60 * 60, latest_hour * 60 * 60, slot_duration
@@ -318,15 +313,16 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
     summary = []
     for slot_start, slot_end in time_slots:
         slot_activities = []
+        slot_start_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
+        slot_end_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
 
         seg_paths = []
-        for segment in activities:
+        for temp_segment in activities:
             if (
-                segment["end_time"] >= datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
-                and segment["start_time"] < datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
+                temp_segment.start_time <= slot_end_time and temp_segment.end_time >= slot_start_time
             ):
-                slot_activities.append(segment["activity"] or "Unclear")
-                seg_paths.extend(segment["image_paths"])
+                slot_activities.append(temp_segment.activity)
+                seg_paths.extend(temp_segment.image_paths)
 
         if slot_activities:
             # Choose the most frequent activity in the slot
@@ -334,19 +330,7 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
         else:
             activity = "No Activity"
 
-        start_time_str = (
-            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_start)
-        ).strftime("%H:%M:%S")
-        end_time_str = (
-            datetime.strptime(date, "%Y-%m-%d") + timedelta(milliseconds=slot_end)
-        ).strftime("%H:%M:%S")
-
         if seg_paths:
-            # seg_paths, seg_feats = fetch_embeddings(
-            #     app.features[device][SEARCH_MODEL].collection, seg_paths,
-            #     device,
-            # )
-
             # Get features
             feats = (
                 session.execute(
@@ -386,9 +370,9 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
             SummarySegment(
                 segment_index=None,
                 activity=activity,
-                start_time=start_time_str,
-                end_time=end_time_str,
-                duration=int(slot_duration / 1000),
+                start_time=slot_start_time,
+                end_time=slot_end_time,
+                duration=slot_duration,
                 representative_image=representative_image,
                 representative_images=list(representative_images),
             )
@@ -396,45 +380,22 @@ def create_day_timeline(session, app: CustomFastAPI, device: str, date: str):
 
     # Merge consecutive segments with the same activity
     merged_summary = []
-    for segment in summary:
-        if merged_summary and merged_summary[-1].activity == segment.activity:
+    for temp_segment in summary:
+        if merged_summary and merged_summary[-1].activity == temp_segment.activity:
             # Merge with the previous segment
-            merged_summary[-1].end_time = segment.end_time
-            merged_summary[-1].duration += segment.duration
+            merged_summary[-1].end_time = temp_segment.end_time
+            merged_summary[-1].duration += temp_segment.duration
             merged_summary[-1].representative_images.extend(
-                segment.representative_images
+                temp_segment.representative_images
             )
         else:
-            merged_summary.append(segment)
+            merged_summary.append(temp_segment)
 
     return merged_summary
 
 
 def summarize_day_by_text(session, day_summay: DaySummary):
     try:
-        # raw_activities = ImageRecord.aggregate(
-        #     [
-        #         {
-        #             "$match": {
-        #                 "date": day_summay.date,
-        #                 "deleted": False,
-        #                 "segment_id": {"$ne": None},
-        #                 "device": day_summay.device,
-        #             }
-        #         },
-        #         {
-        #             "$group": {
-        #                 "_id": "$segment_id",
-        #                 "activity": {"$first": "$activity"},
-        #                 "activity_description": {"$first": "$activity_description"},
-        #                 "start_time": {"$min": "$timestamp"},
-        #                 "end_time": {"$max": "$timestamp"},
-        #             }
-        #         },
-        #         {"$sort": {"start_time": 1}},
-        #     ]
-        # )
-
         records = session.execute(
             select(Image).where(
                 Image.device == day_summay.device,

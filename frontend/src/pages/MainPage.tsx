@@ -198,7 +198,8 @@ function MainPage() {
                     {segments.map((segment, index) => (
                         <LifelogEvent
                             key={index}
-                            segment={segment}
+                            segment={segment.images}
+                            location={segment.location}
                             onChange={() => {
                                 dispatch(setLoading(true));
                                 mutate().then(() =>

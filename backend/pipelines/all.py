@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import os
 from typing import Optional
+import traceback
 
 from sqlalchemy import insert, update
 from sqlalchemy.sql import select
@@ -14,47 +15,19 @@ from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from tasks import anonymise_image_task, yolo_process_images_task
 from visual import clip_model
 from database.models import Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
-
-
-# def find_segment(session, device_id: str, timestamp: float) -> int | None:
-#     # Find the segment ID for the given image path and timestamp
-#     end = session.select(Image).where(
-#         Image.timestamp >= timestamp,
-#         Image.segment_id.isnot(None),
-#         Image.device == device_id,
-#     ).order_by(Image.timestamp.asc()).limit(1)
-#     end = session.execute(end).scalars().first()
-#     if not end:
-#         # This should belong to a new segment
-#         return None
-
-#     start = session.select(Image).where(
-#         Image.timestamp <= timestamp,
-#         Image.segment_id.isnot(None),
-#         Image.device == device_id,
-#     ).order_by(Image.timestamp.desc()).limit(1)
-
-#     if not start:
-#         # This should never happen, but just in case
-#         print("Warning: No start segment found for timestamp", timestamp)
-#         return None
-
-#     if start.segment_id == end.segment_id:
-#         return start.segment_id
-
-#     # Reset all the segments that are greater than end.segment_id
-#     session.execute(
-#         update(Image)
-#         .where(Image.segment_id > end.segment_id, Image.device == device_id)
-#         .values(segment_id=Image.segment_id + 1)
-#     )
+from sqlalchemy.exc import SQLAlchemyError
 
 
 def index_to_postgres(
     session, device_id: str, relative_path: str, skip_segmentation: bool = False
 ):
     date, file_name = relative_path.split("/")
-    local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S_%Z.jpg")
+    if "-" in file_name:
+        return  # skip already processed files that have been renamed with a dash
+    try:
+        local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S_%Z.jpg")
+    except ValueError:
+        local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
     timestamp = local_timestamp.astimezone(timezone.utc)
 
     session.execute(
@@ -108,7 +81,7 @@ def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=Fals
         select(ImagePerson)
         .where(Image.image_path == relative_path, Image.device == device_id)
         .join(Image, Image.id == ImagePerson.image_id)
-    ).fetchall()
+    ).scalars().all()
     boxes = []
     whitelist_boxes = []
     for person in res:
@@ -150,26 +123,36 @@ def encode_image(
 
         vector = clip_model.encode_image(path)
         vector = vector.flatten()
+        if matrix is None:
+            matrix = get_matrix(session, device_id)
         vector = apply_transformation(
-            vector, matrix if matrix else get_matrix(session, device_id)
+            vector, matrix
         )
+        image_id = session.execute(
+            select(Image.id).where(
+                Image.image_path == image_path, Image.device == device_id
+            )
+        ).scalar_one_or_none()
+        if image_id is None:
+            raise ValueError(f"Image record not found for device {device_id} and path {image_path}")
         session.execute(
             insert(ImageEmbedding).values(
-                image_id=session.execute(
-                    select(Image.id).where(
-                        Image.image_path == image_path, Image.device == device_id
-                    )
-                ).scalar_one(),
+                image_id=image_id,
                 embedding=vector,
             )
         )
         session.commit()
 
+    except SQLAlchemyError as e:
+        error = str(e.__dict__.get("orig"))  # Get the original error message from SQLAlchemy
+        print(f"Database error encoding image {image_path}: {error}")
+        raise(e)
+
     except Exception as e:
-        print(e)
+        traceback.print_exc()
         print(f"Error encoding image {image_path}")
-        if os.path.exists(f"{DIR}/{device_id}/{image_path}"):
-            os.remove(f"{DIR}/{device_id}/{image_path}")
+        # if os.path.exists(f"{DIR}/{device_id}/{image_path}"):
+        #     os.remove(f"{DIR}/{device_id}/{image_path}")
 
 
 def process_image(

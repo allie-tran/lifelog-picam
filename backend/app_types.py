@@ -19,6 +19,7 @@ import numpy as np
 import numpy.typing as npt
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, GetPydanticSchema, InstanceOf, computed_field
+from sqlalchemy import UUID
 from typing_extensions import TypeAlias
 
 from dependencies import CamelCaseModel
@@ -134,11 +135,10 @@ class GPSInfo(BaseModel):
 
 class LocationInfo(CamelCaseModel):
     name: str
-    info: str = ""
-    region: list[str]
-    city: list[str]
-    address: str = ""
+    info: Optional[str] = None
+    address: Optional[str] = None
     country: str
+    timezone: str
 
 
 class LifelogImage(CamelCaseModel):
@@ -166,11 +166,16 @@ class LifelogImage(CamelCaseModel):
     new: bool = True
 
 
+class ResultSegment(CamelCaseModel):
+    segment_id: int
+    images: list[LifelogImage]
+    location: Optional[LocationInfo] = None
+
 class SummarySegment(CamelCaseModel):
     segment_index: int | None = None
     activity: str
-    start_time: str
-    end_time: str
+    start_time: datetime
+    end_time: datetime
     duration: int
     representative_image: LifelogImage | None = None
     representative_images: list[LifelogImage] = []

@@ -8,10 +8,7 @@ from insightface.app import FaceAnalysis
 from auth.types import Person
 import os
 
-
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
-
-
 
 class ModelWrapper:
     def __init__(self):
@@ -23,21 +20,21 @@ class ModelWrapper:
         if self.loaded:
             return
         self.detect_model = YOLO("yolo11x.pt", task="detect", verbose=False)
-        print("Detection model loaded successfully.")
         self.face_app = FaceAnalysis(
             name="buffalo_l", providers=["CUDAExecutionProvider"]  # or ["CPUExecutionProvider"]
         )
         self.face_app.prepare(ctx_id=0)
+        self.loaded = True
 
-models_wrapper = ModelWrapper()
+default_models_wrapper = ModelWrapper()
 
-def extract_object_from_images(image_paths, whitelist: list[Person] = []):
+def extract_object_from_images(image_paths, whitelist: list[Person] = [], models_wrapper=default_models_wrapper):
     final_results = []
     if not models_wrapper.loaded:
         models_wrapper.load_models()
 
     assert models_wrapper.detect_model is not None, "Detection model failed to load"
-    results = models_wrapper.detect_model(image_paths, verbose=False)  # Adjust confidence and iou as needed
+    results = models_wrapper.detect_model(image_paths, verbose=False, conf=0.5)
 
     for i, r in enumerate(results):
         objects = []
@@ -66,7 +63,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = []):
                     )
                 )
                 if class_name == "person":
-                    face_data = get_face_data_from_person_crop(frame[y1:y2, x1:x2])
+                    face_data = get_face_data_from_person_crop(frame[y1:y2, x1:x2], models_wrapper=models_wrapper)
                     # Add face bounding boxes to people list
                     for face in face_data:
                         face_bbox = face.bbox
@@ -112,7 +109,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = []):
 
 PERSON_CONF_THRESHOLD = 0.5
 
-def get_face_data_from_person_crop(person_crop):
+def get_face_data_from_person_crop(person_crop, models_wrapper=default_models_wrapper):
     """
     Detects faces in the person_crop, extracts aligned faces and their embeddings.
     Returns a list of ObjectDetection objects.

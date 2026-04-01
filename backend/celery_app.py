@@ -1,3 +1,8 @@
+from celery.app.task import Task
+from celery.contrib.abortable import AbortableAsyncResult, AbortableTask
+from celery.local import class_property
+from celery.result import AsyncResult
+from celery.utils.objects import FallbackContext
 from celery import Celery
 from dotenv import load_dotenv
 
@@ -21,3 +26,23 @@ celery.conf.update(
     task_track_started=True,
 )
 
+
+
+# Patch Celery classes to support subscriptable type hints (e.g., AsyncResult[MyResultType])
+
+classes = [
+    Celery,
+    Task,
+    AbortableTask,
+    AsyncResult,
+    AbortableAsyncResult,
+    FallbackContext,
+    class_property,
+]
+
+for cls in classes:
+    setattr(  # noqa: B010
+        cls,
+        "__class_getitem__",
+        classmethod(lambda cls, *args, **kwargs: cls)
+    )

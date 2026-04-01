@@ -13,7 +13,6 @@ from app_types import (
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
 from database.models import Image, ImageEmbedding
-from database.types import ImageRecord
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
 from query_parse.extract_info import Query

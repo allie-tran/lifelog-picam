@@ -16,6 +16,20 @@ from database.types import _orm_to_lifelog
 
 redis_client = RedisClient()
 
+def fetch_embeddings(session, device: str, paths: List[str]) -> tuple[List[str], np.ndarray]:
+    records = session.execute(
+        select(ImageEmbedding.embedding, Image.image_path).where(
+            ImageEmbedding.image_id == Image.id,
+            Image.device == device,
+            Image.image_path.in_(paths),
+        )
+    ).all()
+
+    path_to_embedding = {record.image_path: record.embedding for record in records}
+    paths = [path for path in paths if path in path_to_embedding]
+    embeddings = np.array([path_to_embedding[path] for path in paths])
+    return paths, embeddings
+
 
 def choose_num_thumbnails(
     num_frames: int,
@@ -46,41 +60,56 @@ def choose_num_thumbnails(
     estimated = min(num_frames, estimated)  # can't have more thumbnails than frames
     return estimated
 
+def get_records_for_paths(session, device_id: str, image_paths: List[str]):
+    records = session.execute(
+        select(Image.image_path, Image.timestamp, Image.location_id, ImageEmbedding.embedding)
+        .join(ImageEmbedding, ImageEmbedding.image_id == Image.id)
+        .where(
+            Image.image_path.in_(image_paths),
+            Image.device == device_id,
+            Image.deleted == False,
+        ).order_by(Image.timestamp.asc())
+    )
+    records = list(records)
+
+    # Split into segments based on time gaps and location changes
+    path_to_time = {record.image_path: record.timestamp for record in records}
+    path_to_location = {record.image_path: record.location_id for record in records}
+    path_to_embedding = {record.image_path: record.embedding for record in records}
+
+    paths = [record.image_path for record in records]
+    embeddings = np.array([path_to_embedding[path] for path in paths])
+
+    return paths, embeddings, path_to_time, path_to_location
+
+def get_boundaries(image_paths: List[str], path_to_time: dict, path_to_location: dict) -> set:
+    time_threshold = timedelta(minutes=5)
+    boundaries = set()
+
+    for i in range(1, len(image_paths)):
+        img1, img2 = image_paths[i - 1], image_paths[i]
+        # check location first (straight forward)
+        loc1, loc2 = path_to_location[img1], path_to_location[img2]
+        if (loc1 != loc2):
+            boundaries.add(image_paths[i])
+        else:
+            t1, t2 = path_to_time[img1], path_to_time[img2]
+            if abs(t2 - t1) > time_threshold:
+                boundaries.add(image_paths[i])
+    return boundaries
+
 
 def segment_images(
     session,
     device_id: str,
-    features,
     image_paths,
     reverse=True,
 ) -> list[list[str]]:
+    image_paths, features, path_to_time, path_to_location = get_records_for_paths(session, device_id, image_paths)
     if len(features) == 0:
         return []
 
-    # Get physical boundaries first (time difference too large)
-    boundaries = set()
-    time_threshold = timedelta(minutes=5)
-    min_time = timedelta(minutes=2)
-
-    records = session.execute(
-        select(Image.image_path, Image.timestamp).where(
-            Image.image_path.in_(image_paths),
-            Image.device == device_id,
-            Image.deleted == False,
-        )
-    )
-
-    path_to_time = {record.image_path: record.timestamp for record in records}
-    for img in image_paths:
-        if img not in path_to_time:
-            print("Error: Missing timestamp for image:", img)
-            raise ValueError(f"Missing timestamp for image: {img}")
-
-    for i in range(1, len(image_paths)):
-        t1 = path_to_time[image_paths[i - 1]]
-        t2 = path_to_time[image_paths[i]]
-        if abs(t2 - t1) > time_threshold:
-            boundaries.add(image_paths[i])
+    boundaries = get_boundaries(image_paths, path_to_time, path_to_location)
 
     # Sort the features and image paths based on the image_pahts
     sorted_indices = np.argsort(image_paths)
@@ -159,6 +188,7 @@ def segment_images(
 
     # Merge small segments
     merged_segments = []
+    min_time = timedelta(minutes=2)
     for segment in segments:
         if len(segment) < 3 and merged_segments:
             # check the time
@@ -179,17 +209,6 @@ def segment_images(
 
     print(f"Segmented into {len(image_segments)} segments.")
     return image_segments
-
-
-def reset_all_segments(device_id):
-    raise NotImplementedError(
-        "Resetting all segments is currently disabled to prevent accidental data loss. Please implement a safer way to reset segments if needed."
-    )
-    # print("Resetting all segments...")
-    # ImageRecord.update_many(
-    #     filter={"device": device_id},
-    #     data={"$unset": {"segment_id": None}},
-    # )
 
 
 def find_first_unsegmented_timestamp(session, device_id, date: Optional[str] = None):
@@ -213,6 +232,7 @@ def load_all_segments(
     device_id: str,
     date: str,
     *,
+    skip_annotations: bool = False,
     job_id: Optional[str] = None,
 ):
     # reset_all_segments()
@@ -276,9 +296,7 @@ def load_all_segments(
         .all()
     )
 
-    _ids = [record.id for record in new_records]
     new_records = [_orm_to_lifelog(rec) for rec in new_records]
-
     new_records = list(new_records)
     paths = [record.image_path for record in new_records]
     if len(new_records) == 0 or len(paths) == 0:
@@ -294,19 +312,7 @@ def load_all_segments(
         )
         return
 
-    # Get features
-    feats = (
-        session.execute(
-            select(ImageEmbedding.embedding, Image.image_path).where(
-                ImageEmbedding.image_id.in_(_ids),
-            ).join(Image, ImageEmbedding.image_id == Image.id)
-        )
-    )
-    image_to_feats = {row.image_path: row.embedding for row in feats}
-    feats = np.array([image_to_feats[path] for path in paths])
-
-    print(f"Segmenting {len(feats)} images...")
-    segments = segment_images(session, device_id, feats, paths, reverse=False)
+    segments = segment_images(session, device_id, paths, reverse=False)
     print(f"Total segments created: {len(segments)}")
 
     job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
@@ -330,7 +336,7 @@ def load_all_segments(
         )
         session.commit()
 
-        if device_id == "allie":
+        if not skip_annotations:
             try:
                 describe_segment_task.delay(
                     device_id,

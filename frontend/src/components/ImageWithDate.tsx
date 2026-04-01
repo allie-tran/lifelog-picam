@@ -31,7 +31,6 @@ const ImageWithDate = ({
     const imageUrl = image.thumbnail
         ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
         : '';
-    console.log('ImageWithDate rendered with image:', image);
     const formattedDate = timeOnly
         ? dayjs(image.timestamp).format('HH:mm')
         : dayjs(image.timestamp).format('dd DD MMM YYYY HH:mm');
@@ -69,6 +68,11 @@ const ImageWithDate = ({
                         height: 'calc(100% - 24px)',
                         width: 'auto',
                         borderRadius: '8px',
+                        backgroundColor: '#ccc',
+                        minWidth: '100px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
                     }}
                     onClick={onClick}
                     src={imageUrl}

@@ -16,15 +16,14 @@ from sqlalchemy import (
     select,
     asc,
     desc,
-    func,
     distinct as sa_distinct,
-    delete,
 )
+from collections import Counter
 from sqlalchemy.orm import Session
 from mongodb_odm import Document
 
-from app_types import DaySummary, LifelogImage
-from database.models import Image, ImagePerson, ImageOCR, ImageGPS
+from app_types import DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
+from database.models import Image, ImageGPS, Location
 
 
 DICT_TYPE = Dict[str, Any]
@@ -187,7 +186,7 @@ class ImageRecord:
         deleted: bool = False,
         page: int = 0,
         page_size: int = 20,
-    ) -> list[dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Replacement for the MongoDB aggregate pipeline that groups images by segment_id.
 
@@ -208,7 +207,7 @@ class ImageRecord:
         New call:
             segments = ImageRecord.find_segments(session, date=date, hour=hour, device=device)
         """
-        # Step 1: find all matching images ordered by segment_id desc, then timestamp
+        # Step 1: find all matching images
         rows = (
             session.execute(
                 select(Image)
@@ -216,19 +215,19 @@ class ImageRecord:
                 .where(Image.hour == str(hour).zfill(2))
                 .where(Image.device == device)
                 .where(Image.deleted == deleted)
-                .order_by(desc(Image.segment_id), asc(Image.timestamp))
+                .order_by(asc(Image.segment_id), asc(Image.timestamp))
             )
             .scalars()
             .all()
         )
 
         # Step 2: group in Python (avoids complex lateral join)
-        grouped: dict[Any, list[LifelogImage]] = {}
+        grouped: dict[Any, list[Image]] = {}
         for row in rows:
-            key = row.segment_id  # None is a valid group (unsegmented images)
+            key = row.segment_id
             if key not in grouped:
                 grouped[key] = []
-            grouped[key].append(_orm_to_lifelog(row))
+            grouped[key].append(row)
 
         # Step 3: sort segment keys descending (mirrors $sort: {_id: -1})
         sorted_keys = sorted(
@@ -238,8 +237,57 @@ class ImageRecord:
         )
 
         # Step 4: paginate
+        total_pages = max(1, (len(sorted_keys) + page_size - 1) // page_size)
         paginated_keys = sorted_keys[page * page_size : (page + 1) * page_size]
-        return [{"segment_id": key, "images": grouped[key]} for key in paginated_keys]
+        segments = []
+
+        all_images = set()
+        for key in paginated_keys:
+            images = grouped[key]
+            images = sorted(images, key=lambda img: img.timestamp, reverse=False)  # type: ignore
+            image_paths = [img.image_path for img in images]
+            stmt = select(Location).join(Image.location).where(Image.image_path.in_(image_paths))
+            locations = session.execute(stmt).scalars().all()
+            locations = [loc for loc in locations if loc is not None]
+            # get the most common location for this segment (if any)
+            location = None
+            if locations:
+                location_counts = Counter([str(loc.id) for loc in locations])
+                most_common_id, _ = location_counts.most_common(1)[0]
+                location = next((loc for loc in locations if str(loc.id) == most_common_id), None)
+
+            images = [ _orm_to_lifelog(img) for img in images]
+            all_images.update(image_paths)
+            segments.append(
+                ResultSegment(
+                    segment_id=key,
+                    images=images,
+                    location=LocationInfo.model_validate(location.__dict__) if location else None,
+                )
+            )
+
+        # Step 5: Get GPS data
+        segment_gps = session.execute(
+            select(ImageGPS)
+            .where(Image.date == date)
+            .where(Image.deleted == False)
+            .where(Image.device == device)
+            .where(Image.image_path.in_(all_images))
+            .join(Image.gps)
+            .order_by(Image.timestamp.desc())
+        ).scalars().all()
+        gps = [GPSInfo.model_validate(g.__dict__) for g in segment_gps]
+
+        # Step 6: convert to desired output format
+        return {
+            "segments": segments,
+            "gps": gps,
+            "total_pages": total_pages,
+        }
+
+
+
+
 
 # ---------------------------------------------------------------------------
 # DaySummaryRecord

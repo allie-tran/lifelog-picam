@@ -18,15 +18,15 @@ from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
-from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel, User
-from constants import DIR, LOCAL_PORT, SEARCH_MODEL
+from constants import DIR, LOCAL_PORT
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS
+from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
 from dependencies import CamelCaseModel
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from tasks import describe_segment_task
@@ -483,7 +483,7 @@ async def get_images_by_hour(
         print(all_hours)
         hour = all_hours[0]
 
-    all_segments = ImageRecord.find_segments(
+    results = ImageRecord.find_segments(
         session,
         date=date,
         hour=hour,
@@ -493,50 +493,14 @@ async def get_images_by_hour(
         page_size=10_000,
     )
 
-    null_segments = [s for s in all_segments if s["segment_id"] is None]
-    non_null_segments = sorted(
-        [s for s in all_segments if s["segment_id"] is not None],
-        key=lambda s: s["segment_id"],
-        reverse=True,
-    )
-    all_segments = null_segments + non_null_segments
-
-    total_pages = max(1, (len(all_segments) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
-    start = (page - 1) * ITEMS_PER_PAGE
-    segments = all_segments[start : start + ITEMS_PER_PAGE]
-
-    for segment in segments:
-        segment["images"].sort(key=lambda img: img.timestamp, reverse=True)
-
-    _mark_images_not_new(
-        session,
-        [img.image_path for s in segments for img in s["images"]],
-        device,
-    )
-
-    serialized_segments = []
-    all_images = []
-    for segment in segments:
-        serialized = [img.model_dump(by_alias=True) for img in segment["images"]]
-        serialized_segments.append(serialized)
-        all_images.extend([img.image_path for img in segment["images"]])
-
-
-    segment_gps = session.execute(
-        select(ImageGPS)
-        .where(ImageModel.date == date)
-        .where(ImageModel.deleted == False)
-        .where(ImageModel.device == device)
-        .where(ImageModel.image_path.in_(all_images))
-        .join(ImageModel, ImageModel.id == ImageGPS.image_id)
-        .order_by(ImageModel.timestamp.desc())
-    ).scalars().all()
-    gps = [GPSInfo.model_validate(g.__dict__) for g in segment_gps]
+    segments = results["segments"]
+    gps = results["gps"]
+    total_pages = results["total_pages"]
 
     return {
         "date": date,
         "hour": hour,
-        "segments": serialized_segments,
+        "segments": segments,
         "available_hours": all_hours,
         "total_pages": total_pages,
         "gps": gps,
@@ -904,9 +868,12 @@ def process_date(
                 segment_id=None,
             )
         )
+        session.commit()
         session.flush()
+        print(f"Reset segments for date {date} and device {device}.")
 
-    load_all_segments(session, device, date)
+    print(f"Scheduling segment processing for date {date} and device {device}.")
+    load_all_segments(session, device, date, skip_annotations=not reset)
     return {"message": f"Processing segments for date {date} in background."}
 
 
@@ -935,7 +902,7 @@ def get_day_summary(
     summary = DaySummary(
         device=device, date=date, segments=[], summary_text="", updated=False
     )
-    summary.segments = create_day_timeline(session, app, device, date)
+    summary.segments = create_day_timeline(session, device, date)
     if not summary.segments:
         raise HTTPException(status_code=404, detail="No segments found for this date.")
 
@@ -944,7 +911,8 @@ def get_day_summary(
 
     summary = summarize_lifelog_by_day(
         session,
-        summary, app.features[device][SEARCH_MODEL], my_targets
+        summary,
+        my_targets
     )
 
     DaySummaryRecord.update_one(

@@ -200,8 +200,10 @@ class Image(Base):
     is_video = Column(Boolean, nullable=False, default=False)
 
     # Time
-    timestamp = Column(DateTime(timezone=False)) # stored in UTC, no timezone info
-    local_timestamp = Column(DateTime(timezone=True)) # stored with timezone info, for display
+    timestamp = Column(DateTime(timezone=False))  # stored in UTC, no timezone info
+    local_timestamp = Column(
+        DateTime(timezone=True)
+    )  # stored with timezone info, for display
 
     # Time from local_timestamp
     date = Column(Text)
@@ -257,6 +259,7 @@ class Image(Base):
 # Embedding
 # ---------------------------------------------------------------------------
 
+
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
 
@@ -274,9 +277,11 @@ class ImageGPS(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
-        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False, unique=True
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
-
 
     # Raw scalars kept for debugging / display
     latitude = Column(Float, nullable=False)
