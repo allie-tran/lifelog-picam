@@ -258,13 +258,22 @@ class ImageRecord:
 
             images = [ _orm_to_lifelog(img) for img in images]
             all_images.update(image_paths)
-            segments.append(
-                ResultSegment(
-                    segment_id=key,
-                    images=images,
-                    location=LocationInfo.model_validate(location.__dict__) if location else None,
+            try:
+                segments.append(
+                    ResultSegment(
+                        segment_id=key,
+                        images=images,
+                        location=LocationInfo.model_validate(location.__dict__) if location else None,
+                    )
                 )
-            )
+            except Exception as e:
+                print("Location", location.__dict__ if location else None)
+                segments.append(
+                    ResultSegment(
+                        segment_id=key,
+                        images=images,
+                    )
+                )
 
         # Step 5: Get GPS data
         segment_gps = session.execute(

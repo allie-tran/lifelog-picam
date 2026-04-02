@@ -2,7 +2,7 @@ import os
 from typing import List
 
 import numpy as np
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 
 
 from app_types import (
@@ -46,7 +46,6 @@ def retrieve_image(session, device_id: str, text: str, sort_by, k):
 
     emb = clip_model.encode_text(text)
     emb = apply_transformation(emb, get_matrix(session, device_id))
-
     records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
     # group by segment id
@@ -85,10 +84,10 @@ def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
             stmt = sql_filter(stmt)
 
     stmt = stmt.limit(k)
-    print(f"Executing SQL: {stmt}")
-
+    print(stmt.compile(compile_kwargs={"literal_binds": True}))
+    session.execute(text(f"SET hnsw.ef_search = {max(k, 200)}"))
     rows = session.execute(stmt).fetchall()
-
+    print(f"Found {len(rows)} results for device {device_id} with sort_by {sort_by}")
     sort_by_timestamp = sort_by == "time"
     if sort_by_timestamp:
         rows = sorted(rows, key=lambda row: row.Image.timestamp, reverse=True)

@@ -271,6 +271,7 @@ async def upload_image(
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
+    print(f"Received upload for device {device} with filename {file_name}.")
     timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{device}/{date}"
@@ -470,6 +471,8 @@ async def get_images_by_hour(
     dir_path = f"{DIR}/{device}/{date}"
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
+
+    load_all_segments(session, device, date, skip_annotations=True)
 
     all_hours = list(
         ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)

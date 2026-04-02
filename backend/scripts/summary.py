@@ -278,10 +278,10 @@ def create_day_timeline(session, device: str, date: str):
     for data in groups.values():
         activities.append(
             TempActivitySegment(
-                activity=data["activity"],
-                start_time=min(data["time"]),
-                end_time=max(data["time"]),
-                image_paths=data["image_paths"],
+                activity=data.get("activity", "Unclear") or "Unclear",
+                start_time=min(data.get("time", [datetime.now()])),
+                end_time=max(data.get("time", [datetime.now()])),
+                image_paths=data.get("image_paths", [])
                 )
         )
 
