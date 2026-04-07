@@ -2,6 +2,7 @@
 models.py — SQLAlchemy ORM models for KatoAI PostgreSQL schema
 """
 
+from enum import StrEnum
 import uuid
 
 from geoalchemy2 import Geography
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Enum,
     Float,
     ForeignKey,
     Index,
@@ -333,3 +335,27 @@ class ImageOCR(Base):
     polygon = Column(JSONB)
 
     image = relationship("Image", back_populates="ocr")
+
+class AnnotationType(StrEnum):
+    RECTANGLE = "rectangle"   # 2 points
+    POLYGON = "polygon"       # n points, closed
+    POLYLINE = "polyline"     # n points, open
+    KEYPOINT = "keypoint"     # 1 point
+
+class Annotation(Base):
+    __tablename__ = "annotations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    anno_type = Column(
+        Enum(AnnotationType), default=AnnotationType.POLYGON, nullable=False
+    )
+    points = Column(JSONB)
+    label = Column(Text)
+
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    author = Column(Text)

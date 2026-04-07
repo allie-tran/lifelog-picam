@@ -35,20 +35,26 @@ class SamWrapper:
 
 sam3 = SamWrapper()
 
-def blur_image_mosaic(image, mask, scale_ratio=0.05):
+def blur_image_gaussian(image, mask, kernel_size=51):
+    # Apply Gaussian blur to the entire image
+    blurred = cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
+
+    # Only apply the blurred areas where the mask is True
+    output = np.where(mask[:, :, None], blurred, image)
+    return output
+
+def blur_image_mosaic(image, mask, scale_ratio=0.025):
     """
     Calculates hexagon size based mask area
-    0.05 means for each mask area there are 20 hexagons
     """
     h, w = image.shape[:2]
 
     # Calculate the area of the mask
     mask_area = np.sum(mask)
     total_area = h * w
-    mask_ratio = mask_area / total_area
 
     # Determine hexagon size based on the mask ratio
-    size = max(10, int(min(h, w) * scale_ratio * np.sqrt(mask_ratio)))
+    size = max(5, int(mask_area * scale_ratio))  # Minimum size of 5 to ensure visibility
     size = min(size, 50)  # Cap the size to prevent excessively large hexagons
 
     # Constants for hexagonal geometry

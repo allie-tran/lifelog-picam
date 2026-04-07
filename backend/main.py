@@ -14,7 +14,8 @@ from fastapi.params import Body
 from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from sqlalchemy import delete, update
+from sqlalchemy import delete,  update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
@@ -23,10 +24,10 @@ from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel, User
-from constants import DIR, LOCAL_PORT
+from constants import DIR, LOCAL_PORT, THUMBNAIL_DIR
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
+from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
 from dependencies import CamelCaseModel
 from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
@@ -36,7 +37,7 @@ from pipelines.all import process_video, process_image
 from pipelines.delete import mark_error, remove_physical_images
 from pipelines.hourly import update_app
 from preprocess import get_similar_images, load_features, retrieve_image
-from scripts.anonymise import segment_image_with_sam
+from scripts.anonymise import blur_image_gaussian, blur_image_mosaic, segment_image_with_sam
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
@@ -52,6 +53,10 @@ from settings.utils import create_device
 from sqlalchemy import select, desc, update
 from datetime import datetime, timezone
 from database.types import _orm_to_lifelog
+
+from PIL import ImageDraw
+import cv2
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -1118,6 +1123,59 @@ def segment_image(file: UploadFile):
         "masks": masks_data,
         "bboxes": bbox_list,
     }
+
+class AnnotationUpdate(CamelCaseModel):
+    image_path: str
+    points: List[tuple[float, float]]
+    label: str
+    author: str
+
+@app.post("/add-annotation")
+def add_annotation(
+    device: str,
+    annotation: AnnotationUpdate,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    image_record = session.execute(
+        select(ImageModel).where(ImageModel.image_path == annotation.image_path).where(ImageModel.device == device)
+    ).scalar_one_or_none()
+
+    if image_record is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    stmt = insert(Annotation).values(
+        image_id=image_record.id,
+        points=annotation.points,
+        label=annotation.label,
+        author=annotation.author,
+        timestamp=datetime.now(timezone.utc),
+        anno_type=AnnotationType.POLYGON,
+    )
+    session.execute(stmt)
+    session.commit()
+
+    thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image_record.thumbnail}"
+    thumbnail_image = Image.open(thumbnail_path).convert("RGB")
+    mask = Image.new("L", thumbnail_image.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(annotation.points, fill=255)
+    exif = thumbnail_image.getexif()
+
+    # convert to cv2
+    thumbnail_image = cv2.cvtColor(np.array(thumbnail_image), cv2.COLOR_RGB2BGR)
+    mask = np.array(mask)
+    output = blur_image_gaussian(
+        thumbnail_image,
+        mask,
+    )
+    # save output to thumbnail path
+    output_image = Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
+    output_image.save(thumbnail_path, exif=exif)
+
+    return {"message": "Annotation added successfully."}
 
 
 # ---------------------------------------------------------------------------

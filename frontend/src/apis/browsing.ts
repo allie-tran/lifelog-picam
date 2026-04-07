@@ -298,3 +298,22 @@ export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
         };
     }
 };
+
+export const addAnnotation = async (
+    deviceId: string,
+    imagePath: string,
+    points: Point[],
+    author: string,
+    label?: string
+) => {
+    const response = await axios.post(
+        `${BACKEND_URL}/add-annotation?device=${encodeURIComponent(deviceId)}`,
+        {
+            imagePath,
+            points: points.map((p) => [Math.round(p.x), Math.round(p.y)]),
+            author,
+            label,
+        }
+    );
+    return response.data;
+}

@@ -1,4 +1,8 @@
-import { DeleteRounded, VideocamRounded } from '@mui/icons-material';
+import {
+    DeleteRounded,
+    EditRounded,
+    VideocamRounded,
+} from '@mui/icons-material';
 import { Box, Button, Stack, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
@@ -6,6 +10,8 @@ import { deleteImage } from 'apis/browsing';
 import { ImageObject } from '@utils/types';
 import { useAppSelector } from 'reducers/hooks';
 import { useEffect, useState } from 'react';
+import Annotator from './Annotator';
+import ModalWithCloseButton from './ModalWithCloseButton';
 
 const ImageWithDate = ({
     image,
@@ -27,6 +33,7 @@ const ImageWithDate = ({
     timeOnly?: boolean;
 }) => {
     const [deleted, setDeleted] = useState(false);
+    const [showAnnotator, setShowAnnotator] = useState(false);
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const imageUrl = image.thumbnail
         ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
@@ -96,7 +103,22 @@ const ImageWithDate = ({
                     Not processed
                 </Box>
             )}
-            {image.new && <Typography variant="caption" sx={{ position: 'absolute', top: 8, right: 8, color: 'white', backgroundColor: 'red', px: 0.5, borderRadius: '4px' }}>New</Typography>}
+            {image.new && (
+                <Typography
+                    variant="caption"
+                    sx={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        color: 'white',
+                        backgroundColor: 'red',
+                        px: 0.5,
+                        borderRadius: '4px',
+                    }}
+                >
+                    New
+                </Typography>
+            )}
             <VideocamRounded
                 sx={{
                     position: 'absolute',
@@ -145,8 +167,27 @@ const ImageWithDate = ({
                         <DeleteRounded />
                     </Button>
                 )}
+                <Button
+                    color="primary"
+                    size="small"
+                    sx={{
+                        fontSize: '12px',
+                        minWidth: 24,
+                    }}
+                    onClick={() => setShowAnnotator((prev) => !prev)}
+                >
+                    <EditRounded />
+                </Button>
                 {extra}
             </Stack>
+            <ModalWithCloseButton
+                open={showAnnotator}
+                onClose={() => setShowAnnotator(false)}
+            >
+                <Annotator
+                    image={image}
+                />
+            </ModalWithCloseButton>
         </Box>
     );
 };

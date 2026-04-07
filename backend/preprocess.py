@@ -3,6 +3,7 @@ from typing import List
 
 import numpy as np
 from sqlalchemy import and_, select, text
+from torch import embedding
 
 
 from app_types import (
@@ -68,14 +69,11 @@ def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
             Image,
         )
         .where(
-            and_(
-                ImageEmbedding.embedding.isnot(None),
-                Image.deleted == False,
-                Image.device == device_id,
-            )
+            Image.deleted == False,
+            Image.device == device_id
         )
         .order_by("distance")
-        .join(Image, Image.id == ImageEmbedding.image_id)
+        .join(Image.embedding)
     )
 
     for sql_filter in filters:

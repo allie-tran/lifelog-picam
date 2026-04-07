@@ -1,9 +1,10 @@
 import {
     DeleteRounded,
     DownloadRounded,
+    EditRounded,
     ImageRounded,
 } from '@mui/icons-material';
-import { Button, CircularProgress, Stack } from '@mui/material';
+import { Box, Button, CircularProgress, Stack } from '@mui/material';
 import { useNavigate } from 'react-router';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
@@ -11,11 +12,14 @@ import { deleteImage, getImage } from '../apis/browsing';
 import { IMAGE_HOST_URL } from '../constants/urls';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import useSWR from 'swr';
+import Annotator from './Annotator';
+import { useState } from 'react';
 
 const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
     const dispatch = useAppDispatch();
     const navigate = useNavigate();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [showAnnotator, setShowAnnotator] = useState(false);
     const { image: imagePath, isVideo } = useAppSelector(
         (state: any) => state.zoomedImage
     );
@@ -45,7 +49,9 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
 
     const handleSimilarImages = () => {
         dispatch(clearZoomedImage());
-        navigate('/search?mode=id&&query=' + encodeURIComponent(imagePath || ''));
+        navigate(
+            '/search?mode=id&&query=' + encodeURIComponent(imagePath || '')
+        );
     };
 
     if (!imagePath) {
@@ -77,12 +83,31 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                     <DownloadRounded sx={{ marginRight: 1 }} />
                     Download
                 </Button>
+                <Button
+                    variant="outlined"
+                    onClick={() => setShowAnnotator(prev => !prev)}
+                    color="secondary"
+                >
+                    <EditRounded sx={{ marginRight: 1 }} />
+                    Annotate
+                </Button>
                 <Button variant="outlined" color="error" onClick={handleDelete}>
                     <DeleteRounded sx={{ marginRight: 1 }} />
                     Delete
                 </Button>
             </Stack>
-            {isVideo ? (
+            {showAnnotator ? (
+                <Box sx={{ width: '100%', height: '80dvh', position: 'relative', zIndex: 1 }}>
+                    <Annotator
+                        image={{
+                            imagePath: imagePath,
+                            timestamp: new Date().toISOString(),
+                            thumbnail: imagePath,
+                            isVideo: isVideo,
+                        }}
+                    />
+                </Box>
+            ) : isVideo ? (
                 <video
                     controls
                     autoPlay

@@ -127,7 +127,6 @@ class ProcessedInfo(BaseModel):
 
 
 class GPSInfo(BaseModel):
-    timestamp: float
     latitude: float
     longitude: float
     elevation: Optional[float] = None
