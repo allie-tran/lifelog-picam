@@ -14,6 +14,7 @@ from database.models import Image, ImageEmbedding
 from database.types import ImageRecord, _orm_to_lifelog
 from llm import llm
 from llm.gemini import MixedContent, get_visual_content
+from scripts.date_utils import parse_date
 from visual import clip_model
 
 from scripts.segmentation import fetch_embeddings, pick_representative_index_for_segment
@@ -85,11 +86,7 @@ def summarize_lifelog_by_day(
                     summary.binary_metrics[name] += 1
                 elif action_type == ActionType.BURST:
                     basename = os.path.basename(paths[idx]).split(".")[0]
-                    if len(basename) > 15:
-                        # timezone info
-                        timestamp = datetime.strptime(basename, "%Y%m%d_%H%M%S_%Z").timestamp()
-                    else:
-                        timestamp = datetime.strptime(basename, "%Y%m%d_%H%M%S").timestamp()
+                    timestamp = parse_date(basename).timestamp()
                     if summary.burst_metrics[name] and timestamp - summary.burst_metrics[name][-1] < 30:
                         summary.burst_metrics[name][-1] = timestamp
                     else:
@@ -278,10 +275,10 @@ def create_day_timeline(session, device: str, date: str):
     for data in groups.values():
         activities.append(
             TempActivitySegment(
-                activity=data["activity"],
-                start_time=min(data["time"]),
-                end_time=max(data["time"]),
-                image_paths=data["image_paths"],
+                activity=data.get("activity", "Unclear") or "Unclear",
+                start_time=min(data.get("time", [datetime.now()])),
+                end_time=max(data.get("time", [datetime.now()])),
+                image_paths=data.get("image_paths", [])
                 )
         )
 

@@ -93,7 +93,8 @@ const CustomDatePicker = ({
 }) => {
     const navigate = useNavigate();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
-    const [usePicker, setUsePicker] = React.useState(true);
+    const [usePicker, setUsePicker] = React.useState(false);
+    const [textDate, setTextDate] = React.useState(date || '');
 
     const allMonths = React.useMemo(() => {
         if (!allDates) return [];
@@ -111,19 +112,22 @@ const CustomDatePicker = ({
         return Array.from(uniqueYears);
     }, [allDates]);
 
+
     if (!usePicker) {
         return (
             <>
                 <TextField
                     label="Select Date"
-                    type="date"
-                    value={date || ''}
-                    onChange={(e) => {
-                        setPage(1);
-                        setHour(null);
-                        navigate(
-                            `/?device_id=${deviceId}&date=${e.target.value}`
-                        );
+                    value={textDate}
+                    onChange={(e) => setTextDate(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            setPage(1);
+                            setHour(null);
+                            navigate(
+                                `/?device_id=${deviceId}&date=${dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD')}`
+                            );
+                        }
                     }}
                     sx={{ width: '250px', transform: 'translateY(4px)' }}
                 />
@@ -137,7 +141,6 @@ const CustomDatePicker = ({
             </>
         );
     }
-
     return (
         <>
             <DatePicker

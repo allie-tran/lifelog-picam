@@ -11,6 +11,7 @@ from auth.ortho import apply_transformation, get_matrix
 from auth.types import Person
 from constants import DIR
 from pipelines.delete import remove_physical_images
+from scripts.date_utils import parse_date
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from tasks import anonymise_image_task, yolo_process_images_task
 from visual import clip_model
@@ -24,10 +25,7 @@ def index_to_postgres(
     date, file_name = relative_path.split("/")
     if "-" in file_name:
         return  # skip already processed files that have been renamed with a dash
-    try:
-        local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S_%Z.jpg")
-    except ValueError:
-        local_timestamp = datetime.strptime(file_name, "%Y%m%d_%H%M%S.jpg")
+    local_timestamp = parse_date(file_name.split(".")[0])
     timestamp = local_timestamp.astimezone(timezone.utc)
 
     session.execute(

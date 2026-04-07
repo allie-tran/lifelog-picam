@@ -28,6 +28,7 @@ from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
 from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
 from dependencies import CamelCaseModel
+from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from tasks import describe_segment_task
 from ingest import app as ingest_app
@@ -271,7 +272,8 @@ async def upload_image(
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
+    print(f"Received upload for device {device} with filename {file_name}.")
+    timestamp = parse_date(file_name.split(".")[0])
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{device}/{date}"
     os.makedirs(folder, exist_ok=True)
@@ -470,6 +472,8 @@ async def get_images_by_hour(
     dir_path = f"{DIR}/{device}/{date}"
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
+
+    load_all_segments(session, device, date, skip_annotations=True)
 
     all_hours = list(
         ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)

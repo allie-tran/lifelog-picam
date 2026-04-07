@@ -167,7 +167,7 @@ class LifelogImage(CamelCaseModel):
 
 
 class ResultSegment(CamelCaseModel):
-    segment_id: int
+    segment_id: Optional[int] = None
     images: list[LifelogImage]
     location: Optional[LocationInfo] = None
 
