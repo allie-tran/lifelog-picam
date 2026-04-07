@@ -76,8 +76,6 @@ def run_segments():
     segments = pd.read_csv(SEGMENTS_FILE, sep=";")
     segments = segments.fillna("")
     image_gps = pd.read_csv(GPS_FILE)
-    old_gps = pd.read_csv(OLD_GPS, sep=";")
-    old_gps = old_gps.fillna("")
 
     # set segment_id as index
     image_gps.set_index("segment_id", inplace=True)
@@ -91,6 +89,13 @@ def run_segments():
         ),
         axis=1,
     )
+
+    all_places = defaultdict(list)
+    for _, seg in segments.iterrows():
+        all_places[seg["key"]].append(seg)
+
+    old_gps = pd.read_csv(OLD_GPS, sep=";")
+    old_gps = old_gps.fillna("")
     old_gps["key"] = old_gps.apply(
         lambda row: create_key(
             row["fsq_place_id"],
@@ -101,21 +106,11 @@ def run_segments():
         ),
         axis=1,
     )
-
-    all_places = defaultdict(list)
-    for _, seg in segments.iterrows():
-        all_places[seg["key"]].append(seg)
     for _, row in old_gps.iterrows():
         row["segment_id"] = -1
         all_places[row["key"]].append(row)
 
     with Session(engine) as session:
-        # Create simple, non-unique performance indexes
-        # These help with searching but won't block inserts
-        print(
-            "Indexes created (if they didn't exist). Starting to insert/update locations..."
-        )
-
         for key in tqdm(all_places, desc="Inserting locations"):
             first_place = all_places[key][0]
             all_segment_ids = set(seg["segment_id"] for seg in all_places[key])
@@ -137,9 +132,12 @@ def run_segments():
                 address=first_place["address"],
             )
 
-            stmt = stmt.on_conflict_do_nothing(index_elements=[Location.key]).returning(
-                Location.id
-            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={
+                    "key": stmt.excluded.key,
+                },
+            ).returning(Location.id)
 
             try:
                 row_id = session.execute(stmt).scalar()
@@ -162,6 +160,7 @@ def run_segments():
                     )
                     .first()
                 )
+
                 print(
                     f"Conflict detected for {key}. Fetched existing location with ID: {existing.id if existing else 'None'}"
                 )
@@ -258,6 +257,7 @@ def update_localtime():
     df = pd.read_csv(GPS_FILE)
     old_gps = pd.read_csv(OLD_GPS, sep=";")
     df = pd.concat([df, old_gps], ignore_index=True)
+
     # df = df[df["image_path"].str.startswith(f"2022-10-16")]
     with Session(engine) as session:
         results = []
@@ -322,5 +322,5 @@ def update_localtime():
 
 if __name__ == "__main__":
     run_segments()
-    run_gps()
-    update_localtime()
+    # run_gps()
+    # update_localtime()
