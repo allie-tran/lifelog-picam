@@ -28,6 +28,7 @@ from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
 from database.models import DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
 from dependencies import CamelCaseModel
+from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from tasks import describe_segment_task
 from ingest import app as ingest_app
@@ -272,7 +273,7 @@ async def upload_image(
         raise HTTPException(status_code=400, detail="Filename is required.")
 
     print(f"Received upload for device {device} with filename {file_name}.")
-    timestamp = datetime.strptime(file_name.split(".")[0], "%Y%m%d_%H%M%S_%Z")
+    timestamp = parse_date(file_name.split(".")[0])
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{device}/{date}"
     os.makedirs(folder, exist_ok=True)
