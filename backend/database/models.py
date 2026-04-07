@@ -5,6 +5,7 @@ Requires: sqlalchemy, pgvector, geoalchemy2
 """
 
 import uuid
+from pandas import Index
 from sqlalchemy import (
     Column,
     Boolean,
@@ -27,71 +28,24 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
-# Location + sub-entities
+# Location
 # ---------------------------------------------------------------------------
-
-
-class LocationCity(Base):
-    """One row per city string per location."""
-
-    __tablename__ = "location_cities"
-    __table_args__ = (UniqueConstraint("location_id", "name", name="uq_location_city"),)
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    location_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("locations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name = Column(Text, nullable=False)
-
-    location = relationship("Location", back_populates="cities")
-
-
-class LocationRegion(Base):
-    """One row per region string per location."""
-
-    __tablename__ = "location_regions"
-    __table_args__ = (
-        UniqueConstraint("location_id", "name", name="uq_location_region"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    location_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("locations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name = Column(Text, nullable=False)
-
-    location = relationship("Location", back_populates="regions")
-
 
 class Location(Base):
     __tablename__ = "locations"
-    __table_args__ = (
-        UniqueConstraint("name", "country", name="uq_location_name_country"),
-    )
 
+    key = Column(Text, nullable=False, unique=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(Text)
     country = Column(Text)
-    address = Column(Text)
-    fsq_id = Column(Text, unique=True, nullable=True)
+
+    fsq_id = Column(Text, nullable=True)
     info = Column(Text)
     stop = Column(Boolean)
-    icon_name = Column(Text)
-    icon_prefix = Column(Text)
-    icon_suffix = Column(Text)
-    icon_type = Column(Text)
-    timezone = Column(Text)
 
-    cities = relationship(
-        "LocationCity", back_populates="location", cascade="all, delete-orphan"
-    )
-    regions = relationship(
-        "LocationRegion", back_populates="location", cascade="all, delete-orphan"
-    )
+
+    timezone = Column(Text)
+    address = Column(Text)
     images = relationship("Image", back_populates="location")
 
 
@@ -178,6 +132,7 @@ class DeviceWhitelistEmbedding(Base):
         nullable=False,
     )
     embedding = Column(Vector(512), nullable=False)
+
     entry = relationship("DeviceWhitelistEntry", back_populates="embeddings")
 
 
@@ -196,9 +151,6 @@ class Image(Base):
     image_path = Column(Text, nullable=False)
     thumbnail = Column(Text, nullable=False)
     is_video = Column(Boolean, nullable=False, default=False)
-
-    # # Image-level embedding (768-dim, from .npy files)
-    # embedding = Column(Vector(768), nullable=True)
 
     # Time
     timestamp = Column(DateTime(timezone=False))  # stored in UTC, no timezone info
@@ -264,7 +216,7 @@ class Image(Base):
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
 
-    image_id = Column(UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), primary_key=True)
+    image_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     embedding = Column(Vector(768), nullable=False)
 
 
@@ -278,7 +230,10 @@ class ImageGPS(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
-        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
 
     # Raw scalars kept for debugging / display
@@ -291,6 +246,7 @@ class ImageGPS(Base):
     source = Column(Text)
     gap_s = Column(Float)
     interpolated = Column(Boolean, default=False)
+    timezone = Column(Text)
 
     # PostGIS Geography — distances in metres, no projection math needed.
     # Populated as: ST_MakePoint(longitude, latitude)  ← lon first in WGS84

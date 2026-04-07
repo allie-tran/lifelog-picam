@@ -27,59 +27,24 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
-# Location + sub-entities
+# Location
 # ---------------------------------------------------------------------------
-
-
-class LocationCity(Base):
-    """One row per city string per location."""
-
-    __tablename__ = "location_cities"
-    __table_args__ = (UniqueConstraint("location_id", "name", name="uq_location_city"),)
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    location_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("locations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name = Column(Text, nullable=False)
-
-    location = relationship("Location", back_populates="cities")
-
-
-class LocationRegion(Base):
-    """One row per region string per location."""
-
-    __tablename__ = "location_regions"
-    __table_args__ = (
-        UniqueConstraint("location_id", "name", name="uq_location_region"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    location_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("locations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name = Column(Text, nullable=False)
-
-    location = relationship("Location", back_populates="regions")
-
 
 class Location(Base):
     __tablename__ = "locations"
 
+    key = Column(Text, nullable=False, unique=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(Text)
-    address = Column(Text)
     country = Column(Text)
+
     fsq_id = Column(Text, nullable=True)
     info = Column(Text)
     stop = Column(Boolean)
+
+
     timezone = Column(Text)
     address = Column(Text)
-
     images = relationship("Image", back_populates="location")
 
 
@@ -187,8 +152,10 @@ class Image(Base):
     is_video = Column(Boolean, nullable=False, default=False)
 
     # Time
-    timestamp = Column(DateTime(timezone=False)) # stored in UTC, no timezone info
-    local_timestamp = Column(DateTime(timezone=True)) # stored with timezone info, for display
+    timestamp = Column(DateTime(timezone=False))  # stored in UTC, no timezone info
+    local_timestamp = Column(
+        DateTime(timezone=True)
+    )  # stored with timezone info, for display
 
     # Time from local_timestamp
     date = Column(Text)
@@ -244,6 +211,7 @@ class Image(Base):
 # Embedding
 # ---------------------------------------------------------------------------
 
+
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
 
@@ -261,9 +229,11 @@ class ImageGPS(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
-        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
-
 
     # Raw scalars kept for debugging / display
     latitude = Column(Float, nullable=False)
@@ -274,6 +244,7 @@ class ImageGPS(Base):
     satellites = Column(Integer)
     source = Column(Text)
     gap_s = Column(Float)
+    interpolated = Column(Boolean, default=False)
     timezone = Column(Text)
 
     # PostGIS Geography — distances in metres, no projection math needed.

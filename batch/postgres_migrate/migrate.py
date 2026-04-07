@@ -25,24 +25,26 @@ from models import (
     DeviceWhitelistEmbedding,
     DeviceWhitelistEntry,
     Location,
-    LocationCity,
-    LocationRegion,
     Image,
     ImageGPS,
     ImagePerson,
     ImageObject,
     ImageOCR,
 )
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-MONGO_URI = "mongodb://localhost:27017/"
+MONGO_URI = "mongodb://localhost:27018/"
 MONGO_DB = "picam"
 MONGO_COL = "images"
 
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost/lifelog-picam"
+PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
 
 BATCH_SIZE = 500  # images flushed per session batch
 EMBED_DIM = 512  # must match your face embedding model
@@ -85,17 +87,9 @@ def resolve_date(val) -> datetime | None:
     return None
 
 
-def icon_fields(loc: dict) -> tuple:
-    icon = loc.get("icon") or {}
-    return (
-        icon.get("name"),
-        icon.get("prefix"),
-        icon.get("suffix"),
-        icon.get("type"),
-    )
-
-
 matrices = {}
+
+
 def apply_transformation(embedding, transform_matrix):
     """
     Applies the transformation M to a face embedding vector.
@@ -111,6 +105,7 @@ def apply_transformation(embedding, transform_matrix):
     # Ensure the embedding is treated as a column vector for the dot product
     return np.dot(transform_matrix, embedding)
 
+
 # ---------------------------------------------------------------------------
 # Step 1: Export from MongoDB
 # ---------------------------------------------------------------------------
@@ -119,13 +114,8 @@ def apply_transformation(embedding, transform_matrix):
 def export_mongo() -> list[dict]:
     log.info("Connecting to MongoDB...")
     client = MongoClient(MONGO_URI)
-    docs = list(
-        client[MONGO_DB][MONGO_COL].find({"device": "allie"})
-    )
-    docs += list(
-        client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1)
-    )
-
+    docs = list(client[MONGO_DB][MONGO_COL].find({"device": "allie"}))
+    docs += list(client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1))
     log.info(f"Exported {len(docs)} documents")
     return docs
 
@@ -133,7 +123,13 @@ def export_mongo() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Step 2: Migrate locations (deduplicated)
 # ---------------------------------------------------------------------------
-
+def create_key(fsq_place_id, name, country, address, is_stop):
+    if fsq_place_id and fsq_place_id != "None":
+        key = f"fsq_id={fsq_place_id}"
+    else:
+        key = f"{name}, {country}, {address}"
+    key = f"stop={is_stop == 1}, {key}"
+    return key
 
 def migrate_locations(session: Session, docs: list[dict]) -> dict[str, str]:
     """
@@ -151,62 +147,35 @@ def migrate_locations(session: Session, docs: list[dict]) -> dict[str, str]:
             continue
 
         fsq_id = loc.get("fsq_id")
-        key = fsq_id if fsq_id else f"{loc.get('name')}::{loc.get('country')}"
+        key = create_key(
+            fsq_place_id=fsq_id,
+            name=loc.get("name", "Unknown Place"),
+            country=loc.get("country", ""),
+            address=loc.get("address", ""),
+            is_stop=loc.get("stop", False),
+        )
         if key in seen_keys:
             continue
         seen_keys.add(key)
 
-        icon_name, icon_prefix, icon_suffix, icon_type = icon_fields(loc)
         name = loc.get("name", "Unknown Place")
         if name == "Unknown Place":
             name = None  # to allow null for unique constraint if name is missing
 
         stmt = pg_insert(Location).values(
+            key=key,
             name=name,
             country=loc.get("country"),
             fsq_id=fsq_id or None,  # Ensure null if falsy for unique constraint
             info=loc.get("info"),
             stop=loc.get("stop"),
-            icon_name=icon_name,
-            icon_prefix=icon_prefix,
-            icon_suffix=icon_suffix,
-            icon_type=icon_type,
             timezone=loc.get("timezone", "UTC"),
             address=loc.get("address", "") or None,
         )
 
-        if fsq_id:
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["fsq_id"],
-                set_={"name": stmt.excluded.name},
-            )
-        else:
-            stmt = stmt.on_conflict_do_update(
-                constraint="uq_location_name_address",
-                set_={"info": stmt.excluded.info},
-            )
-
         result = session.execute(stmt.returning(Location.id))
         row_id = str(result.scalar())
         location_cache[key] = row_id
-
-        # Insert cities as child rows (skip duplicates)
-        for city_name in loc.get("city", []):
-            if city_name:
-                session.execute(
-                    pg_insert(LocationCity)
-                    .values(location_id=row_id, name=city_name)
-                    .on_conflict_do_nothing(constraint="uq_location_city")
-                )
-
-        # Insert regions as child rows (skip duplicates)
-        for region_name in loc.get("region", []):
-            if region_name:
-                session.execute(
-                    pg_insert(LocationRegion)
-                    .values(location_id=row_id, name=region_name)
-                    .on_conflict_do_nothing(constraint="uq_location_region")
-                )
 
         # Flush in batches to avoid memory buildup
         if (i + 1) % BATCH_SIZE == 0:
@@ -223,8 +192,6 @@ def migrate_locations(session: Session, docs: list[dict]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Step 3: Migrate images
 # ---------------------------------------------------------------------------
-
-
 def migrate_images(
     session: Session,
     docs: list[dict],
@@ -251,11 +218,24 @@ def migrate_images(
             loc_timezone = pytz.timezone(loc_tz_str) if loc_tz_str else timezone.utc
 
         time = resolve_timestamp(doc.get("timestamp"))
-        assert time is not None, "Expected timestamp to be None or a valid number, got: {}".format(doc.get("timestamp"))
+        assert (
+            time is not None
+        ), "Expected timestamp to be None or a valid number, got: {}".format(
+            doc.get("timestamp")
+        )
 
         local_timestamp = time.astimezone(loc_timezone)
-        year, month, day, hour = local_timestamp.year, local_timestamp.month, local_timestamp.day, local_timestamp.hour
-        seconds_from_midnight = local_timestamp.hour * 3600 + local_timestamp.minute * 60 + local_timestamp.second
+        year, month, day, hour = (
+            local_timestamp.year,
+            local_timestamp.month,
+            local_timestamp.day,
+            local_timestamp.hour,
+        )
+        seconds_from_midnight = (
+            local_timestamp.hour * 3600
+            + local_timestamp.minute * 60
+            + local_timestamp.second
+        )
 
         processed = doc.get("processed", {})
         stmt = pg_insert(Image).values(
@@ -339,7 +319,9 @@ def migrate_devices(session: Session, mongo_uri: str, mongo_db: str) -> dict[str
         else:
             transform_matrix = tm
 
-        matrices[device_id] = pickle.loads(transform_matrix) if transform_matrix else None
+        matrices[device_id] = (
+            pickle.loads(transform_matrix) if transform_matrix else None
+        )
 
         stmt = pg_insert(Device).values(
             mongo_id=mongo_id,
@@ -434,6 +416,7 @@ def parse_embedding(emb) -> list[float] | None:
         return None
     if isinstance(emb, str):
         import json
+
         emb = json.loads(emb)
     if isinstance(emb, list) and len(emb) == EMBED_DIM:
         return [float(x) for x in emb]
@@ -613,7 +596,7 @@ def migrate_embeddings(session: Session, docs: list[dict], mongo_to_pg: dict[str
             EMBEDDING_DIR, f"{device_id}_features", f"{basename}.npy"
         )
         matrix = None
-        if device_id != "allie": # allie's embeddings are already transformed
+        if device_id != "allie":  # allie's embeddings are already transformed
             matrix = matrices.get(device_id)
 
         if not os.path.exists(npy_path):
@@ -629,7 +612,9 @@ def migrate_embeddings(session: Session, docs: list[dict], mongo_to_pg: dict[str
             continue
 
         session.execute(
-            text("INSERT INTO image_embedding (image_id, embedding) VALUES (:id, :emb)"),
+            text(
+                "INSERT INTO image_embedding (image_id, embedding) VALUES (:id, :emb)"
+            ),
             {"emb": str(emb), "id": pg_id},
         )
 
@@ -665,38 +650,27 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_images_device        ON images (device)",
     "CREATE INDEX IF NOT EXISTS ix_images_deleted       ON images (deleted)",
     "CREATE INDEX IF NOT EXISTS ix_images_deleted_time  ON images (deleted_time)",
-
     # embeddings
     "CREATE INDEX IF NOT EXISTS ix_embeddings           ON image_embedding USING hnsw (embedding vector_cosine_ops)",
-
     # devices
     "CREATE INDEX IF NOT EXISTS ix_devices_device_id    ON devices (device_id)",
     "CREATE INDEX IF NOT EXISTS ix_whitelist_device     ON device_whitelist (device_id)",
     "CREATE INDEX IF NOT EXISTS ix_whitelist_emb_entry  ON device_whitelist_embeddings (entry_id)",
     "CREATE INDEX IF NOT EXISTS ix_whitelist_emb_hnsw   ON device_whitelist_embeddings USING hnsw (embedding vector_cosine_ops)",
     "CREATE INDEX IF NOT EXISTS ix_images_device_ref    ON images (device_ref_id)",
-
     # people — HNSW for ANN search
     "CREATE INDEX IF NOT EXISTS ix_people_image       ON image_people (image_id)",
     "CREATE INDEX IF NOT EXISTS ix_people_cluster     ON image_people (cluster_label)",
     "CREATE INDEX IF NOT EXISTS ix_people_embedding   ON image_people USING hnsw (embedding vector_cosine_ops)",
-
     # objects
     "CREATE INDEX IF NOT EXISTS ix_objects_image      ON image_objects (image_id)",
     "CREATE INDEX IF NOT EXISTS ix_objects_label      ON image_objects (label)",
-
     # ocr — full-text search
     "CREATE INDEX IF NOT EXISTS ix_ocr_image          ON image_ocr (image_id)",
     "CREATE INDEX IF NOT EXISTS ix_ocr_fts            ON image_ocr USING gin (to_tsvector('english', coalesce(text,'')))",
     # gps — spatial index (GIST on Geography enables ST_DWithin, ST_Distance etc.)
     "CREATE INDEX IF NOT EXISTS ix_gps_image          ON image_gps (image_id)",
     "CREATE INDEX IF NOT EXISTS ix_gps_geog           ON image_gps USING gist (geog)",
-
-    # location sub-entities
-    "CREATE INDEX IF NOT EXISTS ix_cities_location    ON location_cities (location_id)",
-    "CREATE INDEX IF NOT EXISTS ix_cities_name        ON location_cities (name)",
-    "CREATE INDEX IF NOT EXISTS ix_regions_location   ON location_regions (location_id)",
-    "CREATE INDEX IF NOT EXISTS ix_regions_name       ON location_regions (name)",
 ]
 
 
@@ -754,23 +728,23 @@ def verify(session: Session, docs: list[dict]):
 def main():
     engine = create_engine(PG_URI, echo=False, pool_pre_ping=True)
 
-    delete_all = (
-        True  # set to True to wipe existing data before migration (use with caution!)
-    )
-    if delete_all:
-        with Session(engine) as session:
-            session.execute(text("DROP SCHEMA public CASCADE"))
-            session.execute(text("CREATE SCHEMA public AUTHORIZATION postgres"))
-            session.commit()
-        log.info("Deleted existing data from PostgreSQL")
+    # delete_all = (
+    #     True  # set to True to wipe existing data before migration (use with caution!)
+    # )
+    # if delete_all:
+    #     with Session(engine) as session:
+    #         session.execute(text("DROP SCHEMA public CASCADE"))
+    #         session.execute(text("CREATE SCHEMA public AUTHORIZATION postgres"))
+    #         session.commit()
+    #     log.info("Deleted existing data from PostgreSQL")
 
-    # Enable pgvector extension and create tables
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-        conn.commit()
+    # # Enable pgvector extension and create tables
+    # with engine.connect() as conn:
+    #     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    #     conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+    #     conn.commit()
 
-    Base.metadata.create_all(engine)
+    # Base.metadata.create_all(engine)
 
     # Export once
     docs = export_mongo()
@@ -785,8 +759,7 @@ def main():
     # Migrate in a single transaction — rolls back entirely on failure
     with Session(engine) as session:
         device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
-        # location_cache = migrate_locations(session, docs)
-        location_cache = {}
+        location_cache = migrate_locations(session, docs)
         mongo_to_pg = migrate_images(session, docs, location_cache)
         migrate_embeddings(session, docs, mongo_to_pg)
         migrate_people(session, docs, mongo_to_pg)
@@ -802,8 +775,8 @@ def main():
         build_indexes(session)
         session.commit()
 
-    with Session(engine) as session:
-        verify(session, docs)
+    # with Session(engine) as session:
+    #     verify(session, docs)
 
 
 if __name__ == "__main__":

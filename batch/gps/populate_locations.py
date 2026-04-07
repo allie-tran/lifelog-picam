@@ -28,6 +28,8 @@ from models import Image, Location, ImageGPS
 from timezonefinder import TimezoneFinder
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+import os
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -36,7 +38,9 @@ GPS_FILE = "files/image_gps.csv"
 OLD_GPS = "files/lsc24_images.csv"
 DEVICE_ID = "cathal"
 CHUNK = 1000
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost:5433/lifelog-picam"
+
+load_dotenv()
+PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/lsc24")
 engine = create_engine(PG_URI)
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -101,33 +105,13 @@ def run_segments():
         all_places[row["key"]].append(row)
 
     with Session(engine) as session:
-        # 1. Wipe all data and reset auto-incrementing IDs
-        session.execute(text("TRUNCATE TABLE locations RESTART IDENTITY CASCADE"))
-
-        # 2. Drop EVERY known constraint and index to start fresh
-        # This prevents "Duplicate Key" errors while you're testing your outside deduplication
-        session.execute(text("ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_fsq_id_key CASCADE"))
-        session.execute(text("ALTER TABLE locations DROP CONSTRAINT IF EXISTS uq_location_name_address CASCADE"))
-        session.execute(text("DROP INDEX IF EXISTS uq_location_name_address"))
-        session.execute(text("DROP INDEX IF EXISTS locations_fsq_id_key"))
-        session.execute(text("DROP INDEX IF EXISTS uq_location_key"))
-
-        # 3. Drop the old icon columns you no longer need
-        for col in ["icon_name", "icon_prefix", "icon_suffix", "icon_type"]:
-            session.execute(text(f"ALTER TABLE locations DROP COLUMN IF EXISTS {col}"))
-
-        # 4. Ensure the 'key' column exists (without a UNIQUE constraint for now)
-        # This allows you to bulk-load data and debug your deduplication logic
-        session.execute(text("ALTER TABLE locations ADD COLUMN IF NOT EXISTS key TEXT"))
-
-        # 5. Create simple, non-unique performance indexes
+        # Create simple, non-unique performance indexes
         # These help with searching but won't block inserts
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_key_search ON locations (key)"))
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_fsq_id_search ON locations (fsq_id)"))
         session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_name_country ON locations (name, country)"))
-
         session.commit()
-        print("Table 'locations' has been truncated and schema simplified.")
+        print("Indexes created (if they didn't exist). Starting to insert/update locations...")
 
         for key in tqdm(all_places, desc="Inserting locations"):
             first_place = all_places[key][0]
