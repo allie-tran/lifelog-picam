@@ -16,20 +16,21 @@ Requirements:
     pip install pymongo requests
     export FSQ_API_KEY=your_key_here
 """
+
+import os
 from collections import defaultdict
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
-from sqlalchemy import create_engine, text, update, select
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from sqlalchemy.dialects.postgresql import insert
-
-from models import Image, Location, ImageGPS
 from timezonefinder import TimezoneFinder
-from zoneinfo import ZoneInfo
-from datetime import datetime, timezone
-from dotenv import load_dotenv
-import os
+
+from models import Image, ImageGPS, Location
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ engine = create_engine(PG_URI)
 # ─── Main ────────────────────────────────────────────────────────────────────
 from tqdm.auto import tqdm
 
+
 def create_key(fsq_place_id, name, country, address, is_stop):
     if fsq_place_id and fsq_place_id != "None":
         key = f"fsq_id={fsq_place_id}"
@@ -54,8 +56,11 @@ def create_key(fsq_place_id, name, country, address, is_stop):
     key = f"stop={is_stop == 1}, {key}"
     return key
 
+
 tf = TimezoneFinder()
 timezone_cache = {}
+
+
 def cached_find_timezone(lat, lon):
     if (lat, lon) in timezone_cache:
         return timezone_cache[(lat, lon)]
@@ -63,13 +68,13 @@ def cached_find_timezone(lat, lon):
     timezone_cache[(lat, lon)] = tz
     return tz
 
+
 def run_segments():
     print(
         f"Loading segments from {SEGMENTS_FILE} and image GPS data from {GPS_FILE}..."
     )
     segments = pd.read_csv(SEGMENTS_FILE, sep=";")
     segments = segments.fillna("")
-    segments = segments[segments["segment_id"] == 59100]  # TEMP: filter to one segment for testing
     image_gps = pd.read_csv(GPS_FILE)
     old_gps = pd.read_csv(OLD_GPS, sep=";")
     old_gps = old_gps.fillna("")
@@ -107,11 +112,9 @@ def run_segments():
     with Session(engine) as session:
         # Create simple, non-unique performance indexes
         # These help with searching but won't block inserts
-        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_key_search ON locations (key)"))
-        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_fsq_id_search ON locations (fsq_id)"))
-        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_name_country ON locations (name, country)"))
-        session.commit()
-        print("Indexes created (if they didn't exist). Starting to insert/update locations...")
+        print(
+            "Indexes created (if they didn't exist). Starting to insert/update locations..."
+        )
 
         for key in tqdm(all_places, desc="Inserting locations"):
             first_place = all_places[key][0]
@@ -134,22 +137,12 @@ def run_segments():
                 address=first_place["address"],
             )
 
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["key"],
-                set_={
-                    "name": stmt.excluded.name,
-                    "country": stmt.excluded.country,
-                    "fsq_id": stmt.excluded.fsq_id,
-                    "info": stmt.excluded.info,
-                    "stop": stmt.excluded.stop,
-                    "timezone": stmt.excluded.timezone,
-                    "address": stmt.excluded.address,
-                },
-            ).returning(Location.id)
+            stmt = stmt.on_conflict_do_nothing(index_elements=[Location.key]).returning(
+                Location.id
+            )
 
             try:
                 row_id = session.execute(stmt).scalar()
-                print(f"Inserted/updated location with ID: {row_id}")
                 session.commit()
             except SQLAlchemyError as e:
                 error = str(e.__dict__.get("orig"))
@@ -169,7 +162,9 @@ def run_segments():
                     )
                     .first()
                 )
-                print(f"Conflict detected for {key}. Fetched existing location with ID: {existing.id if existing else 'None'}")
+                print(
+                    f"Conflict detected for {key}. Fetched existing location with ID: {existing.id if existing else 'None'}"
+                )
                 row_id = existing.id if existing else None
 
             if row_id is not None and len(images_to_update) > 0:
@@ -178,14 +173,21 @@ def run_segments():
                     try:
                         session.execute(
                             update(Image)
-                            .where(Image.image_path.in_(images_to_update[i : i + batch_size]))
+                            .where(
+                                Image.image_path.in_(
+                                    images_to_update[i : i + batch_size]
+                                )
+                            )
                             .values(location_id=row_id)
                         )
                     except SQLAlchemyError as e:
                         error = str(e.__dict__.get("orig"))
-                        print(f"Error updating images for location id {row_id}: {error}")
+                        print(
+                            f"Error updating images for location id {row_id}: {error}"
+                        )
 
                 session.commit()
+
 
 def run_gps() -> None:
     image_gps = pd.read_csv(GPS_FILE)
@@ -211,19 +213,23 @@ def run_gps() -> None:
 
     # Step 2: Build rows, resolve timezone
     records: list[dict] = []
-    for _, row in tqdm(image_gps.iterrows(), total=len(image_gps), desc="Building GPS records"):
+    for _, row in tqdm(
+        image_gps.iterrows(), total=len(image_gps), desc="Building GPS records"
+    ):
         image_id = path_to_id.get(row.image_path)
         if image_id is None:
             continue  # image not in DB yet, skip
         tz = cached_find_timezone(round(row.latitude, 4), round(row.longitude, 4))
-        records.append({
-            "image_id": image_id,
-            "latitude": row.latitude,
-            "longitude": row.longitude,
-            "elevation": row.elevation,
-            "interpolated": row.interpolated,
-            "timezone": tz,
-        })
+        records.append(
+            {
+                "image_id": image_id,
+                "latitude": row.latitude,
+                "longitude": row.longitude,
+                "elevation": row.elevation,
+                "interpolated": row.interpolated,
+                "timezone": tz,
+            }
+        )
 
     # Step 3: Bulk upsert in chunks
     with Session(engine) as session:
@@ -246,6 +252,7 @@ def run_gps() -> None:
             except SQLAlchemyError as e:
                 print(f"Error upserting GPS chunk: {e.__dict__.get('orig')}")
                 session.rollback()
+
 
 def update_localtime():
     df = pd.read_csv(GPS_FILE)
@@ -280,21 +287,28 @@ def update_localtime():
                     continue
                 image_id, tz_name = meta
                 tz = ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
-                ts = datetime.strptime(row["image_path"].split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S")
+                ts = datetime.strptime(
+                    row["image_path"].split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S"
+                )
                 local_dt = ts.replace(tzinfo=timezone.utc).astimezone(tz)
                 date = ts.strftime("%Y-%m-%d")
                 if date == "2022-10-16":
-                    print(f"Image {row['image_path']} has timestamp {ts} and timezone {tz_name}, local time {local_dt}")
-                rows.append({
-                    "id": image_id,
-                    "timestamp": ts,
-                    "local_timestamp": local_dt,
-                    "year":  local_dt.year,
-                    "month": local_dt.month,
-                    "day":  local_dt.day,
-                    "date": ts.strftime("%Y-%m-%d"),
-                    "hour":  local_dt.hour,
-                })
+                    print(
+                        f"Image {row['image_path']} has timestamp {ts} and timezone {tz_name}, local time {local_dt}"
+                    )
+                rows.append(
+                    {
+                        "id": image_id,
+                        "timestamp": ts,
+                        "local_timestamp": local_dt,
+                        "timezone": tz_name,
+                        "year": local_dt.year,
+                        "month": local_dt.month,
+                        "day": local_dt.day,
+                        "date": ts.strftime("%Y-%m-%d"),
+                        "hour": local_dt.hour,
+                    }
+                )
 
             if not rows:
                 continue
@@ -304,6 +318,7 @@ def update_localtime():
                 rows,
             )
             session.commit()
+
 
 if __name__ == "__main__":
     run_segments()

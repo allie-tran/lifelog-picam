@@ -45,8 +45,8 @@ class Location(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key = Column(
-        Text, nullable=False
-    )  # UniqueConstraint removed per your plan to dedupe in Python
+        Text, nullable=False, unique=True
+    )
     name = Column(Text)
     country = Column(Text)
     fsq_id = Column(Text, nullable=True)
