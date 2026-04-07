@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import timezone
 from sklearn.cluster import DBSCAN
+from torch import ne
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ def parse_gpx_file(gps_file, key=None):
                     continue
                 entry = {name: getattr(point, name, None) for name in GPX_FIELD_NAMES}
                 point.time = point.time.replace(tzinfo=timezone.utc)
-                entry["timestamp"] = point.time.timestamp()
+                entry["timestamp"] = point.time
                 entry["formatted_time"] = point.time.strftime("%Y%m%d_%H%M%S")
                 entry["source_track"] = t
                 entry["source_segment"] = s
@@ -55,6 +56,8 @@ def load_all_points(folder: str) -> pd.DataFrame:
     for f in sorted(os.listdir(folder)):
         if not f.endswith(".gpx"):
             continue
+        # if not f.startswith("20220203"):  # quick filter for my files — adjust/remove as needed
+        #     continue
         gps_file = os.path.join(folder, f)
         pts = parse_gpx_file(gps_file, key=f)
         if pts:
@@ -77,7 +80,7 @@ def assign_tracks_by_gap(df: pd.DataFrame, gap_seconds: int = GAP_SECONDS) -> pd
     whenever consecutive points are more than gap_seconds apart.
     """
     df = df.copy()
-    dt = df["timestamp"].diff().fillna(0)
+    dt = df["timestamp"].diff().dt.total_seconds().fillna(0)
     df["track_id"] = (dt > gap_seconds).cumsum()
     return df
 
@@ -120,7 +123,7 @@ def filter_speed_outliers(df: pd.DataFrame, threshold_ms: float = SPEED_THRESHOL
                 keep.append(False)
                 continue
             dist = haversine_distance(lat[i - 1], lon[i - 1], lat[i], lon[i], alt[i - 1], alt[i])
-            speed = dist / dt
+            speed = dist / (dt / np.timedelta64(1, 's'))
             keep.append(speed <= threshold_ms)
 
         rows.append(grp[keep])
@@ -261,7 +264,57 @@ def run_dbscan_custom(coords_rad, eps, min_samples):
         metric="haversine",
     )
     return clustering.fit_predict(coords_rad)
+    
+def analyze_track_gaps(df: pd.DataFrame, speed_threshold_ms: float = 0.5):
+    """
+    Identifies the 'black boxes' between tracks and classifies 
+    them as a 'Gap-Stop' or 'Gap-Move'.
+    """
+    gaps = []
+    track_ids = sorted(df["track_id"].unique())
 
+    for i in range(len(track_ids) - 1):
+        curr_id = track_ids[i]
+        next_id = track_ids[i+1]
+
+        # Get the boundary points
+        last_point = df[df["track_id"] == curr_id].iloc[-1]
+        first_point = df[df["track_id"] == next_id].iloc[0]
+
+        # Calculate gap metrics
+        dt = (first_point["timestamp"] - last_point["timestamp"]) / np.timedelta64(1, 's')  # gap duration in seconds
+        dist = haversine_distance(
+            last_point["latitude"], last_point["longitude"],
+            first_point["latitude"], first_point["longitude"],
+            last_point["elevation"], first_point["elevation"]
+        )
+        
+        avg_speed = dist / dt if dt > 0 else 0
+        
+        # Classification
+        # 1 = Stop (Stationary gap), 0 = Move (Transit gap)
+        gap_label = 1 if (avg_speed < speed_threshold_ms and dist < 100) else 0  # Consider it a stop if speed is low and distance is short
+
+        # Add 2 token entries to represent the gap in the main DataFrame
+        for i, point in enumerate([last_point, first_point]):
+            timestamp = point["timestamp"]
+            offset = pd.Timedelta(seconds=min(dt/2, 1))  # small offset to place the gap point between the two tracks
+            timestamp += offset if i == 0 else -offset
+            gaps.append({
+                "track_id": f"gap_{curr_id}_{next_id}",
+                "formatted_time": point["formatted_time"],
+                "latitude": point["latitude"],
+                "longitude": point["longitude"],
+                "elevation": point["elevation"],
+                "timestamp": timestamp,
+                "label": gap_label,
+                "label_smooth": gap_label,
+                "avg_speed": avg_speed,
+                "stop_id": f"gap_stop_{curr_id}_{next_id}" if gap_label == 1 else None,
+                "place_id": f"gap_place_{curr_id}_{next_id}" if gap_label == 1 else None,
+                "interpolated": True,
+            })
+    return pd.DataFrame(gaps)
 
 # ─── Step 6: Build segment list ──────────────────────────────────────────────
 
@@ -272,7 +325,7 @@ def build_segments(df: pd.DataFrame) -> list[dict]:
         track_id, start, end, label, centroid_lat, centroid_lon, place_id
     """
     segments = []
-
+    
     for track_id, grp in df.groupby("track_id"):
         grp = grp.sort_values("timestamp").reset_index(drop=True)
         seg_start = 0
@@ -286,18 +339,37 @@ def build_segments(df: pd.DataFrame) -> list[dict]:
                     "end":          seg["formatted_time"].iloc[-1],
                     "start_ts":     seg["timestamp"].iloc[0],
                     "end_ts":       seg["timestamp"].iloc[-1],
-                    "label":        seg["label_smooth"].iloc[0],
+                    "is_stop":      seg["label_smooth"].iloc[0],
                     "centroid_lat": seg["latitude"].mean(),
                     "centroid_lon": seg["longitude"].mean(),
                     "centroid_alt": seg["elevation"].mean(),
-                    "stop_id":      seg["stop_id"].mode()[0] if "stop_id" in seg and seg["label_smooth"].iloc[0] == 1 else None,
-                    "place_id":     seg["place_id"].mode()[0] if "place_id" in seg and seg["label_smooth"].iloc[0] == 1 else None,
+                    "start_lat":    seg["latitude"].iloc[0],
+                    "start_lon":    seg["longitude"].iloc[0],
+                    "start_alt":    seg["elevation"].iloc[0],
+                    "end_lat":      seg["latitude"].iloc[-1],
+                    "end_lon":      seg["longitude"].iloc[-1],
+                    "end_alt":      seg["elevation"].iloc[-1],
                     "n_points":     len(seg),
+                    "interpolated": seg["interpolated"].mode()[0] if "interpolated" in seg else None,
                 }
                 segments.append(entry)
                 seg_start = i
+                
+    # Sort segments by start time for easier analysis
+    segments.sort(key=lambda x: x["start_ts"])
 
-    return segments
+    print("   Re-assigning segment IDs to order...")
+
+    # Assign segment_ids
+    for i, seg in enumerate(segments):
+        seg["segment_id"] = i
+        df.loc[(df["track_id"] == seg["track_id"]) &
+               (df["timestamp"] >= seg["start_ts"]) &
+               (df["timestamp"] <= seg["end_ts"]), "segment_id"] = seg["segment_id"]
+        
+    df["segment_id"] = df["segment_id"].astype(int)
+    df.sort_values("timestamp", inplace=True)
+    return df, segments
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -324,9 +396,15 @@ def run_pipeline(folder: str = FOLDER) -> tuple[pd.DataFrame, list[dict]]:
 
     print("5. Merging stop centroids…")
     df = assign_stop_and_place_ids(df)
+    df["interpolated"] = df.get("interpolated", False)  # Ensure the column exists
+
+    print("   Filling gaps between tracks…")
+    gap_df = analyze_track_gaps(df)
+    df = pd.concat([df, gap_df], ignore_index=True)
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
     print("6. Building segment list…")
-    segments = build_segments(df)
+    df, segments = build_segments(df)
     print(f"   {len(segments)} segments total")
 
     seg_df = pd.DataFrame(segments)
@@ -335,9 +413,15 @@ def run_pipeline(folder: str = FOLDER) -> tuple[pd.DataFrame, list[dict]]:
 
 if __name__ == "__main__":
     df, seg_df = run_pipeline()
+    seg_df.sort_values("start", inplace=True)
+
+    os.makedirs("files", exist_ok=True)
+    print("\n─── Annotated points sample ───")
+    print(df[["segment_id", "track_id", "formatted_time", "latitude", "longitude", "elevation", "label_smooth", "interpolated"]].head(5).to_string(index=False))
+    df.to_csv("files/annotated_points.csv", index=False)
+    print("\nSaved → annotated_points.csv")
 
     print("\n─── Segment summary ───")
-    print(seg_df[["track_id", "start", "end", "label", "centroid_lat", "centroid_lon", "centroid_alt", "stop_id", "place_id"]].to_string(index=False))
-
+    print(seg_df[["segment_id", "track_id", "start", "end", "is_stop", "centroid_lat", "centroid_lon", "centroid_alt"]].head(5).to_string(index=False))
     seg_df.to_csv("files/segments.csv", index=False)
     print("\nSaved → segments.csv")

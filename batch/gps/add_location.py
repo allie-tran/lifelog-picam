@@ -19,7 +19,7 @@ fields = GPX_10_POINT_FIELDS
 field_names = [field.name for field in fields]
 field_names = [field_name for field_name in field_names if field_name]
 
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost/lifelog-picam"
+PG_URI = "postgresql+psycopg://postgres:lsc26@localhost:5433/lifelog-picam"
 engine = create_engine(PG_URI)
 session = Session(bind=engine.connect())
 
@@ -49,7 +49,6 @@ def parse_gps(date, gps_file):
 
 
 def assign_gps_to_images(date, points, point_timestamps):
-
     # Assign GPS data to images
     images = session.execute(
         select(Image.id, Image.timestamp).where(

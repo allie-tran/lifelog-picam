@@ -69,30 +69,17 @@ class LocationRegion(Base):
 
 class Location(Base):
     __tablename__ = "locations"
-    __table_args__ = (
-        UniqueConstraint("name", "address", name="uq_location_name_address"),
-    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(Text)
+    address = Column(Text)
     country = Column(Text)
-    fsq_id = Column(Text, unique=True, nullable=True)
+    fsq_id = Column(Text, nullable=True)
     info = Column(Text)
     stop = Column(Boolean)
-    icon_name = Column(Text)
-    icon_prefix = Column(Text)
-    icon_suffix = Column(Text)
-    icon_type = Column(Text)
-
     timezone = Column(Text)
     address = Column(Text)
 
-    cities = relationship(
-        "LocationCity", back_populates="location", cascade="all, delete-orphan"
-    )
-    regions = relationship(
-        "LocationRegion", back_populates="location", cascade="all, delete-orphan"
-    )
     images = relationship("Image", back_populates="location")
 
 
@@ -287,6 +274,7 @@ class ImageGPS(Base):
     satellites = Column(Integer)
     source = Column(Text)
     gap_s = Column(Float)
+    timezone = Column(Text)
 
     # PostGIS Geography — distances in metres, no projection math needed.
     # Populated as: ST_MakePoint(longitude, latitude)  ← lon first in WGS84

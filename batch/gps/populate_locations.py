@@ -16,274 +16,312 @@ Requirements:
     pip install pymongo requests
     export FSQ_API_KEY=your_key_here
 """
+from collections import defaultdict
 
-import argparse
-import bisect
-import csv
-import json
-import os
-import sys
-import time
-from pprint import pprint
+import pandas as pd
+from sqlalchemy import create_engine, text, update, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert
 
-import requests
-from pymongo import MongoClient, UpdateOne
+from models import Image, Location, ImageGPS
+from timezonefinder import TimezoneFinder
+from zoneinfo import ZoneInfo
+from datetime import datetime, timezone
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-
 SEGMENTS_FILE = "files/nominatim_semantic_stops.csv"
-_names = [field_name for field_name in field_names if field_name]
-
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost/lifelog-picam"
+GPS_FILE = "files/image_gps.csv"
+OLD_GPS = "files/lsc24_images.csv"
+DEVICE_ID = "cathal"
+CHUNK = 1000
+PG_URI = "postgresql+psycopg://postgres:lsc26@localhost:5433/lifelog-picam"
 engine = create_engine(PG_URI)
-session = Session(bind=engine.connect())
-
-
-# ─── CSV loading ──────────────────────────────────────────────────────────────
-import pandas as pd
-
-
-def load_stop_segments(csv_path: str) -> list[dict]:
-    """Return only stop rows that have an fsq_id."""
-    stops = []
-    df = pd.read_csv(csv_path, dtype=str, sep=";")
-    df.fillna("", inplace=True)
-    for _, row in df.iterrows():
-        if str(row.get("label")) != "1":
-            continue
-        stops.append(
-            {
-                "start_ts": float(row["start_ts"]),
-                "end_ts": float(row["end_ts"]),
-                "fsq_id": row.get("fsq_place_id", "").strip(),
-                "name": row.get("name", "").strip(),
-                "region": row.get("location", "").strip(),
-                "stop": row.get("label", "0") == "1",
-                "info": row.get("categories", "").strip(),
-                "country": row.get("country", "").strip(),
-                "city": row.get("city", "").strip(),
-                "region": row.get("region", []).strip(),
-                "address": row.get("address", "").strip(),
-                "timezone": row.get("timezone", "").strip(),
-            }
-        )
-    return stops
-
-
-# ─── Segment index for fast timestamp lookup ──────────────────────────────────
-
-
-class SegmentIndex:
-    """
-    Given a timestamp, return the best matching segment:
-      - The segment whose [start_ts, end_ts] contains the timestamp, or
-      - The closest segment by endpoint distance if the timestamp is in a gap.
-    """
-
-    def __init__(self, segments: list[dict]):
-        self.segs = segments
-        self.start_ts = [s["start_ts"] for s in segments]
-
-    def find(self, ts: float) -> dict | None:
-        if not self.segs:
-            return None
-
-        # Rightmost segment that starts at or before ts
-        idx = bisect.bisect_right(self.start_ts, ts) - 1
-
-        # Direct hit: ts falls inside this segment's window
-        if idx >= 0 and ts <= self.segs[idx]["end_ts"]:
-            return self.segs[idx]
-
-        # ts is in a gap — compare distance to neighbouring endpoints
-        candidates = []
-        if idx >= 0:
-            candidates.append((abs(ts - self.segs[idx]["end_ts"]), self.segs[idx]))
-        if idx + 1 < len(self.segs):
-            candidates.append(
-                (abs(ts - self.segs[idx + 1]["start_ts"]), self.segs[idx + 1])
-            )
-
-        if not candidates:
-            return self.segs[0]
-
-        return min(candidates, key=lambda x: x[0])[1]
-
-
-# ─── MongoDB update ───────────────────────────────────────────────────────────
-from datetime import datetime
-
-start_date = "2020-07-01"
-start_timestamp = datetime.fromisoformat(start_date, tzinfo=datetime.timezone.utc)
-BASE_QUERY = {"device": "cathal", "timestamp": {"$gte": start_timestamp * 1000}}
-
-
-def build_bulk_ops(col, segment: dict, dry_run: bool) -> tuple[int, int]:
-    """
-    Return (matched, ops_count) for images in [start_ts, end_ts].
-    In dry_run mode, only counts — does not write.
-    """
-    query = {
-        **BASE_QUERY,
-        "$or": [
-            {
-                "timestamp": {
-                    "$gte": segment["start_ts"] * 1000,
-                    "$lte": segment["end_ts"] * 1000,
-                }
-            },
-            {
-                "gps.timestamp": {
-                    "$gte": segment["start_ts"],
-                    "$lte": segment["end_ts"],
-                }
-            },
-        ],
-    }
-
-    if dry_run:
-        count = col.count_documents(query)
-        if count == 0:
-            print(query)
-        return count, 0
-
-    result = col.update_many(
-        query,
-        {"$set": {"location": segment}},
-    )
-    return result.matched_count, result.modified_count
-
-
-def fetch_unenriched(col, run_id) -> list[dict]:
-    """Pass 2: images that still have no location field."""
-    return list(
-        col.find(
-            {
-                **BASE_QUERY,
-                "$or": [
-                    {"location": {"$exists": False}},
-                    {"location": None},
-                    {"location.run_id": {"$ne": run_id}},
-                ],
-            },
-            {"_id": 1, "timestamp": 1},
-            sort=[("timestamp", 1)],
-        )
-    )
-
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 from tqdm.auto import tqdm
 
-
-def run(segments_file: str, mongo_uri: str, dry_run: bool):
-    print(f"Loading segments from {segments_file}…")
-    segments = load_stop_segments(segments_file)
-    print(f"  {len(segments)} stop segments with fsq_id")
-
-    if not segments:
-        print("Nothing to do.")
-        return
-
-    client = MongoClient(mongo_uri)
-    col = client[DB][COL_IMAGES]
-
-    total_matched = 0
-    total_modified = 0
-    fsq_errors = 0
-
-    run_id = int(time.time())
-
-    # To account for gaps, make the end_ts expand to the next segment's start_ts
-    for i, seg in enumerate(segments):
-        if i + 1 < len(segments):
-            seg["end_ts"] = segments[i + 1]["start_ts"]
-
-    for i, seg in tqdm(
-        enumerate(segments, 1), total=len(segments), desc="Processing segments"
-    ):
-        seg["run_id"] = run_id
-        matched, modified = build_bulk_ops(col, seg, dry_run)
-        if dry_run:
-            print(f"[DRY RUN] would update {matched} images")
-
-        total_matched += matched
-        total_modified += modified
-
-    print()
-    print("─── Summary ─────────────────────────────────────────────")
-    print(f"  Segments processed : {len(segments)}")
-    print(f"  FSQ errors         : {fsq_errors}")
-    print(f"  Images matched     : {total_matched}")
-    if not dry_run:
-        print(f"  Images modified    : {total_modified}")
+def create_key(fsq_place_id, name, country, address, is_stop):
+    if fsq_place_id and fsq_place_id != "None":
+        key = f"fsq_id={fsq_place_id}"
     else:
-        print("  (dry run — no writes)")
+        key = f"{name}, {country}, {address}"
+    key = f"stop={is_stop == 1}, {key}"
+    return key
 
-    print("\nFallback for images outside stop windows…")
+tf = TimezoneFinder()
+timezone_cache = {}
+def cached_find_timezone(lat, lon):
+    if (lat, lon) in timezone_cache:
+        return timezone_cache[(lat, lon)]
+    tz = tf.timezone_at(lng=lon, lat=lat)
+    timezone_cache[(lat, lon)] = tz
+    return tz
 
-    unenriched = fetch_unenriched(col, run_id)
-    print(f"  {len(unenriched)} images without location")
-    if not unenriched:
-        print("  Nothing to do.")
-        return 0, 0
-
-    index = SegmentIndex(segments)
-    total_matched = total_modified = 0
-    no_match = 0
-    for img in tqdm(unenriched, desc="Assigning fallback segments"):
-
-        # Get the previous valid location
-
-        ts = img["timestamp"] / 1000  # collection stores ms
-        seg = index.find(ts)
-        if seg is None:
-            print(f"  WARNING: no segment found for ts={ts:.0f}, skipping")
-            no_match += 1
-            continue
-
-        ok = (
-            col.update_one(
-                {"_id": img["_id"]}, {"$set": {"location": seg}}
-            ).modified_count
-            == 1
-        )
-        total_matched += 1
-        total_modified += int(ok and not dry_run)
-
+def run_segments():
     print(
-        f"  ── Pass 2 done  matched={total_matched}"
-        + (f"  modified={total_modified}" if not dry_run else "  [DRY]")
-        + (f"  no_match={no_match}" if no_match else "")
+        f"Loading segments from {SEGMENTS_FILE} and image GPS data from {GPS_FILE}..."
+    )
+    segments = pd.read_csv(SEGMENTS_FILE, sep=";")
+    segments = segments.fillna("")
+    segments = segments[segments["segment_id"] == 59100]  # TEMP: filter to one segment for testing
+    image_gps = pd.read_csv(GPS_FILE)
+    old_gps = pd.read_csv(OLD_GPS, sep=";")
+    old_gps = old_gps.fillna("")
+
+    # set segment_id as index
+    image_gps.set_index("segment_id", inplace=True)
+    segments["key"] = segments.apply(
+        lambda row: create_key(
+            row["fsq_place_id"],
+            row["name"],
+            row["country"],
+            row["address"],
+            row["is_stop"],
+        ),
+        axis=1,
+    )
+    old_gps["key"] = old_gps.apply(
+        lambda row: create_key(
+            row["fsq_place_id"],
+            row["name"],
+            row["country"],
+            row["address"],
+            row["is_stop"],
+        ),
+        axis=1,
     )
 
-    client.close()
+    all_places = defaultdict(list)
+    for _, seg in segments.iterrows():
+        all_places[seg["key"]].append(seg)
+    for _, row in old_gps.iterrows():
+        row["segment_id"] = -1
+        all_places[row["key"]].append(row)
 
+    with Session(engine) as session:
+        # 1. Wipe all data and reset auto-incrementing IDs
+        session.execute(text("TRUNCATE TABLE locations RESTART IDENTITY CASCADE"))
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
+        # 2. Drop EVERY known constraint and index to start fresh
+        # This prevents "Duplicate Key" errors while you're testing your outside deduplication
+        session.execute(text("ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_fsq_id_key CASCADE"))
+        session.execute(text("ALTER TABLE locations DROP CONSTRAINT IF EXISTS uq_location_name_address CASCADE"))
+        session.execute(text("DROP INDEX IF EXISTS uq_location_name_address"))
+        session.execute(text("DROP INDEX IF EXISTS locations_fsq_id_key"))
+        session.execute(text("DROP INDEX IF EXISTS uq_location_key"))
+
+        # 3. Drop the old icon columns you no longer need
+        for col in ["icon_name", "icon_prefix", "icon_suffix", "icon_type"]:
+            session.execute(text(f"ALTER TABLE locations DROP COLUMN IF EXISTS {col}"))
+
+        # 4. Ensure the 'key' column exists (without a UNIQUE constraint for now)
+        # This allows you to bulk-load data and debug your deduplication logic
+        session.execute(text("ALTER TABLE locations ADD COLUMN IF NOT EXISTS key TEXT"))
+
+        # 5. Create simple, non-unique performance indexes
+        # These help with searching but won't block inserts
+        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_key_search ON locations (key)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_fsq_id_search ON locations (fsq_id)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS idx_location_name_country ON locations (name, country)"))
+
+        session.commit()
+        print("Table 'locations' has been truncated and schema simplified.")
+
+        for key in tqdm(all_places, desc="Inserting locations"):
+            first_place = all_places[key][0]
+            all_segment_ids = set(seg["segment_id"] for seg in all_places[key])
+            images_to_update = image_gps[
+                image_gps.index.isin(all_segment_ids)
+            ].image_path.tolist()
+            # add old image_path in old_gps that match the key
+            old_images = old_gps[old_gps["key"] == key].image_path.tolist()
+            images_to_update += old_images
+
+            stmt = insert(Location).values(
+                key=key,
+                name=first_place["name"],
+                country=first_place["country"],
+                fsq_id=first_place["fsq_place_id"],
+                info=first_place["categories"],
+                stop=first_place["is_stop"] == 1,
+                timezone=first_place["timezone"],
+                address=first_place["address"],
+            )
+
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "country": stmt.excluded.country,
+                    "fsq_id": stmt.excluded.fsq_id,
+                    "info": stmt.excluded.info,
+                    "stop": stmt.excluded.stop,
+                    "timezone": stmt.excluded.timezone,
+                    "address": stmt.excluded.address,
+                },
+            ).returning(Location.id)
+
+            try:
+                row_id = session.execute(stmt).scalar()
+                print(f"Inserted/updated location with ID: {row_id}")
+                session.commit()
+            except SQLAlchemyError as e:
+                error = str(e.__dict__.get("orig"))
+                print(f"Error inserting/updating location for {key}: {error}")
+                session.rollback()
+                # If it failed here, it's likely the name/address constraint triggered instead
+                # We fetch the existing record to get the ID
+                existing = (
+                    session.query(Location)
+                    .filter(
+                        Location.key == key,
+                        Location.name == first_place["name"],
+                        Location.country == first_place["country"],
+                        Location.address == first_place["address"],
+                        Location.stop == (first_place["is_stop"] == 1),
+                        Location.fsq_id == first_place["fsq_place_id"],
+                    )
+                    .first()
+                )
+                print(f"Conflict detected for {key}. Fetched existing location with ID: {existing.id if existing else 'None'}")
+                row_id = existing.id if existing else None
+
+            if row_id is not None and len(images_to_update) > 0:
+                batch_size = 10000
+                for i in range(0, len(images_to_update), batch_size):
+                    try:
+                        session.execute(
+                            update(Image)
+                            .where(Image.image_path.in_(images_to_update[i : i + batch_size]))
+                            .values(location_id=row_id)
+                        )
+                    except SQLAlchemyError as e:
+                        error = str(e.__dict__.get("orig"))
+                        print(f"Error updating images for location id {row_id}: {error}")
+
+                session.commit()
+
+def run_gps() -> None:
+    image_gps = pd.read_csv(GPS_FILE)
+    old_gps = pd.read_csv(OLD_GPS, sep=";")
+    old_gps["elevation"] = 0.0
+    old_gps["interpolated"] = True
+    image_gps = pd.concat([image_gps, old_gps], ignore_index=True)
+
+    # Step 1: Bulk resolve image_path -> image_id in one query
+    paths = image_gps["image_path"].tolist()
+
+    path_to_id: dict[str, int] = {}
+    with Session(engine) as session:
+        for i in range(0, len(paths), CHUNK):
+            chunk = paths[i : i + CHUNK]
+            rows = session.execute(
+                select(Image.image_path, Image.id).where(
+                    Image.image_path.in_(chunk),
+                    Image.device == DEVICE_ID,
+                )
+            ).all()
+            path_to_id.update({r.image_path: r.id for r in rows})
+
+    # Step 2: Build rows, resolve timezone
+    records: list[dict] = []
+    for _, row in tqdm(image_gps.iterrows(), total=len(image_gps), desc="Building GPS records"):
+        image_id = path_to_id.get(row.image_path)
+        if image_id is None:
+            continue  # image not in DB yet, skip
+        tz = cached_find_timezone(round(row.latitude, 4), round(row.longitude, 4))
+        records.append({
+            "image_id": image_id,
+            "latitude": row.latitude,
+            "longitude": row.longitude,
+            "elevation": row.elevation,
+            "interpolated": row.interpolated,
+            "timezone": tz,
+        })
+
+    # Step 3: Bulk upsert in chunks
+    with Session(engine) as session:
+        for i in tqdm(range(0, len(records), CHUNK), desc="Upserting GPS data"):
+            chunk = records[i : i + CHUNK]
+            stmt = insert(ImageGPS).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["image_id"],
+                set_={
+                    "latitude": stmt.excluded.latitude,
+                    "longitude": stmt.excluded.longitude,
+                    "elevation": stmt.excluded.elevation,
+                    "interpolated": stmt.excluded.interpolated,
+                    "timezone": stmt.excluded.timezone,
+                },
+            )
+            try:
+                session.execute(stmt)
+                session.commit()
+            except SQLAlchemyError as e:
+                print(f"Error upserting GPS chunk: {e.__dict__.get('orig')}")
+                session.rollback()
+
+def update_localtime():
+    df = pd.read_csv(GPS_FILE)
+    old_gps = pd.read_csv(OLD_GPS, sep=";")
+    df = pd.concat([df, old_gps], ignore_index=True)
+    # df = df[df["image_path"].str.startswith(f"2022-10-16")]
+    with Session(engine) as session:
+        results = []
+        for i in tqdm(range(0, len(df), CHUNK), desc="Fetching image metadata"):
+            chunk = df.iloc[i : i + CHUNK]["image_path"].tolist()
+            results += session.execute(
+                select(Image.id, Image.image_path, ImageGPS.timezone)
+                .join(ImageGPS, ImageGPS.image_id == Image.id)
+                .where(
+                    Image.image_path.in_(chunk),
+                    Image.device == DEVICE_ID,
+                )
+            ).all()
+
+    path_to_meta: dict[str, tuple[int, str]] = {
+        r.image_path: (r.id, r.timezone) for r in results
+    }
+
+    # To postgres
+    with Session(engine) as session:
+        for i in tqdm(range(0, len(df), CHUNK), desc="Updating timestamps"):
+            chunk = df.iloc[i : i + CHUNK]
+            rows = []
+            for _, row in chunk.iterrows():
+                meta = path_to_meta.get(row["image_path"])
+                if meta is None:
+                    continue
+                image_id, tz_name = meta
+                tz = ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
+                ts = datetime.strptime(row["image_path"].split("/")[-1].split(".")[0], "%Y%m%d_%H%M%S")
+                local_dt = ts.replace(tzinfo=timezone.utc).astimezone(tz)
+                date = ts.strftime("%Y-%m-%d")
+                if date == "2022-10-16":
+                    print(f"Image {row['image_path']} has timestamp {ts} and timezone {tz_name}, local time {local_dt}")
+                rows.append({
+                    "id": image_id,
+                    "timestamp": ts,
+                    "local_timestamp": local_dt,
+                    "year":  local_dt.year,
+                    "month": local_dt.month,
+                    "day":  local_dt.day,
+                    "date": ts.strftime("%Y-%m-%d"),
+                    "hour":  local_dt.hour,
+                })
+
+            if not rows:
+                continue
+
+            session.execute(
+                update(Image).execution_options(synchronize_session=None),
+                rows,
+            )
+            session.commit()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Populate picam.images with a location field from Foursquare."
-    )
-    parser.add_argument(
-        "--segments",
-        default=SEGMENTS_FILE,
-        help=f"Segments CSV (default: {SEGMENTS_FILE})",
-    )
-    parser.add_argument(
-        "--mongo", default=MONGO_URI, help=f"MongoDB URI (default: {MONGO_URI})"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Count matching images but do not write to MongoDB",
-    )
-    args = parser.parse_args()
-
-    run(
-        segments_file=args.segments,
-        mongo_uri=args.mongo,
-        dry_run=args.dry_run,
-    )
+    run_segments()
+    run_gps()
+    update_localtime()

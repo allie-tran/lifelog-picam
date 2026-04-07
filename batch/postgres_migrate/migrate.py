@@ -785,7 +785,8 @@ def main():
     # Migrate in a single transaction — rolls back entirely on failure
     with Session(engine) as session:
         device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
-        location_cache = migrate_locations(session, docs)
+        # location_cache = migrate_locations(session, docs)
+        location_cache = {}
         mongo_to_pg = migrate_images(session, docs, location_cache)
         migrate_embeddings(session, docs, mongo_to_pg)
         migrate_people(session, docs, mongo_to_pg)
