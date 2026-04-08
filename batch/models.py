@@ -24,7 +24,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
-from sqlalchemy.orm import declared_attr
 
 
 class Base(DeclarativeBase):
@@ -156,24 +155,33 @@ class EmbeddingBase(Base):
         UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
     )
 
-    @declared_attr
-    def image(cls):
-        return relationship("Image", back_populates=cls.__tablename__)
-
-    @declared_attr
-    def __table_args__(cls):
-        return (Index(f"ix_{cls.__tablename__}_hnsw", "embedding",
-                postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),)
-
 # Now adding a new model takes only 3 lines of code!
 class ImageEmbedding(EmbeddingBase):
     __tablename__ = "image_embedding"
+    __table_args__ = (
+        Index(
+            "ix_image_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
     embedding = Column(Vector(768), nullable=False)
+    image= relationship("Image", back_populates="embedding", uselist=False)
 
 
 class CLIPEmbedding(EmbeddingBase):
     __tablename__ = "clip_embedding"
+    __table_args__ = (
+        Index(
+            "ix_clip_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
     embedding: Column = Column(Vector(768), nullable=False)
+    image= relationship("Image", back_populates="clip_embedding", uselist=False)
 
 class Image(Base):
     __tablename__ = "images"

@@ -13,7 +13,8 @@ from app_types import (
 )
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
-from database.models import Image, ImageEmbedding
+from database.models import CLIPEmbedding, Image, ImageEmbedding
+from visual import openai_clip_model
 from scripts.utils import make_video_thumbnail
 from visual import clip_model
 from query_parse.extract_info import Query
@@ -40,12 +41,15 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
     return app_features
 
 
+search_model = openai_clip_model
+search_table = CLIPEmbedding
+relationship = Image.clip_embedding
 
 def retrieve_image(session, device_id: str, text: str, sort_by, k):
     query = Query(text)
     filters = query.time_to_filters()
 
-    emb = clip_model.encode_text(text)
+    emb = search_model.encode_text(text)
     emb = apply_transformation(emb, get_matrix(session, device_id))
     records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
@@ -64,8 +68,8 @@ def retrieve_image(session, device_id: str, text: str, sort_by, k):
 def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
     stmt = (
         select(
-            ImageEmbedding.embedding.cosine_distance(emb).label("distance"),
-            ImageEmbedding.image_id,
+            search_table.embedding.cosine_distance(emb).label("distance"),
+            search_table.image_id,
             Image,
         )
         .where(
@@ -73,7 +77,7 @@ def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
             Image.device == device_id
         )
         .order_by("distance")
-        .join(Image.embedding)
+        .join(relationship)
     )
 
     for sql_filter in filters:
@@ -110,7 +114,7 @@ def get_similar_images(
                 if new_path:
                     path = new_path
 
-            emb = clip_model.encode_image(path)
+            emb = search_model.encode_image(path)
             emb = emb / np.linalg.norm(emb)
             emb = emb.flatten()
             emb = apply_transformation(emb, get_matrix(session, device_id))
@@ -120,8 +124,8 @@ def get_similar_images(
             return results
     else:
         emb = session.execute(
-            select(ImageEmbedding.embedding)
-            .join(Image, Image.id == ImageEmbedding.image_id)
+            select(search_table.embedding)
+            .join(relationship)
             .where(Image.device == device_id)
             .where(Image.image_path == image)
         ).scalar_one_or_none()
