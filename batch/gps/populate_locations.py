@@ -18,13 +18,14 @@ Requirements:
 """
 
 import os
+import ast
 from collections import defaultdict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, select, text, update
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -32,7 +33,7 @@ from timezonefinder import TimezoneFinder
 
 from models import Image, ImageGPS, Location
 
-# ─── Config ───────────────────────────────────────────────────────────────────
+# ─── Confeg ───────────────────────────────────────────────────────────────────
 
 SEGMENTS_FILE = "files/nominatim_semantic_stops.csv"
 GPS_FILE = "files/image_gps.csv"
@@ -68,6 +69,29 @@ def cached_find_timezone(lat, lon):
     timezone_cache[(lat, lon)] = tz
     return tz
 
+def safe_parse(val):
+    if pd.isna(val) or val == "":
+        return []
+    try:
+        # literal_eval handles single/double quote mismatches better than JSON
+        return ast.literal_eval(val)
+    except (ValueError, SyntaxError):
+        # If it still fails, fix the double-quote "King"s" issue manually
+        fixed_val = val.replace('"s ', "'s ")
+        try:
+            return ast.literal_eval(fixed_val)
+        except:
+            return []
+
+def add_null_address(loc):
+    if loc["address"] == "":
+        region = loc.get("region", "")
+        if "[" in region:
+            region = safe_parse(region)
+        else:
+            region = [region] if region else []
+        loc["address"] = ", ".join(region) if region else loc["country"]
+    return loc["address"]
 
 def run_segments():
     print(
@@ -75,6 +99,7 @@ def run_segments():
     )
     segments = pd.read_csv(SEGMENTS_FILE, sep=";")
     segments = segments.fillna("")
+    segments["address"] = segments.apply(add_null_address, axis=1)
     image_gps = pd.read_csv(GPS_FILE)
 
     # set segment_id as index
@@ -96,6 +121,7 @@ def run_segments():
 
     old_gps = pd.read_csv(OLD_GPS, sep=";")
     old_gps = old_gps.fillna("")
+    old_gps["address"] = old_gps.apply(add_null_address, axis=1)
     old_gps["key"] = old_gps.apply(
         lambda row: create_key(
             row["fsq_place_id"],

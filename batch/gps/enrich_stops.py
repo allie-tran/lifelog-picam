@@ -29,7 +29,7 @@ from tqdm.auto import tqdm
 from unidecode import unidecode
 
 from annotate_images import load_model
-from models import Image, ImageEmbedding
+from models import CLIPEmbedding, Image, ImageEmbedding
 
 load_dotenv()
 
@@ -52,7 +52,7 @@ WORK_LAT, WORK_LON = 53.3853317, -6.2588403
 CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if CUDA else "cpu"
 
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost:5433/lifelog-picam"
+PG_URI = os.environ.get("PG_URI", "postgresql://postgres:password@localhost:5432/lifelog")
 engine = create_engine(PG_URI)
 session = Session(bind=engine.connect())
 
@@ -60,7 +60,6 @@ session = Session(bind=engine.connect())
 # ─── Cache helpers ────────────────────────────────────────────────────────────
 
 os.makedirs(CACHE_DIR, exist_ok=True)
-
 
 def _cache_path(key: str) -> str:
     h = hashlib.md5(key.encode()).hexdigest()
@@ -306,8 +305,8 @@ def get_stop_features(images: list[str]) -> torch.Tensor | None:
     """
     vecs = []
     rows = session.execute(
-        select(ImageEmbedding.embedding)
-        .join(Image, Image.id == ImageEmbedding.image_id)
+        select(CLIPEmbedding.embedding)
+        .join(Image.clip_embedding)
         .where(Image.image_path.in_(images))
     )
     for r in rows:

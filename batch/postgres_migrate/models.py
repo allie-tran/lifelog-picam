@@ -1,25 +1,29 @@
 """
 models.py — SQLAlchemy ORM models for KatoAI PostgreSQL schema
-Requires: sqlalchemy, pgvector, geoalchemy2
-  pip install sqlalchemy psycopg[binary] pgvector geoalchemy2
 """
 
+from enum import StrEnum
 import uuid
-from sqlalchemy import (
-    Column,
-    Boolean,
-    Integer,
-    Float,
-    Text,
-    DateTime,
-    ForeignKey,
-    UniqueConstraint,
-    LargeBinary,
-)
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import DeclarativeBase, relationship
-from pgvector.sqlalchemy import Vector
+
 from geoalchemy2 import Geography
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    Text,
+    UniqueConstraint,
+    func,
+    literal_column,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, relationship
 
 
 class Base(DeclarativeBase):
@@ -30,21 +34,29 @@ class Base(DeclarativeBase):
 # Location
 # ---------------------------------------------------------------------------
 
+
 class Location(Base):
     __tablename__ = "locations"
+    __table_args__ = (
+        # Performance indexes for your manual deduplication and searching
+        Index("ix_locations_key", "key"),
+        Index("ix_locations_fsq_id", "fsq_id"),
+        Index("ix_locations_name_country", "name", "country"),
+        Index("ix_locations_stop", "stop"),
+    )
 
-    key = Column(Text, nullable=False, unique=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key = Column(
+        Text, nullable=False, unique=True
+    )
     name = Column(Text)
     country = Column(Text)
-
     fsq_id = Column(Text, nullable=True)
     info = Column(Text)
     stop = Column(Boolean)
-
-
     timezone = Column(Text)
     address = Column(Text)
+
     images = relationship("Image", back_populates="location")
 
 
@@ -53,17 +65,29 @@ class Location(Base):
 # ---------------------------------------------------------------------------
 
 
+class Device(Base):
+    __tablename__ = "devices"
+    __table_args__ = (Index("ix_devices_device_id", "device_id"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mongo_id = Column(Text, unique=True, nullable=True)
+    device_id = Column(Text, unique=True, nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=True)
+    public_key = Column(Text, nullable=True)
+
+    whitelist = relationship(
+        "DeviceWhitelistEntry", back_populates="device", cascade="all, delete-orphan"
+    )
+    images = relationship("Image", back_populates="device_ref")
+    secret = relationship(
+        "DeviceSecret",
+        back_populates="device",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
 class DeviceSecret(Base):
-    """
-    Isolated table for sensitive device data.
-    Grant SELECT on this table only to the device-facing service role,
-    NOT to the general API role.
-
-    SQL to restrict access:
-        REVOKE ALL ON device_secrets FROM api_role;
-        GRANT SELECT ON device_secrets TO device_role;
-    """
-
     __tablename__ = "device_secrets"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -78,32 +102,11 @@ class DeviceSecret(Base):
     device = relationship("Device", back_populates="secret")
 
 
-class Device(Base):
-    __tablename__ = "devices"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    mongo_id = Column(Text, unique=True, nullable=True)
-    device_id = Column(Text, unique=True, nullable=False)
-    last_seen = Column(DateTime(timezone=True), nullable=True)
-    public_key = Column(Text, nullable=True)
-    whitelist = relationship(
-        "DeviceWhitelistEntry", back_populates="device", cascade="all, delete-orphan"
-    )
-    images = relationship("Image", back_populates="device_ref")
-    secret = relationship(
-        "DeviceSecret",
-        back_populates="device",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
-
-
 class DeviceWhitelistEntry(Base):
-    """One row per named person per device."""
-
     __tablename__ = "device_whitelist"
     __table_args__ = (
         UniqueConstraint("device_id", "name", name="uq_whitelist_device_name"),
+        Index("ix_whitelist_device", "device_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -111,7 +114,7 @@ class DeviceWhitelistEntry(Base):
         UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
     )
     name = Column(Text, nullable=False)
-    cropped = Column(JSONB)  # list of image path strings
+    cropped = Column(JSONB)
 
     device = relationship("Device", back_populates="whitelist")
     embeddings = relationship(
@@ -120,9 +123,16 @@ class DeviceWhitelistEntry(Base):
 
 
 class DeviceWhitelistEmbedding(Base):
-    """One row per embedding vector per whitelist entry."""
-
     __tablename__ = "device_whitelist_embeddings"
+    __table_args__ = (
+        Index("ix_whitelist_emb_entry", "entry_id"),
+        Index(
+            "ix_whitelist_emb_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entry_id = Column(
@@ -142,48 +152,42 @@ class DeviceWhitelistEmbedding(Base):
 
 class Image(Base):
     __tablename__ = "images"
+    __table_args__ = (
+        Index("ix_images_timestamp", "timestamp"),
+        Index("ix_images_date", "date"),
+        Index("ix_images_segment", "segment_id"),
+        Index("ix_images_location", "location_id"),
+        Index("ix_images_path", "image_path"),
+        Index("ix_images_device", "device"),
+        Index("ix_images_device_ref", "device_ref_id"),
+        Index("ix_images_deleted", "deleted"),
+        Index("ix_images_deleted_time", "deleted_time"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mongo_id = Column(Text, unique=True, nullable=True)
-
-    # File
     image_path = Column(Text, nullable=False)
     thumbnail = Column(Text, nullable=False)
     is_video = Column(Boolean, nullable=False, default=False)
-
-    # Time
-    timestamp = Column(DateTime(timezone=False))  # stored in UTC, no timezone info
-    local_timestamp = Column(
-        DateTime(timezone=True)
-    )  # stored with timezone info, for display
-
-    # Time from local_timestamp
+    timestamp = Column(DateTime(timezone=False))
+    local_timestamp = Column(DateTime(timezone=True))
+    timezone = Column(Text)
     date = Column(Text)
     year = Column(Integer)
     month = Column(Integer)
     day = Column(Integer)
     hour = Column(Integer)
     seconds_from_midnight = Column(Integer)
-
-    # Device / segment
-    device = Column(Text)  # raw string from MongoDB, used during migration
+    device = Column(Text)
     device_ref_id = Column(UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True)
     segment_id = Column(Integer)
-
-    # Location FK
     location_id = Column(UUID(as_uuid=True), ForeignKey("locations.id"), nullable=True)
-
-    # Activity
     activity = Column(Text)
     activity_confidence = Column(Text)
     activity_description = Column(Text)
-
-    # Soft delete
     deleted = Column(Boolean, default=False)
     deleted_time = Column(DateTime(timezone=True), nullable=True)
     new = Column(Boolean, default=False)
-
-    # Processing flags
     proc_encoded = Column(Boolean, default=False)
     proc_yolo = Column(Boolean, default=False)
     proc_ocr = Column(Boolean, default=False)
@@ -192,7 +196,6 @@ class Image(Base):
     proc_face_recognition = Column(Boolean, default=False)
     proc_sam3 = Column(Boolean, default=False)
 
-    # Relationships
     location = relationship("Location", back_populates="images")
     device_ref = relationship("Device", back_populates="images")
     gps = relationship(
@@ -206,26 +209,66 @@ class Image(Base):
     )
     ocr = relationship("ImageOCR", back_populates="image", cascade="all, delete-orphan")
 
+    embedding = relationship(
+        "ImageEmbedding",
+        back_populates="image",
+        uselist=False, # This makes it 1:1
+        cascade="all, delete-orphan"
+    )
 
-# ---------------------------------------------------------------------------
-# Embedding
-# ---------------------------------------------------------------------------
+    clip_embedding = relationship(
+        "CLIPEmbedding",
+        back_populates="image",
+        uselist=False, # This makes it 1:1
+        cascade="all, delete-orphan"
+    )
 
 
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
+    __table_args__ = (
+        Index("ix_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
 
-    image_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Add ForeignKey here
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        primary_key=True
+    )
     embedding = Column(Vector(768), nullable=False)
 
+    # Relationship back to Image
+    image = relationship("Image", back_populates="embedding")
+
+class CLIPEmbedding(Base):
+    __tablename__ = "clip_embedding"
+    __table_args__ = (
+        Index("ix_clip_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+    # Add ForeignKey here
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        primary_key=True
+    )
+    embedding = Column(Vector(768), nullable=False)
+
+    # Relationship back to Image
+    image = relationship("Image", back_populates="clip_embedding")
 
 # ---------------------------------------------------------------------------
-# GPS — PostGIS Geography for real-world spatial queries
+# GPS, People, Objects, OCR
 # ---------------------------------------------------------------------------
 
 
 class ImageGPS(Base):
     __tablename__ = "image_gps"
+    __table_args__ = (
+        Index("ix_gps_image", "image_id"),
+        Index("ix_gps_geog", "geog", postgresql_using="gist"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
@@ -234,8 +277,6 @@ class ImageGPS(Base):
         nullable=False,
         unique=True,
     )
-
-    # Raw scalars kept for debugging / display
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     elevation = Column(Float)
@@ -246,73 +287,98 @@ class ImageGPS(Base):
     gap_s = Column(Float)
     interpolated = Column(Boolean, default=False)
     timezone = Column(Text)
-
-    # PostGIS Geography — distances in metres, no projection math needed.
-    # Populated as: ST_MakePoint(longitude, latitude)  ← lon first in WGS84
-    # Spatial index created in migrate.py after bulk load.
     geog = Column(Geography(geometry_type="POINT", srid=4326), nullable=True)
 
     image = relationship("Image", back_populates="gps")
 
 
-# ---------------------------------------------------------------------------
-# People detections
-# ---------------------------------------------------------------------------
-
-
 class ImagePerson(Base):
     __tablename__ = "image_people"
+    __table_args__ = (
+        Index("ix_people_image", "image_id"),
+        Index("ix_people_cluster", "cluster_label"),
+        Index(
+            "ix_people_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
         UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
     )
-
     label = Column(Text)
     confidence = Column(Float)
-    bbox = Column(JSONB)  # [x1, y1, x2, y2]
+    bbox = Column(JSONB)
     cluster_label = Column(Integer, nullable=True)
     embedding = Column(Vector(512), nullable=True)
 
     image = relationship("Image", back_populates="people")
 
 
-# ---------------------------------------------------------------------------
-# YOLO object detections
-# ---------------------------------------------------------------------------
-
-
 class ImageObject(Base):
     __tablename__ = "image_objects"
+    __table_args__ = (
+        Index("ix_objects_image", "image_id"),
+        Index("ix_objects_label", "label"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
         UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
     )
-
     label = Column(Text)
     confidence = Column(Float)
-    bbox = Column(JSONB)  # [x1, y1, x2, y2]
+    bbox = Column(JSONB)
 
     image = relationship("Image", back_populates="objects")
 
 
-# ---------------------------------------------------------------------------
-# OCR results
-# ---------------------------------------------------------------------------
-
-
 class ImageOCR(Base):
     __tablename__ = "image_ocr"
+    __table_args__ = (
+        Index("ix_ocr_image", "image_id"),
+        # Full Text Search Index
+        Index(
+            "ix_ocr_fts",
+            func.to_tsvector(literal_column("'english'"), func.coalesce(Column("text"), '')),
+            postgresql_using="gin",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     image_id = Column(
         UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), nullable=False
     )
-
     text = Column(Text)
     confidence = Column(Float)
-    box_2d = Column(JSONB)  # [x1, y1, x2, y2]
-    polygon = Column(JSONB)  # [[x,y], ...]
+    box_2d = Column(JSONB)
+    polygon = Column(JSONB)
 
     image = relationship("Image", back_populates="ocr")
+
+class AnnotationType(StrEnum):
+    RECTANGLE = "rectangle"   # 2 points
+    POLYGON = "polygon"       # n points, closed
+    POLYLINE = "polyline"     # n points, open
+    KEYPOINT = "keypoint"     # 1 point
+
+class Annotation(Base):
+    __tablename__ = "annotations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    anno_type = Column(
+        Enum(AnnotationType), default=AnnotationType.POLYGON, nullable=False
+    )
+    points = Column(JSONB)
+    label = Column(Text)
+
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    author = Column(Text)

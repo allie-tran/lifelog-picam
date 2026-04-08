@@ -1,25 +1,23 @@
-import bisect
 import os
-import random
-from datetime import datetime, timedelta, timezone
+import bisect
+from datetime import timedelta
 from typing import Counter
 
 import clip
-import gpxpy
 import pandas as pd
 import torch
-from gpxpy.gpx import GPX_10_POINT_FIELDS
-from pymongo import MongoClient
-from sqlalchemy import create_engine, insert, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from tqdm import tqdm
+from dotenv import load_dotenv
 
-from models import Base, Image, ImageEmbedding, ImageGPS
+from models import Image, ImageEmbedding, CLIPEmbedding
 
 GPS_FILE = "files/annotated_points.csv"
 DEVICE_ID = "cathal"
 
-PG_URI = "postgresql+psycopg://postgres:lsc26@localhost:5433/lifelog-picam"
+load_dotenv()
+PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/lsc24")
 engine = create_engine(PG_URI)
 session = Session(bind=engine.connect())
 
@@ -37,8 +35,10 @@ def load_checkpoint(model, checkpoint_path):
 
 
 def load_model():
-    model, preprocess = clip.load("ViT-L/14", device=DEVICE)
-    model = load_checkpoint(model, CHECKPOINT_PATH)
+    # model, preprocess = clip.load("ViT-L/14", device=DEVICE)
+    # model = load_checkpoint(model, CHECKPOINT_PATH)
+    model, preprocess = clip.load("ViT-L/14@336px", device=DEVICE)
+    model.float()
     model.eval()
     model = model.to(DEVICE)
     return model, preprocess
@@ -65,7 +65,6 @@ def assign_gps_to_images(date, points, point_timestamps):
     )
     images = list(images)
     if len(images) == 0:
-        print(f"No images found for date {date}")
         return []  # No images for this date, skip processing
 
     stats = Counter()
@@ -234,8 +233,8 @@ if __name__ == "__main__":
     image_to_inside = {}
     for date in tqdm(dates):
         records = session.execute(
-            select(ImageEmbedding.embedding, Image.image_path)
-            .join(Image, ImageEmbedding.image_id == Image.id)
+            select(CLIPEmbedding.embedding, Image.image_path)
+            .join(Image.clip_embedding)
             .where(Image.device == DEVICE_ID, Image.date == date.strftime("%Y-%m-%d"))
         )
         records = list(records)

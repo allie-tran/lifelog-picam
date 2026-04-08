@@ -24,6 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import declared_attr
 
 
 class Base(DeclarativeBase):
@@ -148,7 +149,31 @@ class DeviceWhitelistEmbedding(Base):
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
+class EmbeddingBase(Base):
+    __abstract__ = True
 
+    image_id = Column(
+        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    @declared_attr
+    def image(cls):
+        return relationship("Image", back_populates=cls.__tablename__)
+
+    @declared_attr
+    def __table_args__(cls):
+        return (Index(f"ix_{cls.__tablename__}_hnsw", "embedding",
+                postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),)
+
+# Now adding a new model takes only 3 lines of code!
+class ImageEmbedding(EmbeddingBase):
+    __tablename__ = "image_embedding"
+    embedding = Column(Vector(768), nullable=False)
+
+
+class CLIPEmbedding(EmbeddingBase):
+    __tablename__ = "clip_embedding"
+    embedding: Column = Column(Vector(768), nullable=False)
 
 class Image(Base):
     __tablename__ = "images"
@@ -216,24 +241,18 @@ class Image(Base):
         cascade="all, delete-orphan"
     )
 
-
-class ImageEmbedding(Base):
-    __tablename__ = "image_embedding"
-    __table_args__ = (
-        Index("ix_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    clip_embedding = relationship(
+        "CLIPEmbedding",
+        back_populates="image",
+        uselist=False, # This makes it 1:1
+        cascade="all, delete-orphan"
     )
 
-    # Add ForeignKey here
-    image_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("images.id", ondelete="CASCADE"),
-        primary_key=True
-    )
-    embedding = Column(Vector(768), nullable=False)
-
-    # Relationship back to Image
-    image = relationship("Image", back_populates="embedding")
-
+    def get_embedding(self, model_type="conclip"):
+        """The 'Advanced' dynamic switcher."""
+        if model_type == "vitl14@336":
+            return self.clip_embedding
+        return self.embedding
 
 # ---------------------------------------------------------------------------
 # GPS, People, Objects, OCR

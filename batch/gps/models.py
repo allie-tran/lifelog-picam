@@ -2,6 +2,7 @@
 models.py — SQLAlchemy ORM models for KatoAI PostgreSQL schema
 """
 
+from enum import StrEnum
 import uuid
 
 from geoalchemy2 import Geography
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Enum,
     Float,
     ForeignKey,
     Index,
@@ -45,8 +47,8 @@ class Location(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key = Column(
-        Text, nullable=False
-    )  # UniqueConstraint removed per your plan to dedupe in Python
+        Text, nullable=False, unique=True
+    )
     name = Column(Text)
     country = Column(Text)
     fsq_id = Column(Text, nullable=True)
@@ -214,6 +216,13 @@ class Image(Base):
         cascade="all, delete-orphan"
     )
 
+    clip_embedding = relationship(
+        "CLIPEmbedding",
+        back_populates="image",
+        uselist=False, # This makes it 1:1
+        cascade="all, delete-orphan"
+    )
+
 
 class ImageEmbedding(Base):
     __tablename__ = "image_embedding"
@@ -232,6 +241,22 @@ class ImageEmbedding(Base):
     # Relationship back to Image
     image = relationship("Image", back_populates="embedding")
 
+class CLIPEmbedding(Base):
+    __tablename__ = "clip_embedding"
+    __table_args__ = (
+        Index("ix_clip_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+    # Add ForeignKey here
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        primary_key=True
+    )
+    embedding = Column(Vector(768), nullable=False)
+
+    # Relationship back to Image
+    image = relationship("Image", back_populates="clip_embedding")
 
 # ---------------------------------------------------------------------------
 # GPS, People, Objects, OCR
@@ -333,3 +358,27 @@ class ImageOCR(Base):
     polygon = Column(JSONB)
 
     image = relationship("Image", back_populates="ocr")
+
+class AnnotationType(StrEnum):
+    RECTANGLE = "rectangle"   # 2 points
+    POLYGON = "polygon"       # n points, closed
+    POLYLINE = "polyline"     # n points, open
+    KEYPOINT = "keypoint"     # 1 point
+
+class Annotation(Base):
+    __tablename__ = "annotations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("images.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    anno_type = Column(
+        Enum(AnnotationType), default=AnnotationType.POLYGON, nullable=False
+    )
+    points = Column(JSONB)
+    label = Column(Text)
+
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    author = Column(Text)

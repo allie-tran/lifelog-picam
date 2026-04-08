@@ -12,20 +12,21 @@ import logging
 from datetime import datetime, timezone
 import pytz
 from pymongo import MongoClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, select
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 import numpy as np
 import pickle
 
 from models import (
-    Base,
     Device,
     DeviceSecret,
     DeviceWhitelistEmbedding,
     DeviceWhitelistEntry,
     Location,
     Image,
+    ImageEmbedding,
+    CLIPEmbedding,
     ImageGPS,
     ImagePerson,
     ImageObject,
@@ -115,7 +116,7 @@ def export_mongo() -> list[dict]:
     log.info("Connecting to MongoDB...")
     client = MongoClient(MONGO_URI)
     docs = list(client[MONGO_DB][MONGO_COL].find({"device": "allie"}))
-    docs += list(client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1))
+    # docs += list(client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1))
     log.info(f"Exported {len(docs)} documents")
     return docs
 
@@ -567,11 +568,11 @@ def migrate_gps(session: Session, docs: list[dict], mongo_to_pg: dict[str, str])
 #  Migrate embeddings (from .npy files)
 # ---------------------------------------------------------------------------
 
-EMBEDDING_DIR = "/mnt/MySceal/embeddings/conclip_vit_l14/"
+EMBEDDING_DIR = "/mnt/ssd0/embeddings/cathal/vitl14336"
 IMAGE_EMBED_DIM = 768
 
 
-def migrate_embeddings(session: Session, docs: list[dict], mongo_to_pg: dict[str, str]):
+def migrate_embeddings(session: Session):
     """Load .npy image embeddings from EMBEDDING_DIR and UPDATE directly onto images rows."""
     import os
     import numpy as np
@@ -585,15 +586,19 @@ def migrate_embeddings(session: Session, docs: list[dict], mongo_to_pg: dict[str
     wrong_dim = 0
     total = 0
 
-    for i, doc in enumerate(docs):
-        pg_id = mongo_to_pg.get(str(doc["_id"]))
-        if not pg_id:
-            continue
+    res = session.execute(select(Image.id, Image.image_path, Image.device))
+    rows = []
+    for r in res.all():
+        image_path = r.image_path
+        device_id = r.device
+        pg_id = r.id
 
-        device_id = doc.get("device", "unknown")
-        basename = os.path.basename(doc["image_path"])
+        basename = os.path.basename(image_path)
+        # npy_path = os.path.join(
+        #     EMBEDDING_DIR, f"{device_id}_features", f"{basename}.npy"
+        # )
         npy_path = os.path.join(
-            EMBEDDING_DIR, f"{device_id}_features", f"{basename}.npy"
+            EMBEDDING_DIR, f"{basename}.npy"
         )
         matrix = None
         if device_id != "allie":  # allie's embeddings are already transformed
@@ -611,18 +616,20 @@ def migrate_embeddings(session: Session, docs: list[dict], mongo_to_pg: dict[str
             wrong_dim += 1
             continue
 
-        session.execute(
-            text(
-                "INSERT INTO image_embedding (image_id, embedding) VALUES (:id, :emb)"
-            ),
-            {"emb": str(emb), "id": pg_id},
-        )
-
+        rows.append({
+            "image_id": pg_id,
+            "embedding": emb,
+        })
         total += 1
 
         # Flush in batches to avoid memory buildup (embeddings can be large)
-        if i % BATCH_SIZE == 0:
+        if len(rows) >= 100:
+            session.execute(
+                pg_insert(CLIPEmbedding).values(rows).on_conflict_do_nothing()
+            )
+            session.commit()
             session.flush()
+            rows.clear()
             log.info(f"    flushed {total} embeddings...")
 
     if missing:
@@ -755,19 +762,20 @@ def main():
             session.execute(text("SELECT mongo_id FROM images")).scalars().all()
         )
     docs = [d for d in docs if str(d["_id"]) not in existing_ids]
+    mongo_to_pg = {}
 
     # Migrate in a single transaction — rolls back entirely on failure
     with Session(engine) as session:
-        device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
-        location_cache = migrate_locations(session, docs)
-        mongo_to_pg = migrate_images(session, docs, location_cache)
-        migrate_embeddings(session, docs, mongo_to_pg)
-        migrate_people(session, docs, mongo_to_pg)
-        migrate_objects(session, docs, mongo_to_pg)
-        migrate_gps(session, docs, mongo_to_pg)
-        migrate_ocr(session, docs, mongo_to_pg)
+        # device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
+        # location_cache = migrate_locations(session, docs)
+        # mongo_to_pg = migrate_images(session, docs, location_cache)
+        migrate_embeddings(session)
+        # migrate_people(session, docs, mongo_to_pg)
+        # migrate_objects(session, docs, mongo_to_pg)
+        # migrate_gps(session, docs, mongo_to_pg)
+        # migrate_ocr(session, docs, mongo_to_pg)
 
-        link_images_to_devices(session, device_id_cache)
+        # link_images_to_devices(session, device_id_cache)
         # Indexes outside transaction (DDL can't be rolled back in PG anyway)
         session.commit()
 
