@@ -44,6 +44,28 @@ const LifelogEvent = ({
                 }}
             >
                 <Divider />
+                <Stack direction="row" spacing={1} alignItems="center">
+                    {location ? (
+                        <Stack spacing={1}>
+                            <Typography
+                                variant="subtitle2"
+                                color="textSecondary"
+                            >
+                                {location.name}, {location.country} ({location.info})
+                            </Typography>
+                            <Typography
+                                variant="subtitle2"
+                                color="textSecondary"
+                            >
+                                {location.address}
+                            </Typography>
+                        </Stack>
+                    ) : (
+                        <Typography variant="subtitle2" color="textSecondary">
+                            No location data
+                        </Typography>
+                    )}
+                </Stack>
                 <Stack
                     direction="row"
                     justifyContent="space-between"
@@ -83,28 +105,6 @@ const LifelogEvent = ({
                             </strong>
                         )}
                     </Typography>
-                </Stack>
-                <Stack direction="row" spacing={1} alignItems="center">
-                    {location ? (
-                        <Stack spacing={1}>
-                            <Typography
-                                variant="subtitle2"
-                                color="textSecondary"
-                            >
-                                {location.name}, {location.country} ({location.info})
-                            </Typography>
-                            <Typography
-                                variant="subtitle2"
-                                color="textSecondary"
-                            >
-                                {location.address}
-                            </Typography>
-                        </Stack>
-                    ) : (
-                        <Typography variant="subtitle2" color="textSecondary">
-                            No location data
-                        </Typography>
-                    )}
                 </Stack>
                 <Typography>{firstImage.activityDescription}</Typography>
                 <Stack direction="row" spacing={2} alignItems="center">

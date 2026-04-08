@@ -882,7 +882,7 @@ def process_date(
         print(f"Reset segments for date {date} and device {device}.")
 
     print(f"Scheduling segment processing for date {date} and device {device}.")
-    load_all_segments(session, device, date, skip_annotations=not reset)
+    load_all_segments(session, device, date, skip_annotations=True)
     return {"message": f"Processing segments for date {date} in background."}
 
 

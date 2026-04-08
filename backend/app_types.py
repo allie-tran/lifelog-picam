@@ -133,7 +133,7 @@ class GPSInfo(BaseModel):
 
 
 class LocationInfo(CamelCaseModel):
-    name: str
+    name: Optional[str] = None
     info: Optional[str] = None
     address: Optional[str] = None
     country: str

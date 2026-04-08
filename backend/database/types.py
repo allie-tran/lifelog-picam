@@ -267,6 +267,7 @@ class ImageRecord:
                     )
                 )
             except Exception as e:
+                print(f"Error creating ResultSegment for segment_id={key}: {e}")
                 print("Location", location.__dict__ if location else None)
                 segments.append(
                     ResultSegment(

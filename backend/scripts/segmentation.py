@@ -1,3 +1,4 @@
+from collections import defaultdict
 import math
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -63,7 +64,7 @@ def choose_num_thumbnails(
 def get_records_for_paths(session, device_id: str, image_paths: List[str]):
     records = session.execute(
         select(Image.image_path, Image.timestamp, Image.location_id, ImageEmbedding.embedding)
-        .join(ImageEmbedding, ImageEmbedding.image_id == Image.id)
+        .join(ImageEmbedding, ImageEmbedding.image_id == Image.id, isouter=True)
         .where(
             Image.image_path.in_(image_paths),
             Image.device == device_id,
@@ -75,7 +76,8 @@ def get_records_for_paths(session, device_id: str, image_paths: List[str]):
     # Split into segments based on time gaps and location changes
     path_to_time = {record.image_path: record.timestamp for record in records}
     path_to_location = {record.image_path: record.location_id for record in records}
-    path_to_embedding = {record.image_path: record.embedding for record in records}
+    path_to_embedding = defaultdict(lambda: np.ones(768, dtype=np.float32) * -1)  # default embedding for missing records
+    path_to_embedding.update( {record.image_path: record.embedding for record in records if record.embedding is not None} )
 
     paths = [record.image_path for record in records]
     embeddings = np.array([path_to_embedding[path] for path in paths])
@@ -117,6 +119,20 @@ def segment_images(
         sorted_indices = sorted_indices[::-1]
 
     features = features[sorted_indices]
+    if len(features) == 0:
+        print("No features found for the given image paths. Segmenting by boundaries only.")
+        # just do by boundaries if we don't have enough features
+        image_segments = []
+        for i, path in enumerate(image_paths):
+            if path in boundaries and image_segments:
+                image_segments.append([])
+
+            if not image_segments:
+                image_segments.append([])
+
+            image_segments[-1].append(path)
+        return image_segments
+
     image_paths = [image_paths[i] for i in sorted_indices]
 
     # Normalise
@@ -126,8 +142,6 @@ def segment_images(
     similarities = [
         np.dot(features[i], features[i - 1]) for i in range(1, len(features))
     ]
-    if not similarities:
-        return [image_paths]
 
     window_size = 3
     smoothed = np.convolve(

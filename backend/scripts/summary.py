@@ -71,6 +71,9 @@ def summarize_lifelog_by_day(
         elif action_type == ActionType.BURST:
             summary.burst_metrics[name] = []
 
+    if len(feats) == 0:
+        print("No embeddings found for the day's images.")
+        return summary
     all_feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)  # Normalize for cosine similarity
     summary.total_images = len(paths)
 
@@ -337,28 +340,33 @@ def create_day_timeline(session, device: str, date: str):
                 )
             )
             image_to_feats = {row.image_path: row.embedding for row in feats}
-            seg_feats = np.array([image_to_feats[path] for path in seg_paths])
+            seg_paths = [path for path in seg_paths if path in image_to_feats]
+            seg_feats = np.array([image_to_feats[path] for path in seg_paths if path in image_to_feats])
+            if len(seg_feats) == 0:
+                representative_image = None
+                representative_images = []
+            else:
+                representative_image_paths = pick_representative_index_for_segment(
+                    seg_paths,
+                    seg_feats,
+                    encoded_activities_dict.get(activity),
+                )
+                representative_image = session.execute(select(Image).where(
+                    Image.device == device,
+                    Image.image_path == representative_image_paths[0],
+                )).scalar_one_or_none()
 
-            representative_image_paths = pick_representative_index_for_segment(
-                seg_paths,
-                seg_feats,
-                encoded_activities_dict.get(activity),
-            )
-            representative_image = session.execute(select(Image).where(
-                Image.device == device,
-                Image.image_path == representative_image_paths[0],
-            )).scalar_one_or_none()
-            representative_image = _orm_to_lifelog(representative_image) if representative_image else None
+                representative_image = _orm_to_lifelog(representative_image) if representative_image else None
 
-            representative_images = session.execute(
-                select(Image).where(
-                     Image.device == device,
-                     Image.image_path.in_(representative_image_paths),
-                ).order_by(Image.timestamp.asc())
-            ).scalars().all()
-            representative_images = [
-                _orm_to_lifelog(img) for img in representative_images
-            ]
+                representative_images = session.execute(
+                    select(Image).where(
+                        Image.device == device,
+                        Image.image_path.in_(representative_image_paths),
+                    ).order_by(Image.timestamp.asc())
+                ).scalars().all()
+                representative_images = [
+                    _orm_to_lifelog(img) for img in representative_images
+                ]
         else:
             representative_image = None
             representative_images = []

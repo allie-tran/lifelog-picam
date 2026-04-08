@@ -1,4 +1,4 @@
-from mongodb_odm import connect
+from mongodb_odm import connect, disconnect
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import os
@@ -15,11 +15,11 @@ def get_session():
     try:
         yield session
     finally:
-        session.flush()
         session.close()
 
 def close_db():
     engine.dispose()
+    disconnect()
 
 def init_db():
     connect("mongodb://localhost:27017/picam")
