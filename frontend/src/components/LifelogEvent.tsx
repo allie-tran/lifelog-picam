@@ -1,5 +1,12 @@
-import { Button, Divider, Stack, TextField, Typography } from '@mui/material';
-import { ImageObject, LocationData } from '@utils/types';
+import {
+    Button,
+    Divider,
+    IconButton,
+    Stack,
+    TextField,
+    Typography,
+} from '@mui/material';
+import { GPSData, ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import { CONFIDENCE_COLOURS } from 'constants/activityColors';
@@ -10,6 +17,9 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import '../App.css';
 import ImageWithDate from '../components/ImageWithDate';
+import { useOnInView } from 'react-intersection-observer';
+import { setHighlightedTrack } from 'reducers/map';
+import { ArrowLeftRounded } from '@mui/icons-material';
 
 const LifelogEvent = ({
     segment,
@@ -17,41 +27,62 @@ const LifelogEvent = ({
     deleteRow,
     fullTime = false,
     location,
+    gpsList,
+    inView,
 }: {
     segment: ImageObject[];
     onChange: () => void;
     deleteRow: (imagePaths: string[]) => void;
     fullTime?: boolean;
     location?: LocationData;
+    gpsList?: GPSData[];
+    inView?: boolean;
 }) => {
     const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId);
     const firstImage = segment[0];
     const lastImage = segment[segment.length - 1];
-    const count = segment.length;
+    // const count = segment.length;
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
     const color = CONFIDENCE_COLOURS[firstImage?.activityConfidence || 0];
 
+    // Initialize the hook inside each item
+    const trackingRef = useOnInView(
+        (inView) => {
+            if (inView) {
+                dispatch(setHighlightedTrack(gpsList || []));
+            }
+        },
+        { threshold: 0.5 } // Adjust based on how much of the card must be visible
+    );
+
     return (
         <React.Fragment>
             <Stack
+                ref={trackingRef}
                 spacing={1}
                 sx={{
-                    flex: count < 3 ? '1 0 500px' : '1 0 100%',
+                    height: 'fit-content',
+                    // flex: count < 3 ? '1 0 500px' : '1 0 100%',
                     maxWidth: '100%',
-                    justifyContent: 'space-between',
+                    justifyContent: 'flex-start',
+                    backgroundColor: inView
+                        ? 'rgba(0, 123, 255, 0.1)'
+                        : 'transparent',
+                    position: 'relative',
                 }}
             >
                 <Divider />
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction="row" spacing={1} alignItems="center" pt={4}>
                     {location ? (
                         <Stack spacing={1}>
                             <Typography
                                 variant="subtitle2"
                                 color="textSecondary"
                             >
-                                {location.name}, {location.country} ({location.info})
+                                {location.name}, {location.country} (
+                                {location.info})
                             </Typography>
                             <Typography
                                 variant="subtitle2"
@@ -146,10 +177,12 @@ const LifelogEvent = ({
                     spacing={2}
                     sx={{
                         maxWidth: '100vw',
-                        overflowY: 'auto',
-                        height: '300px',
+                        // overflowY: 'auto',
+                        // height: '300px',
                         p: 0,
+                        flexWrap: 'wrap',
                     }}
+                    useFlexGap
                 >
                     {segment.map((image: ImageObject) => (
                         <ImageWithDate

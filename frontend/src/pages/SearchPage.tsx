@@ -14,14 +14,14 @@ import {
     Tabs,
     ToggleButton,
     ToggleButtonGroup,
-    Typography
+    Typography,
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import {
     deleteImages,
     searchImages,
     similarImages,
-    similarImagesPost
+    similarImagesPost,
 } from 'apis/browsing';
 import ImageDropSearch from 'components/ImageDropSearch';
 import ImageIdSearch from 'components/ImageIdSearch';
@@ -74,10 +74,7 @@ const SearchPage = () => {
                       }
                       return res;
                   })
-            : null,
-        {
-            revalidateOnFocus: false,
-        }
+            : null
     );
 
     const { data: similar, isLoading: isSimilarLoading } = useSWR<
@@ -149,7 +146,9 @@ const SearchPage = () => {
     const currentPageResults =
         results?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) || [];
 
-    const currentPageImages = (images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || []).filter((img) => !deleted.includes(img.imagePath));
+    const currentPageImages = (
+        images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || []
+    ).filter((img) => !deleted.includes(img.imagePath));
 
     return (
         <>
@@ -322,23 +321,37 @@ const SearchPage = () => {
                 ) : (
                     <>
                         {currentPageImages.length == 0 && images.length > 0 && (
-                            <Typography>
-                                No images on this page.
-                            </Typography>
+                            <Typography>No images on this page.</Typography>
                         )}
-                        <Button
-                            color="error"
-                            onClick={() => {
-                                setSelectedImages(
-                                    currentPageImages.map((img) => img.imagePath)
-                                );
-                                setIsSelecting(true);
-                            }}
-                            sx={{ textTransform: 'none', marginBottom: 2 }}
+                        <Stack
+                            direction="row"
+                            alignItems="center"
                         >
-                            <DeleteRounded sx={{ marginRight: 1 }} />
-                            Delete All on This Page
-                        </Button>
+                            <Button
+                                onClick={() => {
+                                    mutate();
+                                }}
+                                variant="outlined"
+                                sx={{ textTransform: 'none', marginBottom: 2 }}
+                            >
+                                Refresh
+                            </Button>
+                            <Button
+                                color="error"
+                                onClick={() => {
+                                    setSelectedImages(
+                                        currentPageImages.map(
+                                            (img) => img.imagePath
+                                        )
+                                    );
+                                    setIsSelecting(true);
+                                }}
+                                sx={{ textTransform: 'none', marginBottom: 2 }}
+                            >
+                                <DeleteRounded sx={{ marginRight: 1 }} />
+                                Delete All on This Page
+                            </Button>
+                        </Stack>
                         {isSelecting && (
                             <Stack direction="row" spacing={2} marginBottom={2}>
                                 <Button

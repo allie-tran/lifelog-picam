@@ -1,17 +1,19 @@
 import {
     DeleteRounded,
     EditRounded,
+    TimerRounded,
     VideocamRounded,
 } from '@mui/icons-material';
 import { Box, Button, Stack, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
-import { deleteImage } from 'apis/browsing';
-import { ImageObject } from '@utils/types';
+import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
+import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppSelector } from 'reducers/hooks';
 import { useEffect, useState } from 'react';
 import Annotator from './Annotator';
 import ModalWithCloseButton from './ModalWithCloseButton';
+import LifelogEvent from './LifelogEvent';
 
 const ImageWithDate = ({
     image,
@@ -48,11 +50,24 @@ const ImageWithDate = ({
         onDelete && onDelete(image.imagePath);
     };
 
+    const [context, setContext] = useState<ResultSegment[]>([]);
+    const [deletedIndexes, setDeletedIndexes] = useState<number[]>([]);
+
     useEffect(() => {
         return () => {
             setDeleted(false);
         };
     }, [image.imagePath]);
+
+    const getContext = async () => {
+        try {
+            const res = await getContextImages(deviceId, image.imagePath);
+            setContext(res);
+            setDeletedIndexes([]);
+        } catch (err) {
+            console.error('Failed to fetch context images:', err);
+        }
+    };
 
     return (
         <Box
@@ -178,15 +193,53 @@ const ImageWithDate = ({
                 >
                     <EditRounded />
                 </Button>
+                <Button
+                    color="secondary"
+                    size="small"
+                    sx={{
+                        fontSize: '12px',
+                        minWidth: 24,
+                    }}
+                    onClick={getContext}
+                >
+                    <TimerRounded />
+                </Button>
                 {extra}
             </Stack>
             <ModalWithCloseButton
                 open={showAnnotator}
                 onClose={() => setShowAnnotator(false)}
             >
-                <Annotator
-                    image={image}
-                />
+                <Annotator image={image} />
+            </ModalWithCloseButton>
+            <ModalWithCloseButton
+                open={context.length > 0}
+                onClose={() => setContext([])}
+            >
+                {context.map((segment, index) => {
+                    const deletedInSegment = deletedIndexes.includes(index);
+                    if (deletedInSegment) {
+                        return null;
+                    }
+                    return (
+                        <LifelogEvent
+                            key={index}
+                            segment={segment.images}
+                            onChange={() => {}}
+                            deleteRow={() => {
+                                deleteImages(
+                                    deviceId,
+                                    segment.images.map((img) => img.imagePath)
+                                ).then(() => {
+                                    setDeletedIndexes((prev) => [
+                                        ...prev,
+                                        index,
+                                    ]);
+                                });
+                            }}
+                        />
+                    );
+                })}
             </ModalWithCloseButton>
         </Box>
     );

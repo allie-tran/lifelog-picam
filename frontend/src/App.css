@@ -27,3 +27,19 @@ video {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
 }
+
+@keyframes map-flow {
+    0% {
+        background-position: 0% 0%;
+        stroke-dashoffset: 0;
+    }
+    100% {
+        background-position: 100% 0%;
+        stroke-dashoffset: 15;
+    }
+}
+
+.gps-direction-flow {
+  animation: map-flow 2s linear infinite !important;
+  z-index: 1;
+}

@@ -169,6 +169,7 @@ class ResultSegment(CamelCaseModel):
     segment_id: Optional[int] = None
     images: list[LifelogImage]
     location: Optional[LocationInfo] = None
+    gps: list[GPSInfo] = []
 
 class SummarySegment(CamelCaseModel):
     segment_index: int | None = None

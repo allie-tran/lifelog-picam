@@ -459,6 +459,41 @@ def get_image(
     img.save(buf, format="JPEG")
     return f"data:image/jpeg;base64, {base64.b64encode(buf.getvalue()).decode('utf-8')}"
 
+@app.get("/get-images-by-date", response_model=dict)
+async def get_images_by_date(
+    device: str,
+    date: str,
+    page: int = 1,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    dir_path = f"{DIR}/{device}/{date}"
+    if not os.path.exists(dir_path):
+        return {"message": f"No images found for date {date}"}
+
+    load_all_segments(session, device, date, skip_annotations=True)
+
+    results = ImageRecord.find_segments(
+        session,
+        date=date,
+        device=device,
+        deleted=False,
+        page=page - 1,
+        page_size=ITEMS_PER_PAGE,
+    )
+
+    segments = results["segments"]
+    gps = results["gps"]
+    total_pages = results["total_pages"]
+
+    return {
+        "date": date,
+        "segments": segments,
+        "total_pages": total_pages,
+        "gps": gps,
+    }
 
 @app.get("/get-images-by-hour", response_model=dict)
 async def get_images_by_hour(
@@ -483,7 +518,8 @@ async def get_images_by_hour(
     all_hours = list(
         ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)
     )
-    all_hours = sorted([h for h in all_hours if h is not None], reverse=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    all_hours = sorted([h for h in all_hours if h is not None], reverse=(today == date))
 
     if not hour:
         if not all_hours:
@@ -495,11 +531,12 @@ async def get_images_by_hour(
     results = ImageRecord.find_segments(
         session,
         date=date,
-        hour=hour,
         device=device,
         deleted=False,
         page=0,
         page_size=10_000,
+        hour=hour,
+        today=today == date,
     )
 
     segments = results["segments"]
@@ -545,6 +582,56 @@ def get_images_by_range(
     _mark_images_not_new(session, [r.image_path for r in records], device)
     return records
 
+@app.get("/get-context-images", response_model=List[ResultSegment])
+def get_context_images(
+    image: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    image_record = ImageRecord.find_one(
+        session, device=device, image_path=image, deleted=False
+    )
+    if image_record is None:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    # segment date first because segment_id can be None
+    load_all_segments(session, device, image_record.date, skip_annotations=True)
+
+    timestamp = image_record.timestamp
+    # get an hour before and after
+    start_dt = timestamp - timedelta(minutes=15)
+    end_dt = timestamp + timedelta(minutes=15)
+    rows = (
+        session.execute(
+            select(ImageModel)
+            .where(ImageModel.device == device)
+            .where(ImageModel.deleted == False)
+            .where(ImageModel.timestamp >= start_dt)
+            .where(ImageModel.timestamp <= end_dt)
+            .order_by(ImageModel.timestamp)
+        )
+        .scalars()
+        .all()
+    )
+    records = [_orm_to_lifelog(r) for r in rows]
+    group_by_segment: dict[Optional[int], List[LifelogImage]] = {}
+    for r in records:
+        if r.segment_id in group_by_segment:
+            group_by_segment[r.segment_id].append(r)
+        else:
+            group_by_segment[r.segment_id] = [r]
+
+    results = []
+    for segment_id, images in group_by_segment.items():
+        results.append(
+            ResultSegment(
+                segment_id=segment_id,
+                images=images,
+            )
+        )
+    return results
 
 @app.get("/get-gps-by-date")
 def get_gps_by_date(
@@ -621,7 +708,7 @@ def similar_images(
         session,
         device,
         image,
-        k=100,
+        k=1000,
     )
 
 
@@ -643,7 +730,7 @@ def similar_images_by_upload(
             session,
             device,
             temp_path,
-            k=100,
+            k=1000,
         )
 
     except UnidentifiedImageError:
@@ -706,6 +793,7 @@ def delete_images(
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
+    session.commit()
 
 
 @app.get("/get-deleted-images")
@@ -720,6 +808,8 @@ def get_deleted_images(
         session,
         deleted=True,
         device=device,
+        sort="deleted_time",
+        sort_desc=True,
     )
     deleted_list = list(deleted_list)
     print(

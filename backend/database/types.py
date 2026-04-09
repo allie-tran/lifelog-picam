@@ -181,11 +181,12 @@ class ImageRecord:
         cls,
         session: Session,
         date: str,
-        hour: str,
         device: str,
         deleted: bool = False,
         page: int = 0,
         page_size: int = 20,
+        hour: str = "",
+        today: bool = False,
     ) -> Dict[str, Any]:
         """
         Replacement for the MongoDB aggregate pipeline that groups images by segment_id.
@@ -208,18 +209,18 @@ class ImageRecord:
             segments = ImageRecord.find_segments(session, date=date, hour=hour, device=device)
         """
         # Step 1: find all matching images
-        rows = (
-            session.execute(
-                select(Image)
+        stmt = (
+            select(Image)
                 .where(Image.date == date)
-                .where(Image.hour == str(hour).zfill(2))
                 .where(Image.device == device)
                 .where(Image.deleted == deleted)
-                .order_by(asc(Image.segment_id), asc(Image.timestamp))
             )
-            .scalars()
-            .all()
-        )
+
+        if hour:
+            stmt = stmt.where(Image.hour == str(hour).zfill(2))
+
+        stmt = stmt.order_by(asc(Image.segment_id), asc(Image.timestamp))
+        rows = session.execute(stmt).scalars().all()
 
         # Step 2: group in Python (avoids complex lateral join)
         grouped: dict[Any, list[Image]] = {}
@@ -233,7 +234,7 @@ class ImageRecord:
         sorted_keys = sorted(
             grouped.keys(),
             key=lambda k: (k is None, k if k is not None else 0),
-            reverse=True,
+            reverse=today,
         )
 
         # Step 4: paginate
@@ -258,17 +259,18 @@ class ImageRecord:
 
             images = [ _orm_to_lifelog(img) for img in images]
             all_images.update(image_paths)
+
             try:
+                gps_info = [GPSInfo.model_validate(g.__dict__) for g in session.execute(select(ImageGPS).where(Image.image_path.in_(image_paths)).join(ImageGPS.image).order_by(Image.timestamp.desc())).scalars().all()]
                 segments.append(
                     ResultSegment(
                         segment_id=key,
                         images=images,
                         location=LocationInfo.model_validate(location.__dict__) if location else None,
+                        gps=gps_info,
                     )
                 )
             except Exception as e:
-                print(f"Error creating ResultSegment for segment_id={key}: {e}")
-                print("Location", location.__dict__ if location else None)
                 segments.append(
                     ResultSegment(
                         segment_id=key,

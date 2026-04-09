@@ -3,8 +3,10 @@ import {
     Button,
     CircularProgress,
     IconButton,
+    Pagination,
     Stack,
     Tooltip,
+    Typography,
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import React from 'react';
@@ -13,27 +15,36 @@ import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import {
     forceDeleteImage,
+    forceDeleteImages,
     getDeletedImages,
     restoreImage,
 } from '../apis/browsing';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
 
+const IMAGES_PER_PAGE = 20;
+
 const DeletedImages = () => {
     const [open, setOpen] = React.useState(false);
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const deviceAccess = useAppSelector((state) => state.auth.deviceAccess);
+    const [page, setPage] = React.useState(1);
 
     const { data, isLoading, mutate } = useSWR(
         ['deleted-images', deviceId],
         () =>
-            deviceAccess === AccessLevel.OWNER || deviceAccess === AccessLevel.ADMIN
+            deviceAccess === AccessLevel.OWNER ||
+            deviceAccess === AccessLevel.ADMIN
                 ? getDeletedImages(deviceId)
                 : Promise.resolve([]),
         {
             revalidateOnFocus: true,
         }
     );
+
+    const totalPages = data ? Math.ceil(data.length / IMAGES_PER_PAGE) : 0;
+    const paginatedData = data ? data.slice((page - 1) * IMAGES_PER_PAGE, page * IMAGES_PER_PAGE) : [];
+    const totalDeleted = data ? data.length : 0;
 
     return (
         <>
@@ -44,7 +55,7 @@ const DeletedImages = () => {
                     onClick={() => {
                         mutate().then(() => {
                             setOpen(true);
-                        })
+                        });
                     }}
                 >
                     <ArchiveRounded />
@@ -57,6 +68,9 @@ const DeletedImages = () => {
                 )}
                 {!isLoading && data && data.length > 0 && (
                     <>
+                        <Typography variant="h6" align="center" gutterBottom>
+                            Deleted Images ({totalDeleted})
+                        </Typography>
                         <Stack
                             direction="row"
                             justifyContent="center"
@@ -67,18 +81,13 @@ const DeletedImages = () => {
                                 color="error"
                                 sx={{ mb: 2 }}
                                 onClick={() => {
-                                    data.forEach(
-                                        (image: ImageObject, index: number) => {
-                                            forceDeleteImage(
-                                                deviceId,
+                                    forceDeleteImages(
+                                        deviceId,
+                                        data.map(
+                                            (image: ImageObject) =>
                                                 image.imagePath
-                                            ).then(() => {
-                                                if (index === data.length - 1) {
-                                                    mutate();
-                                                }
-                                            });
-                                        }
-                                    );
+                                        )
+                                    ).then(() => mutate());
                                 }}
                             >
                                 Delete All
@@ -111,7 +120,7 @@ const DeletedImages = () => {
                             useFlexGap
                             justifyContent="center"
                         >
-                            {data?.map((image) => (
+                            {paginatedData.map((image: ImageObject) => (
                                 <ImageWithDate
                                     height={200}
                                     fontSize="12px"
@@ -138,6 +147,12 @@ const DeletedImages = () => {
                                 />
                             ))}
                         </Stack>
+                        <Pagination
+                            count={totalPages}
+                            page={page}
+                            onChange={(e, value) => setPage(value)}
+                            sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}
+                        />
                     </>
                 )}
             </ModalWithCloseButton>

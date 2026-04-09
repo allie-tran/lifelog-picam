@@ -1,10 +1,15 @@
 import os
 
-from sqlalchemy import delete, insert, select, text, update
-from constants import DIR, THUMBNAIL_DIR
-from database.models import Image, ImageEmbedding
+from sqlalchemy import delete, insert, select, update
+from constants import DIR, THUMBNAIL_DIR, BACKUP_DIR
+from database.models import Image
 from datetime import datetime, timezone
 
+
+def temp_backup(path):
+    filename = path.replace(DIR, BACKUP_DIR)
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    os.rename(path, filename)
 
 def remove_physical_images(session, device_id: str, image_paths: list[str]):
     """Removes multiple images for a device, including physical files, MongoDB records, thumbnails, and ZVec embeddings."""
@@ -12,7 +17,9 @@ def remove_physical_images(session, device_id: str, image_paths: list[str]):
     for image_path in image_paths:
         full_path = os.path.join(DIR, device_id, image_path)
         if os.path.exists(full_path):
-            os.remove(full_path)
+            # os.remove(full_path)
+            temp_backup(full_path)
+
         thumbnail_path = os.path.join(
             THUMBNAIL_DIR, device_id, image_path.replace(".jpg", ".webp")
         )
@@ -23,6 +30,7 @@ def remove_physical_images(session, device_id: str, image_paths: list[str]):
     stmt = delete(Image).where(Image.device == device_id, Image.image_path.in_(image_paths))
     count = session.execute(stmt).rowcount
     print(f"Deleted {count} records from MongoDB for device {device_id}.")
+    session.commit()
 
 
 

@@ -26,17 +26,6 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 def load_features(app: CustomFastAPI) -> AppFeatures:
     app_features = AppFeatures()
-    # for device in os.listdir(feature_dir):
-    #     device_features = DeviceFeatures()
-    #     app_features[device] = device_features
-
-    #     app_features[device]["conclip"] = CLIPFeatures(
-    #         collection=open_collection(device, "conclip")
-    #     )
-    #     app_features[device]["faces"] = CLIPFeatures(
-    #         collection=open_face_collection(device)
-    #     )
-
     app.features = app_features
     return app_features
 
@@ -50,7 +39,7 @@ def retrieve_image(session, device_id: str, text: str, sort_by, k):
     filters = query.time_to_filters()
 
     emb = search_model.encode_text(text)
-    emb = apply_transformation(emb, get_matrix(session, device_id))
+    # emb = apply_transformation(emb, get_matrix(session, device_id))
     records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
     # group by segment id
@@ -86,8 +75,9 @@ def search_by_embedding(session, emb, device_id, k, sort_by, filters=[]):
             stmt = sql_filter(stmt)
 
     stmt = stmt.limit(k)
-    print(stmt.compile(compile_kwargs={"literal_binds": True}))
+    # print(stmt.compile(compile_kwargs={"literal_binds": True}))
     session.execute(text(f"SET hnsw.ef_search = {max(k, 200)}"))
+    session.execute(text(f"SET hnsw.iterative_scan = strict_order"))
     rows = session.execute(stmt).fetchall()
     print(f"Found {len(rows)} results for device {device_id} with sort_by {sort_by}")
     sort_by_timestamp = sort_by == "time"
@@ -117,7 +107,7 @@ def get_similar_images(
             emb = search_model.encode_image(path)
             emb = emb / np.linalg.norm(emb)
             emb = emb.flatten()
-            emb = apply_transformation(emb, get_matrix(session, device_id))
+            # emb = apply_transformation(emb, get_matrix(session, device_id))
         except Exception as e:
             print(f"Error encoding image {image}: {e}")
             results: List[LifelogImage] = []
@@ -129,7 +119,6 @@ def get_similar_images(
             .where(Image.device == device_id)
             .where(Image.image_path == image)
         ).scalar_one_or_none()
-        print(emb)
         emb = np.frombuffer(emb, dtype=np.float32) if emb is not None else None
 
     return search_by_embedding(session, emb, device_id, k, sort_by="relevance")

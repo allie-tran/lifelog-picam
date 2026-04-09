@@ -13,12 +13,13 @@ import { Box } from '@mui/material';
 import 'leaflet/dist/leaflet.css';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import { useAppSelector } from 'reducers/hooks';
 
 let DefaultIcon = L.icon({
     iconUrl: icon,
     shadowUrl: iconShadow,
     iconSize: [25, 41],
-    iconAnchor: [12, 41]
+    iconAnchor: [12, 41],
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
@@ -65,7 +66,16 @@ function FitBounds({ positions }: { positions: L.LatLngExpression[] }) {
     return null;
 }
 
-export function GpsTrackMap({ gpsTrack, currentTrack }: { gpsTrack: GPSData[]; currentTrack: GPSData[] }) {
+export function GpsTrackMap({
+    gpsTrack,
+    currentTrack,
+}: {
+    gpsTrack: GPSData[];
+    currentTrack: GPSData[];
+}) {
+    const highlightedTrack = useAppSelector(
+        (state) => state.map.highlightedTrack
+    );
     const segments = useMemo(() => {
         return gpsTrack.slice(0, -1).map((point, i) => {
             const t = i / (gpsTrack.length - 1);
@@ -94,11 +104,13 @@ export function GpsTrackMap({ gpsTrack, currentTrack }: { gpsTrack: GPSData[]; c
         point.longitude,
     ]);
 
-    const startPos = currentPositions.length > 0 ? currentPositions[0] : allPositions[0];
-    const endPos = currentPositions.length > 0 ? currentPositions[currentPositions.length - 1] : allPositions[allPositions.length - 1];
+    const endPos =
+        currentPositions.length > 0
+            ? currentPositions[currentPositions.length - 1]
+            : allPositions[allPositions.length - 1];
 
     return (
-        <Box sx={{ height: 300, width: '100%' }}>
+        <Box sx={{ height: '100%', width: 400 }}>
             <MapContainer
                 center={endPos}
                 zoom={13}
@@ -109,7 +121,13 @@ export function GpsTrackMap({ gpsTrack, currentTrack }: { gpsTrack: GPSData[]; c
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; OpenStreetMap contributors"
                 />
-                <FitBounds positions={currentPositions.length > 0 ? currentPositions : allPositions} />
+                <FitBounds
+                    positions={
+                        currentPositions.length > 0
+                            ? currentPositions
+                            : allPositions
+                    }
+                />
                 {/* Gradient segments */}
                 {segments.map((seg, i) => (
                     <Polyline
@@ -122,36 +140,92 @@ export function GpsTrackMap({ gpsTrack, currentTrack }: { gpsTrack: GPSData[]; c
                         }}
                     />
                 ))}
-                {/* Current track overlay */}
-                {currentPositions.length > 1 && (
-                    <Polyline
-                        positions={currentPositions}
+                {/* Highlighted track overlay */}
+                {highlightedTrack.length > 0 && (
+                    <Tracks
+                        gpsTrack={highlightedTrack}
+                        showMarkers={true}
                         pathOptions={{
-                            color: '#000',
+                            color: "#4682B4",
                             weight: 5,
-                            opacity: 0.8,
+                            opacity: 1,
                         }}
                     />
                 )}
-                {/* Start Marker */}
-                <Marker position={startPos}>
-                    <Popup>
-                        Start:{' '}
-                        {new Date(gpsTrack[0].timestamp).toLocaleString()}
-                    </Popup>
-                </Marker>
-                {/* End Marker */}
-                <Marker position={endPos}>
-                    <Popup>
-                        End:{' '}
-                        {new Date(
-                            gpsTrack[gpsTrack.length - 1].timestamp
-                        ).toLocaleString()}
-                    </Popup>
-                </Marker>
+                {/* Current track overlay */}
+                <Tracks
+                    gpsTrack={currentTrack}
+                    showMarkers={false}
+                    pathOptions={{
+                        color: 'black',
+                        weight: 2,
+                        opacity: 1,
+                        className: 'gps-direction-flow',
+                        dashArray: '10, 5',
+                        lineCap: 'round',
+                    }}
+                />
             </MapContainer>
         </Box>
     );
 }
+
+const Tracks = ({
+    gpsTrack,
+    showMarkers,
+    pathOptions,
+}: {
+    gpsTrack: GPSData[];
+    showMarkers: boolean;
+    pathOptions?: L.PolylineOptions;
+}) => {
+    if (gpsTrack.length < 2) {
+        return null;
+    }
+    const start = gpsTrack[0];
+    const end = gpsTrack[gpsTrack.length - 1];
+    if (showMarkers) {
+        return (
+            <>
+                <Marker position={[start.latitude, start.longitude]}>
+                    <Popup>
+                        Start: {new Date(start.timestamp).toLocaleString()}
+                    </Popup>
+                </Marker>
+                <Polyline
+                    positions={gpsTrack.map((point) => [
+                        point.latitude,
+                        point.longitude,
+                    ])}
+                    pathOptions={
+                        pathOptions || {
+                            color: 'blue',
+                            weight: 3,
+                            opacity: 0.5,
+                            className: 'gps-direction-flow',
+                        }
+                    }
+                />
+                <Marker position={[end.latitude, end.longitude]}>
+                    <Popup>
+                        End: {new Date(end.timestamp).toLocaleString()}
+                    </Popup>
+                </Marker>
+            </>
+        );
+    }
+    return (
+        <Polyline
+            pane='markerPane'
+            positions={gpsTrack.map((point) => [
+                point.latitude,
+                point.longitude,
+            ])}
+            pathOptions={
+                pathOptions || { color: 'blue', weight: 3, opacity: 0.5 }
+            }
+        />
+    );
+};
 
 export default GpsTrackMap;

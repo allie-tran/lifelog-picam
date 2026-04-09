@@ -42,6 +42,7 @@ type ImageObject = {
 export type ResultSegment = {
     images: ImageObject[];
     location: LocationData;
+    gps: GPSData[];
 }
 
 type SummarySegment = {

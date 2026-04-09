@@ -4,6 +4,7 @@ import os
 DIR = os.getenv("DIR", "/mnt/ssd0/LifelogPicam")  # Directory to store images
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "/mnt/ssd0/Images/LifelogPicam")  # Directory to store thumbnails
 EMBEDDING_DIR = os.getenv("EMBEDDING_DIR", "/mnt/ssd0/Embeddings")  # Directory to store embeddings
+BACKUP_DIR = os.getenv("BACKUP_DIR", "/mnt/ssd0/Backup")  # Directory to store backups of deleted images - for the LSC dataset
 LOCAL_PORT = 8082
 SEARCH_MODEL = "conclip"
 SEGMENT_THRESHOLD = 0.85  # Threshold for segmentation, lower means more segments

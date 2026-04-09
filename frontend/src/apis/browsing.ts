@@ -76,6 +76,17 @@ export const getImagesByRange = async (
     return response.data as ImageObject[];
 };
 
+export const getContextImages = async (
+    device: string,
+    imagePath: string,
+) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/get-context-images?device=${encodeURIComponent(device)}&image=${encodeURIComponent(imagePath)}`
+    );
+    return response.data as ResultSegment[];
+}
+
+
 export const getImage = async (deviceId: string, filename: string) => {
     const response = await axios.get(
         `${BACKEND_URL}/get-image?filename=${encodeURIComponent(filename)}&device=${encodeURIComponent(deviceId)}`

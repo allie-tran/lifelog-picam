@@ -89,11 +89,8 @@ function MainPage() {
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
-                const data = await getGPSByDate(
-                    deviceId,
-                    date || '',
-                );
-                return data
+                const data = await getGPSByDate(deviceId, date || '');
+                return data;
             } else {
                 return [] as GPSData[];
             }
@@ -169,7 +166,11 @@ function MainPage() {
                 <Stack
                     direction="row"
                     spacing={1}
-                    sx={{ width: '100%', flexWrap: 'wrap', pb: 2 }}
+                    sx={{
+                        width: '100%',
+                        flexWrap: 'wrap',
+                        pb: 2,
+                    }}
                     useFlexGap
                 >
                     {availableHours.map((h) => (
@@ -185,8 +186,10 @@ function MainPage() {
                         </Button>
                     ))}
                 </Stack>
-                <DeleteRange onDelete={() => mutate()} date={date || dayjs().format('YYYY-MM-DD')}/>
-                <GpsTrack gpsTrack={gpsTrack || []} currentTrack={data?.gps || []}/>
+                <DeleteRange
+                    onDelete={() => mutate()}
+                    date={date || dayjs().format('YYYY-MM-DD')}
+                />
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&
@@ -194,39 +197,61 @@ function MainPage() {
                         deviceAccess === AccessLevel.OWNER) && (
                         <div>No images found for this date/hour.</div>
                     )}
-                <Stack spacing={2} sx={{ width: '100%' }}>
-                    {segments.map((segment, index) => (
-                        <LifelogEvent
-                            key={index}
-                            segment={segment.images}
-                            location={segment.location}
-                            onChange={() => {
-                                dispatch(setLoading(true));
-                                mutate().then(() =>
-                                    dispatch(setLoading(false))
-                                );
-                            }}
-                            deleteRow={deleteRow}
-                        />
-                    ))}
-                </Stack>
-                {data && data.total_pages > 1 && (
-                    <Pagination
-                        page={page}
-                        count={data?.total_pages || 1}
-                        color="primary"
-                        onChange={(_, page) => {
-                            setPage(page);
-                            const element = document.getElementById('app');
-                            element?.scrollIntoView({ behavior: 'smooth' });
-                        }}
+                <Stack
+                    sx={{ width: '100%', height: 'calc(100dvh - 200px)' }}
+                    direction="row"
+                    spacing={2}
+                >
+                    <GpsTrack
+                        gpsTrack={gpsTrack || []}
+                        currentTrack={data?.gps || []}
                     />
-                )}
+                    <Stack
+                        sx={{
+                            width: 'calc(100% - 400px)',
+                            height: '100%',
+                            overflowY: 'auto',
+                            pr: 1,
+                            justifyContent: 'flex-start',
+                            alignItems: 'flex-start',
+                        }}
+                    >
+                        {segments.map((segment, index) => (
+                            <LifelogEvent
+                                key={index}
+                                segment={segment.images}
+                                location={segment.location}
+                                gpsList={segment.gps}
+                                onChange={() => {
+                                    dispatch(setLoading(true));
+                                    mutate().then(() =>
+                                        dispatch(setLoading(false))
+                                    );
+                                }}
+                                deleteRow={deleteRow}
+                            />
+                        ))}
+                        {data && data.total_pages > 1 && (
+                            <Pagination
+                                page={page}
+                                count={data?.total_pages || 1}
+                                color="primary"
+                                onChange={(_, page) => {
+                                    setPage(page);
+                                    const element =
+                                        document.getElementById('app');
+                                    element?.scrollIntoView({
+                                        behavior: 'smooth',
+                                    });
+                                }}
+                            />
+                        )}
+                    </Stack>
+                </Stack>
             </Stack>
             <ImageZoom onDelete={() => mutate()} />
         </>
     );
 }
-
 
 export default MainPage;

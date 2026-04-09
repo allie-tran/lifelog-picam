@@ -114,10 +114,10 @@ def sync_images(session, device: str):
     # 6. Base on raw_images, find the extra ones in mongo and zvec
     extra_in_thumbnail = thumbnail_images - raw_images
     print(f"Extra in Thumbnail: {len(extra_in_thumbnail)}")
-    # for image in tqdm(extra_in_thumbnail):
-    #     thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image.replace('.jpg', '.webp')}"
-    #     if os.path.exists(thumbnail_path):
-    #         os.remove(thumbnail_path)
+    for image in tqdm(extra_in_thumbnail):
+        thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image.replace('.jpg', '.webp')}"
+        if os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
 
     # extra_in_embedding = session.execute(
     #     select(Image.image_path)

@@ -2,6 +2,7 @@ import {
     Badge,
     Button,
     ButtonProps,
+    Stack,
     styled,
     TextField,
     Theme,
@@ -9,7 +10,7 @@ import {
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import '../App.css';
 import { useAppSelector } from 'reducers/hooks';
@@ -112,10 +113,79 @@ const CustomDatePicker = ({
         return Array.from(uniqueYears);
     }, [allDates]);
 
+    const goToNextDate = () => {
+        if (!date) return;
+        const nextDate = dayjs(date).add(1, 'day').format('YYYY-MM-DD');
+        setPage(1);
+        setHour(null);
+        navigate(`/?device_id=${deviceId}&date=${nextDate}`);
+    };
 
-    if (!usePicker) {
-        return (
-            <>
+    const goToPreviousDate = () => {
+        if (!date) return;
+        const prevDate = dayjs(date).subtract(1, 'day').format('YYYY-MM-DD');
+        setPage(1);
+        setHour(null);
+        navigate(`/?device_id=${deviceId}&date=${prevDate}`);
+    };
+
+    useEffect(() => {
+        setTextDate(date ? dayjs(date).format('DD/MM/YYYY') : '');
+    }, [date]);
+
+    return (
+        <>
+            <Stack>
+                <Button
+                    size="small"
+                    onClick={goToPreviousDate}
+                    sx={{ mt: 1 }}
+                    variant="outlined"
+                >
+                    Previous
+                </Button>
+                <Button
+                    size="small"
+                    onClick={goToNextDate}
+                    sx={{ mt: 1 }}
+                    variant="outlined"
+                >
+                    Next
+                </Button>
+            </Stack>
+            {usePicker ? (
+                <DatePicker
+                    label="Select Date"
+                    value={date ? dayjs(date) : null}
+                    views={['year', 'month', 'day']}
+                    sx={{ width: '250px', transform: 'translateY(4px)' }}
+                    onAccept={(newValue) => {
+                        setPage(1);
+                        setHour(null);
+                        navigate(
+                            `/?device_id=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`
+                        );
+                    }}
+                    slots={{
+                        day: (props) => (
+                            <AvailableDay
+                                {...props}
+                                allDates={allDates || []}
+                            />
+                        ),
+                        monthButton: (props) => (
+                            <AvailableMonth
+                                allMonths={allMonths}
+                                {...props}
+                                year={date ? dayjs(date).format('YYYY') : ''}
+                            />
+                        ),
+                        yearButton: (props) => (
+                            <AvailableYear allYears={allYears} {...props} />
+                        ),
+                    }}
+                />
+            ) : (
                 <TextField
                     label="Select Date"
                     value={textDate}
@@ -131,52 +201,13 @@ const CustomDatePicker = ({
                     }}
                     sx={{ width: '250px', transform: 'translateY(4px)' }}
                 />
-                <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => setUsePicker(true)}
-                >
-                    Use Picker
-                </Button>
-            </>
-        );
-    }
-    return (
-        <>
-            <DatePicker
-                label="Select Date"
-                value={date ? dayjs(date) : null}
-                views={['year', 'month', 'day']}
-                sx={{ width: '250px', transform: 'translateY(4px)' }}
-                onAccept={(newValue) => {
-                    setPage(1);
-                    setHour(null);
-                    navigate(
-                        `/?device_id=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`
-                    );
-                }}
-                slots={{
-                    day: (props) => (
-                        <AvailableDay {...props} allDates={allDates || []} />
-                    ),
-                    monthButton: (props) => (
-                        <AvailableMonth
-                            allMonths={allMonths}
-                            {...props}
-                            year={date ? dayjs(date).format('YYYY') : ''}
-                        />
-                    ),
-                    yearButton: (props) => (
-                        <AvailableYear allYears={allYears} {...props} />
-                    ),
-                }}
-            />
+            )}
             <Button
-                size="small"
-                onClick={() => setUsePicker(false)}
+                onClick={() => setUsePicker(!usePicker)}
                 sx={{ marginLeft: 2 }}
+                variant="contained"
             >
-                Use Input
+                {usePicker ? 'Use Text' : 'Use Day Picker'}
             </Button>
         </>
     );
