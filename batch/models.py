@@ -256,6 +256,10 @@ class Image(Base):
         cascade="all, delete-orphan"
     )
 
+    annotations = relationship(
+        "Annotation", back_populates="image", cascade="all, delete-orphan"
+    )
+
     def get_embedding(self, model_type="conclip"):
         """The 'Advanced' dynamic switcher."""
         if model_type == "vitl14@336":
@@ -386,3 +390,4 @@ class Annotation(Base):
 
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     author = Column(Text)
+    image = relationship("Image", back_populates="annotations")

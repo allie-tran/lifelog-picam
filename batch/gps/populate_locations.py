@@ -49,11 +49,11 @@ engine = create_engine(PG_URI)
 from tqdm.auto import tqdm
 
 
-def create_key(fsq_place_id, name, country, address, is_stop):
+def create_key(fsq_place_id, name, country, address, is_stop, info):
     if fsq_place_id and fsq_place_id != "None":
         key = f"fsq_id={fsq_place_id}"
     else:
-        key = f"{name}, {country}, {address}"
+        key = f"{name}, {country}, {address}, {info}"
     key = f"stop={is_stop == 1}, {key}"
     return key
 
@@ -111,6 +111,7 @@ def run_segments():
             row["country"],
             row["address"],
             row["is_stop"],
+            row["categories"],
         ),
         axis=1,
     )
@@ -129,6 +130,7 @@ def run_segments():
             row["country"],
             row["address"],
             row["is_stop"],
+            row["categories"],
         ),
         axis=1,
     )

@@ -48,6 +48,10 @@ FSQ_PHOTOS_URL = "https://places-api.foursquare.com/places/{fsq_id}/photos"
 DISTANCE_THRESHOLD = 200  # metres — hard-coded home detection radius
 HOME_LAT, HOME_LON = 53.38998, -6.14576
 WORK_LAT, WORK_LON = 53.3853317, -6.2588403
+SPA_LAT, SPA_LON = 53.3868599, -6.147444622
+
+# distance(lat, lon, 53.386859863999995, -6.147444621999999) < DISTANCE_THRESHOLD:
+#                     stops.loc[row, "checkin"] = "Charm Hand & Foot Spa"
 
 CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if CUDA else "cpu"
@@ -120,7 +124,7 @@ def get_nearby_places(lat: float, lon: float, altitude: float) -> list[dict]:
     altitude = (round(altitude / 5) * 5) if altitude is not None else None
     key = f"nearby_{lat}_{lon}_{altitude}"
     cached = cache_get(key)
-    if cached is not None:
+    if cached is not None and len(cached) > 0:
         return cached
     data = _fsq_get(
         FSQ_NEARBY_URL,
@@ -490,6 +494,15 @@ def enrich_stop(row: pd.Series, model, image_gps: pd.DataFrame) -> dict:
         result["region"] = ["Dublin", "Ireland"]
         result["note"] = "WORK"
         result["address"] = "Collins Ave Ext, Whitehall, Dublin 9"
+        return result
+
+    if haversine(lat, lon, SPA_LAT, SPA_LON) < DISTANCE_THRESHOLD:
+        result["name"] = "Charm Hand & Foot Spa"
+        result["city"] = "Dublin"
+        result["country"] = "Ireland"
+        result["region"] = ["Dublin", "Ireland"]
+        result["note"] = "Charm Hand & Foot Spa"
+        result["address"] = "Kilbarrack Road, Dublin, County Dublin"
         return result
 
     # Nearby places from Foursquare
