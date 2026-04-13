@@ -1,7 +1,6 @@
 import {
     Button,
     Divider,
-    IconButton,
     Stack,
     TextField,
     Typography,
@@ -19,7 +18,6 @@ import '../App.css';
 import ImageWithDate from '../components/ImageWithDate';
 import { useOnInView } from 'react-intersection-observer';
 import { setHighlightedTrack } from 'reducers/map';
-import { ArrowLeftRounded } from '@mui/icons-material';
 
 const LifelogEvent = ({
     segment,
@@ -65,16 +63,17 @@ const LifelogEvent = ({
                 sx={{
                     height: 'fit-content',
                     // flex: count < 3 ? '1 0 500px' : '1 0 100%',
-                    maxWidth: '100%',
+                    width: '100%',
                     justifyContent: 'flex-start',
                     backgroundColor: inView
                         ? 'rgba(0, 123, 255, 0.1)'
                         : 'transparent',
                     position: 'relative',
+                    pt: 2,
                 }}
             >
                 <Divider />
-                <Stack direction="row" spacing={1} alignItems="center" pt={4}>
+                <Stack direction="row" spacing={1} alignItems="center">
                     {location ? (
                         <Stack spacing={1}>
                             <Typography
@@ -177,6 +176,7 @@ const LifelogEvent = ({
                     spacing={2}
                     sx={{
                         maxWidth: '100vw',
+                        width: '100%',
                         // overflowY: 'auto',
                         // height: '300px',
                         p: 0,
@@ -187,7 +187,7 @@ const LifelogEvent = ({
                     {segment.map((image: ImageObject) => (
                         <ImageWithDate
                             timeOnly
-                            height={'250px'}
+                            height={'200px'}
                             image={image}
                             onClick={() => {
                                 dispatch(

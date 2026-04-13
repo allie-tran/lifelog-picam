@@ -1,12 +1,10 @@
 from collections import defaultdict
-from datetime import datetime, timezone
-import os
+from datetime import timezone
 from typing import Optional
 import traceback
 
 from sqlalchemy import insert, update
 from sqlalchemy.sql import select
-import zvec
 from auth.ortho import apply_transformation, get_matrix
 from auth.types import Person
 from constants import DIR
@@ -14,9 +12,11 @@ from pipelines.delete import remove_physical_images
 from scripts.date_utils import parse_date
 from scripts.utils import get_thumbnail_path, make_video_thumbnail
 from tasks import anonymise_image_task, yolo_process_images_task
-from visual import clip_model
-from database.models import Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
+from visual import clip_model, SIGLIP
+from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 from sqlalchemy.exc import SQLAlchemyError
+
+from visual.siglip import SIGLIP
 
 
 def index_to_postgres(
@@ -110,6 +110,8 @@ def encode_image(
     device_id: str,
     image_path: str,
     matrix: Optional[list[list[float]]] = None,
+    SQLTable: Base.__class__ = ImageEmbedding,
+    model: SIGLIP = clip_model,
 ):
     try:
         path = f"{DIR}/{device_id}/{image_path}"
@@ -119,7 +121,7 @@ def encode_image(
             if new_path:
                 path = new_path
 
-        vector = clip_model.encode_image(path)
+        vector = model.encode_image(path)
         vector = vector.flatten()
         if matrix is None:
             matrix = get_matrix(session, device_id)
@@ -133,8 +135,9 @@ def encode_image(
         ).scalar_one_or_none()
         if image_id is None:
             raise ValueError(f"Image record not found for device {device_id} and path {image_path}")
+
         session.execute(
-            insert(ImageEmbedding).values(
+            insert(SQLTable).values(
                 image_id=image_id,
                 embedding=vector,
             )
@@ -149,8 +152,6 @@ def encode_image(
     except Exception as e:
         traceback.print_exc()
         print(f"Error encoding image {image_path}")
-        # if os.path.exists(f"{DIR}/{device_id}/{image_path}"):
-        #     os.remove(f"{DIR}/{device_id}/{image_path}")
 
 
 def process_image(
@@ -202,7 +203,7 @@ def process_image(
 
 
 def process_video(
-    device_id: str, date: str, file_name: str, collection: Optional[zvec.Collection]
+    device_id: str, date: str, file_name: str
 ):
     raise NotImplementedError("Video processing is not implemented yet")
     # output_path = f"{DIR}/{device_id}/{date}/{file_name}"

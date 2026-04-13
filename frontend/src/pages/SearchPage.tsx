@@ -51,6 +51,10 @@ const SearchPage = () => {
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [viewMode, setViewMode] = useState<'images' | 'events'>('images');
     const [tempMode, setTempMode] = useState(mode);
+    // const [timeRange, setTimeRange] = useState<{
+    //     start: string;
+    //     end: string;
+    // } | null>(null);
     const [isSelecting, setIsSelecting] = useState(false);
     const [selectedImages, setSelectedImages] = useState<string[]>([]);
     const [page, setPage] = useState(1);
@@ -60,7 +64,7 @@ const SearchPage = () => {
         isLoading,
         mutate,
     } = useSWR(
-        ['search', query, sortBy],
+        ['search', query, sortBy, deviceId],
         mode === 'text'
             ? () =>
                   searchImages(deviceId, query, sortBy).then((res) => {
@@ -80,7 +84,7 @@ const SearchPage = () => {
     const { data: similar, isLoading: isSimilarLoading } = useSWR<
         ImageObject[]
     >(
-        ['similar-images', searchParams.get('query')],
+        ['similar-images', searchParams.get('query'), deviceId],
         mode === 'id'
             ? () =>
                   similarImages(deviceId, searchParams.get('query') || '').then(

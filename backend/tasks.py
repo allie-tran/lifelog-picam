@@ -1,10 +1,11 @@
 from sqlalchemy import create_engine, insert, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from auth.ortho import get_matrix
 from auth.types import Person
 from celery_app import celery
-from database.models import Image, ImageObject, ImagePerson
+from database.models import Image, ImageEmbedding, ImageObject, ImagePerson
 from scripts.anonymise import anonymise_image
-from scripts.describe_segments import describe_segment
+from scripts.describe_segments import describe_segment, simple_describe_segment
 from pymongo import MongoClient
 import logging
 
@@ -46,12 +47,30 @@ def describe_segment_task(
 ):
     mongo_client = MongoClient("mongodb://localhost:27017/")
     try:
-        activity_obj = describe_segment(
-            device,
-            date,
-            thumbnail_paths,
+        # activity_obj = describe_segment(
+        #     device,
+        #     date,
+        #     thumbnail_paths,
+        #     segment_id=segment_id,
+        #     extra_info=extra_info,
+        # )
+        # stmt = select(Image.embedding).where(
+        #     Image.device == device,
+        #     Image.segment_id == segment_id,
+        #     Image.date == date,
+        # ).options(selectinload(Image.embedding))
+        stmt = select(ImageEmbedding.embedding).join(Image).where(
+            Image.device == device,
+            Image.segment_id == segment_id,
+            Image.date == date,
+        )
+        embeddings = [r.embedding for r in self.session.execute(stmt).fetchall()]
+        logging.info(f"Retrieved {len(embeddings)} embeddings for segment {segment_id} of device {device} on date {date}")
+
+        activity_obj = simple_describe_segment(
+            embeddings=embeddings,
+            matrix=get_matrix(self.session, device),
             segment_id=segment_id,
-            extra_info=extra_info,
         )
 
         stmt = update(Image).where(

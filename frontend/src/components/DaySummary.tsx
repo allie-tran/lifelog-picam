@@ -1,10 +1,14 @@
 import {
+    ChevronLeftRounded,
+    ChevronRightRounded,
+    RefreshRounded,
+    SettingsRounded,
+} from '@mui/icons-material';
+import {
     Box,
     Button,
     Card,
     CardContent,
-    CircularProgress,
-    Divider,
     Grid,
     IconButton,
     LinearProgress,
@@ -16,7 +20,8 @@ import {
     Typography,
 } from '@mui/material';
 import { CustomGoal, DaySummary, SummarySegment } from '@utils/types';
-import { getDayPlayback, getDaySummary, processDate } from 'apis/process';
+import { updateUserGoals } from 'apis/browsing';
+import { getDaySummary, processDate } from 'apis/process';
 import { CATEGORIES } from 'constants/activityColors';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -24,18 +29,10 @@ import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import 'utils/animation.css';
 import { CategoryPieChart } from './CategoryChart';
-import ImageWithDate from './ImageWithDate';
-import 'utils/animation.css';
-import ModalWithCloseButton from './ModalWithCloseButton';
 import GoalConfig from './GoalConfig';
-import {
-    ChevronLeftRounded,
-    ChevronRightRounded,
-    HistoryRounded,
-    RefreshRounded,
-    SettingsRounded,
-} from '@mui/icons-material';
-import { updateUserGoals } from 'apis/browsing';
+import ImageWithDate from './ImageWithDate';
+import ModalWithCloseButton from './ModalWithCloseButton';
+import dayjs from 'dayjs';
 
 const minutesToHM = (m: number): string => {
     const total = Math.round(m);
@@ -78,10 +75,13 @@ const DaySummaryComponent = () => {
     //     }
     // );
 
-    const handleProcess = async (reprocess: boolean) => {
+    const handleProcess = async (
+        resegment: boolean = false,
+        reannotate: boolean = false
+    ) => {
         setIsLoading(true);
         try {
-            await processDate(deviceId, date || '', reprocess);
+            await processDate(deviceId, date || '', resegment, reannotate);
             mutate();
         } catch (error) {
             console.error('Error processing date:', error);
@@ -92,7 +92,7 @@ const DaySummaryComponent = () => {
     const handleGoalSave = async (goals: CustomGoal[]) => {
         setOpenModal(false);
         updateUserGoals(goals, deviceId);
-        handleProcess(false);
+        handleProcess();
         mutate();
     };
 
@@ -104,20 +104,18 @@ const DaySummaryComponent = () => {
     if (isLoading || dayLoading)
         return (
             <Stack alignItems="center" p={4}>
-                <CircularProgress />
+                <LinearProgress />
             </Stack>
         );
+
     if (isError || !daySummary)
         return (
             <>
                 <Typography p={2}>No data available.</Typography>
-                <Button
-                    startIcon={<HistoryRounded />}
-                    variant="outlined"
-                    onClick={() => handleProcess(true)}
-                >
-                    Reprocess
-                </Button>
+                <ReprocessButton
+                    onReprocess={handleProcess}
+                    isLoading={isLoading}
+                />
             </>
         );
 
@@ -148,20 +146,10 @@ const DaySummaryComponent = () => {
                     </Typography>
                 </Box>
                 <Stack direction="row" alignItems="flex-end" spacing={1}>
-                    <Button
-                        startIcon={<RefreshRounded />}
-                        variant="outlined"
-                        onClick={() => handleProcess(false)}
-                    >
-                        Sync Images
-                    </Button>
-                    <Button
-                        startIcon={<HistoryRounded />}
-                        variant="outlined"
-                        onClick={() => handleProcess(true)}
-                    >
-                        Reprocess
-                    </Button>
+                    <ReprocessButton
+                        onReprocess={handleProcess}
+                        isLoading={isLoading}
+                    />
                     <Button
                         startIcon={<SettingsRounded />}
                         variant="outlined"
@@ -230,12 +218,15 @@ const DaySummaryComponent = () => {
                                                 fontSize: '12px',
                                                 minHeight: '32px',
                                                 padding: '4px 12px',
-                                                backgroundColor: CATEGORIES[name] + '30',
+                                                backgroundColor:
+                                                    CATEGORIES[name] + '30',
                                                 color: '#fff',
-                                                "&.Mui-selected": {
+                                                '&.Mui-selected': {
                                                     color: '#fff',
-                                                    backgroundColor: CATEGORIES[name],
-                                                    borderColor: CATEGORIES[name],
+                                                    backgroundColor:
+                                                        CATEGORIES[name],
+                                                    borderColor:
+                                                        CATEGORIES[name],
                                                 },
                                             }}
                                         />
@@ -464,7 +455,7 @@ function PeriodCard({
                         {segments.map((segment, index) => (
                             <PeriodTimeTab
                                 key={index}
-                                label={`${segment.startTime.slice(0, 5)} - ${segment.endTime.slice(0, 5)}`}
+                                label={`${dayjs(segment.startTime).format('HH:mm')} - ${dayjs(segment.endTime).format('HH:mm')}`}
                             />
                         ))}
                     </Tabs>
@@ -515,7 +506,11 @@ function PeriodCard({
                         direction="row"
                         spacing={1}
                         mt={1}
-                        sx={{ overflowX: 'auto', width: '100%', height: '220px' }}
+                        sx={{
+                            overflowX: 'auto',
+                            width: '100%',
+                            height: '220px',
+                        }}
                         justifyContent="center"
                     >
                         {currentSegment.representativeImages?.map(
@@ -630,14 +625,14 @@ function Timeline({ daySummary }: { daySummary: DaySummary }) {
                         {daySummary.segments.map(
                             (segment: SummarySegment, index: number) => (
                                 <Tooltip
-                                    title={`${segment.activity}: ${segment.startTime} - ${segment.endTime}`}
+                                    title={`${segment.activity}: ${dayjs(segment.startTime).format('HH:mm')} - ${dayjs(segment.endTime).format('HH:mm')} (${minutesToHM(segment.duration / 60)})`}
                                     key={index}
                                     followCursor
                                 >
                                     <Box
                                         sx={{
                                             height: 48,
-                                            width: segment.duration / 3600 / 20,
+                                            width: segment.duration / 3600 / 25,
                                             backgroundColor:
                                                 CATEGORIES[segment.activity] ||
                                                 '#bdc3c7',
@@ -688,5 +683,63 @@ const ActivitySummary = ({
                 </Stack>
             </CardContent>
         </Card>
+    );
+};
+
+const ReprocessButton = ({
+    onReprocess,
+    isLoading,
+}: {
+    onReprocess: (resegment: boolean, reannotate: boolean) => void;
+    isLoading: boolean;
+}) => {
+    const [show, setShow] = useState(false);
+    const [resegment, setResegment] = useState(false);
+    const [reannotate, setReannotate] = useState(false);
+
+    return (
+        <>
+            <Button
+                startIcon={<RefreshRounded />}
+                variant="outlined"
+                onClick={() => setShow(true)}
+                disabled={isLoading}
+            >
+                {isLoading ? 'Processing...' : 'Reprocess'}
+            </Button>
+            <ModalWithCloseButton
+                open={show}
+                onClose={() => setShow(false)}
+                fitContent
+            >
+                <Stack alignItems="center" p={4} spacing={2}>
+                    <Typography variant="h6">Reprocess Options</Typography>
+                    <Stack direction="row" spacing={2}>
+                        <Button
+                            variant={resegment ? 'contained' : 'outlined'}
+                            onClick={() => setResegment(!resegment)}
+                        >
+                            Resegment
+                        </Button>
+                        <Button
+                            variant={reannotate ? 'contained' : 'outlined'}
+                            onClick={() => setReannotate(!reannotate)}
+                        >
+                            Reannotate
+                        </Button>
+                    </Stack>
+                    <Button
+                        variant="contained"
+                        onClick={() => {
+                            onReprocess(resegment, reannotate);
+                            setShow(false);
+                        }}
+                        disabled={isLoading}
+                    >
+                        {isLoading ? 'Processing...' : 'Confirm'}
+                    </Button>
+                </Stack>
+            </ModalWithCloseButton>
+        </>
     );
 };

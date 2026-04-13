@@ -2,9 +2,7 @@ import os
 from typing import List
 
 import numpy as np
-from sqlalchemy import and_, select, text
-from torch import embedding
-
+from sqlalchemy import select, text
 
 from app_types import (
     AppFeatures,
@@ -13,16 +11,14 @@ from app_types import (
 )
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
-from database.models import CLIPEmbedding, Image, ImageEmbedding
-from visual import openai_clip_model
-from scripts.utils import make_video_thumbnail
+from database.models import Image, ImageEmbedding
 from visual import clip_model
+from scripts.utils import make_video_thumbnail
 from query_parse.extract_info import Query
 from database.types import _orm_to_lifelog
 
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
-
 
 def load_features(app: CustomFastAPI) -> AppFeatures:
     app_features = AppFeatures()
@@ -30,16 +26,16 @@ def load_features(app: CustomFastAPI) -> AppFeatures:
     return app_features
 
 
-search_model = openai_clip_model
-search_table = CLIPEmbedding
-relationship = Image.clip_embedding
+search_model = clip_model
+search_table = ImageEmbedding
+relationship = Image.embedding
 
 def retrieve_image(session, device_id: str, text: str, sort_by, k):
     query = Query(text)
     filters = query.time_to_filters()
 
     emb = search_model.encode_text(text)
-    # emb = apply_transformation(emb, get_matrix(session, device_id))
+    emb = apply_transformation(emb, get_matrix(session, device_id))
     records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
     # group by segment id
@@ -95,7 +91,6 @@ def get_similar_images(
     k,
 ):
     if "temp" in image:
-        # query_vector, *_ = encode_image(device_id, image, np.empty((0, DIM)), [])
         try:
             path = image
             if path.endswith(".mp4") or path.endswith(".h264"):
@@ -107,7 +102,7 @@ def get_similar_images(
             emb = search_model.encode_image(path)
             emb = emb / np.linalg.norm(emb)
             emb = emb.flatten()
-            # emb = apply_transformation(emb, get_matrix(session, device_id))
+            emb = apply_transformation(emb, get_matrix(session, device_id))
         except Exception as e:
             print(f"Error encoding image {image}: {e}")
             results: List[LifelogImage] = []

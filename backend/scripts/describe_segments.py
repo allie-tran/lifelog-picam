@@ -2,6 +2,7 @@ import io
 import random
 import time
 import traceback
+import numpy as np
 
 from celery.utils.log import get_task_logger
 from constants import CATEGORIES, THUMBNAIL_DIR
@@ -9,10 +10,11 @@ from google.genai.errors import ClientError, ServerError
 from llm import MixedContent, get_visual_content, llm
 from partialjson.json_parser import JSONParser
 from PIL import Image
-
+from visual import clip_model
 
 logger = get_task_logger(__name__)
-parser = JSONParser()
+logger.setLevel("DEBUG")
+parser= JSONParser()
 
 
 def get_description_from_frames(
@@ -162,3 +164,73 @@ def describe_segment(
                 "activity_description": description,
                 "activity_confidence": confidence,
             }
+
+class ADLClassifier:
+    def __init__(self):
+        self.activites = CATEGORIES
+        self.adl_texts = [
+            f"A POV photo showing {c.lower()}." for c in CATEGORIES
+        ]
+        self.loaded = False
+
+    def load(self):
+        ald_text_feats = [
+            clip_model.encode_text(text) for text in self.adl_texts
+        ]
+        ald_text_feats = np.stack(ald_text_feats)
+        self.adl_text_feats = ald_text_feats
+        self.loaded = True
+
+    def classify(self, matrix: np.ndarray | None, image_embeddings: np.ndarray):
+        if not self.loaded:
+            self.load()
+
+        image_embeddings = image_embeddings / np.linalg.norm(image_embeddings, axis=1, keepdims=True)
+        logger.debug(f"Classifying segment with {len(image_embeddings)} image embeddings")
+        logger.debug(f"ADL text features shape: {self.adl_text_feats.shape}")
+        if matrix is not None:
+            adl_text_feats = self.adl_text_feats @ matrix
+        else:
+            adl_text_feats = self.adl_text_feats
+        adl_text_feats = adl_text_feats / np.linalg.norm(adl_text_feats, axis=1, keepdims=True)
+        similarities = image_embeddings @ adl_text_feats
+        exp_similarities = np.exp(similarities)
+        scores = exp_similarities / np.sum(exp_similarities, axis=1, keepdims=True)
+        avg_scores = np.mean(scores, axis=0)
+        best_idx = np.argmax(avg_scores)
+        best_category = self.activites[best_idx]
+        confidence = avg_scores[best_idx]
+        return best_category, confidence
+
+adl_classifier = ADLClassifier()
+def simple_describe_segment(
+    embeddings: list[np.ndarray],
+    matrix: np.ndarray | None,
+    segment_id: int,
+):
+    if len(embeddings) == 0:
+        logger.warning(f"Segment {segment_id}: no embeddings, skipping.")
+        return {
+            "activity": "Unclear",
+            "activity_description": "",
+            "activity_confidence": "Low",
+        }
+
+    activity, confidence = adl_classifier.classify(matrix, np.stack(embeddings))
+    logger.debug(f"Segment {segment_id}: classified activity='{activity}' with confidence={confidence:.4f}")
+    confidence_text = ""
+    if confidence < 0.1:
+        activity = "Unclear Activity"
+        confidence_text = "Low"
+    elif confidence < 0.3:
+        confidence_text = "Low"
+    elif confidence < 0.6:
+        confidence_text = "Medium"
+    else:
+        confidence_text = "High"
+
+    return {
+        "activity": activity,
+        "activity_description": "",
+        "activity_confidence": confidence_text,
+    }

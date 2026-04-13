@@ -40,6 +40,6 @@ video {
 }
 
 .gps-direction-flow {
-  animation: map-flow 2s linear infinite !important;
-  z-index: 1;
+    animation: map-flow 2s linear infinite !important;
+    z-index: 1;
 }

@@ -4,16 +4,15 @@ import {
     ButtonProps,
     Stack,
     styled,
-    TextField,
-    Theme,
+    TextField
 } from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
-import '../App.css';
+import { useNavigate } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
+import '../App.css';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -94,7 +93,7 @@ const CustomDatePicker = ({
 }) => {
     const navigate = useNavigate();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
-    const [usePicker, setUsePicker] = React.useState(false);
+    const [usePicker, setUsePicker] = React.useState(true);
     const [textDate, setTextDate] = React.useState(date || '');
 
     const allMonths = React.useMemo(() => {
@@ -155,6 +154,8 @@ const CustomDatePicker = ({
             </Stack>
             {usePicker ? (
                 <DatePicker
+                    disableFuture
+                    formatDensity='spacious'
                     label="Select Date"
                     value={date ? dayjs(date) : null}
                     views={['year', 'month', 'day']}
@@ -184,6 +185,7 @@ const CustomDatePicker = ({
                             <AvailableYear allYears={allYears} {...props} />
                         ),
                     }}
+                    referenceDate={date ? dayjs(date) : dayjs() }
                 />
             ) : (
                 <TextField

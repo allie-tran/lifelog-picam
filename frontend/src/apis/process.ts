@@ -2,9 +2,9 @@ import { DaySummary, GPSData } from '@utils/types';
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
 
-export const processDate = async (deviceId: string, dateString: string, reset: boolean = false) => {
+export const processDate = async (deviceId: string, dateString: string, resegment: boolean, reannotate: boolean) => {
     const response = await axios.get(
-        `${BACKEND_URL}/process-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}&reset=${reset}`
+        `${BACKEND_URL}/process-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}&resegment=${resegment}&reannotate=${reannotate}`
     );
     return response.data;
 }

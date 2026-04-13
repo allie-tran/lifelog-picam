@@ -28,7 +28,7 @@ const Login = () => {
                 console.log(response);
                 const token = response.data.token;
                 // Save to cookie
-                setCookie('token', token, { path: '/', maxAge: 3600 });
+                setCookie('token', token, { path: '/', maxAge: 3600 * 24 }); // Expires in 1 day
                 axios.defaults.headers.common['Authorization'] =
                     `Bearer ${token}`;
                 navigate('/');

@@ -110,7 +110,7 @@ export function GpsTrackMap({
             : allPositions[allPositions.length - 1];
 
     return (
-        <Box sx={{ height: '100%', width: 400 }}>
+        <Box sx={{ height: '100%', width: 400, border: '1px solid #ccc', borderRadius: 1, overflow: 'hidden' }}>
             <MapContainer
                 center={endPos}
                 zoom={13}
@@ -154,13 +154,14 @@ export function GpsTrackMap({
                 )}
                 {/* Current track overlay */}
                 <Tracks
+                    className='gps-direction-flow'
                     gpsTrack={currentTrack}
                     showMarkers={false}
                     pathOptions={{
+                        className: 'gps-direction-flow',
                         color: 'black',
                         weight: 2,
                         opacity: 1,
-                        className: 'gps-direction-flow',
                         dashArray: '10, 5',
                         lineCap: 'round',
                     }}
@@ -171,10 +172,12 @@ export function GpsTrackMap({
 }
 
 const Tracks = ({
+    className,
     gpsTrack,
     showMarkers,
     pathOptions,
 }: {
+    className?: string;
     gpsTrack: GPSData[];
     showMarkers: boolean;
     pathOptions?: L.PolylineOptions;
@@ -202,9 +205,9 @@ const Tracks = ({
                             color: 'blue',
                             weight: 3,
                             opacity: 0.5,
-                            className: 'gps-direction-flow',
                         }
                     }
+                    className={className}
                 />
                 <Marker position={[end.latitude, end.longitude]}>
                     <Popup>
@@ -224,6 +227,7 @@ const Tracks = ({
             pathOptions={
                 pathOptions || { color: 'blue', weight: 3, opacity: 0.5 }
             }
+            className={className}
         />
     );
 };

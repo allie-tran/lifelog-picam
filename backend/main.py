@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
-from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage,  ResultSegment
 from auth import auth_app
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
@@ -27,7 +27,7 @@ from auth.types import AccessLevel, User
 from constants import DIR, LOCAL_PORT, THUMBNAIL_DIR
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, Location
+from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, ImagePerson, Location
 from dependencies import CamelCaseModel
 from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
@@ -44,7 +44,7 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_thumbnail_path
+from scripts.utils import get_thumbnail_path, to_absolute_bbox
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
@@ -366,7 +366,6 @@ async def upload_video(
         device,
         date,
         file_name,
-        app.features[device]["conclip"].collection,
     )
     return {"message": "Video uploaded successfully."}
 
@@ -694,6 +693,26 @@ def search(
         k=1000,
     )
 
+@app.get("/get-available-values")
+def get_available_values(
+    field: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    match field:
+        case "person":
+            stmt = (
+                select(ImagePerson.label).join(ImageModel, ImageModel.id == ImagePerson.image_id).where(ImageModel.device == device).distinct()
+            )
+        case "location":
+            stmt = (
+                select(Location.name).join(ImageModel, ImageModel.location_id == Location.id).where(ImageModel.device == device).distinct()
+            )
+        case _:
+            raise HTTPException(status_code=400, detail="Invalid field name.")
+    results = session.execute(stmt).fetchall()
+    return [r[0] for r in results]
 
 @app.get("/similar-images")
 def similar_images(
@@ -939,7 +958,8 @@ def process_segments(session: Session, date: str, device: str):
 def process_date(
     date: str,
     device: str,
-    reset: bool,
+    resegment: bool = False,
+    reannotate: bool = False,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
@@ -954,7 +974,7 @@ def process_date(
         upsert=True,
     )
 
-    if reset:
+    if resegment or reannotate:
         session.execute(
             update(ImageModel)
             .where(ImageModel.date == date)
@@ -971,8 +991,7 @@ def process_date(
         session.flush()
         print(f"Reset segments for date {date} and device {device}.")
 
-    print(f"Scheduling segment processing for date {date} and device {device}.")
-    load_all_segments(session, device, date, skip_annotations=True)
+    load_all_segments(session, device, date, skip_annotations=not reannotate)
     return {"message": f"Processing segments for date {date} in background."}
 
 
@@ -1124,9 +1143,8 @@ async def change_segment_activity(
 # Face endpoints
 # ---------------------------------------------------------------------------
 
-
 @app.post("/get-faces", response_model=List[LifelogImage])
-def get_faces(
+def get_faces_from_files(
     files: List[UploadFile],
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
@@ -1203,6 +1221,59 @@ def remove_from_whitelist(
     session.commit()
 
 
+@app.get("/all-faces")
+def get_all_faces(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    stmt = select(ImagePerson.label).join(ImageModel, ImageModel.id == ImagePerson.image_id).where(ImageModel.device == device).distinct()
+    results = session.execute(stmt).fetchall()
+
+    faces = []
+
+    # get actual images for each person
+    for r in results:
+        face = {
+            "name": r[0],
+            "images": [],
+        }
+        # select randomly 2 images for this person
+        stmt = (
+            select(ImagePerson.bbox, ImageModel.image_path)
+            .join(ImageModel, ImageModel.id == ImagePerson.image_id)
+            .where(ImageModel.device == device, ImagePerson.confidence > 0.8)
+            .where(ImagePerson.label == r[0])
+            .limit(2)
+        )
+        images = session.execute(stmt).fetchall()
+        # get cropped images for each bbox
+        cropped = []
+        for bbox, image_path in images:
+            image_full_path = os.path.join(DIR, device, image_path)
+            if os.path.exists(image_full_path):
+                img = Image.open(image_full_path)
+                bbox = to_absolute_bbox(bbox, img.width, img.height)
+                cropped_img = img.crop(
+                    (
+                        bbox[0],
+                        bbox[1],
+                        bbox[0] + bbox[2],
+                        bbox[1] + bbox[3],
+                    )
+                )
+                buf = io.BytesIO()
+                cropped_img.save(buf, format="JPEG")
+                cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
+                face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
+        faces.append(face)
+    return faces
+
+# ---------------------------------------------------------------------------
+# Image segmentation
+# ---------------------------------------------------------------------------
+
 @app.post("/segment-image")
 def segment_image(file: UploadFile):
     visualised_base64, masks_data, bbox_list = segment_image_with_sam(
@@ -1213,6 +1284,10 @@ def segment_image(file: UploadFile):
         "masks": masks_data,
         "bboxes": bbox_list,
     }
+
+# ---------------------------------------------------------------------------
+# Annotations
+# ---------------------------------------------------------------------------
 
 class AnnotationUpdate(CamelCaseModel):
     image_path: str
@@ -1251,7 +1326,14 @@ def add_annotation(
     thumbnail_image = Image.open(thumbnail_path).convert("RGB")
     mask = Image.new("L", thumbnail_image.size, 0)
     draw = ImageDraw.Draw(mask)
-    draw.polygon(annotation.points, fill=255)
+    actual_points = []
+
+    for x, y in annotation.points:
+        actual_x = int(x * thumbnail_image.width)
+        actual_y = int(y * thumbnail_image.height)
+        actual_points.append((actual_x, actual_y))
+
+    draw.polygon(actual_points, fill=255)
     exif = thumbnail_image.getexif()
 
     # convert to cv2
@@ -1266,6 +1348,8 @@ def add_annotation(
     output_image.save(thumbnail_path, exif=exif)
 
     return {"message": "Annotation added successfully."}
+
+
 
 
 # ---------------------------------------------------------------------------

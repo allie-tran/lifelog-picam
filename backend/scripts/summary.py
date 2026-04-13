@@ -302,7 +302,7 @@ def create_day_timeline(session, device: str, date: str):
 
     print("Creating time slots from", earliest_hour, "to", latest_hour)
     time_slots = []
-    slot_duration = 10 * 60
+    slot_duration = 15 * 60
 
     for slot_start in range(
         earliest_hour * 60 * 60, latest_hour * 60 * 60, slot_duration
@@ -312,6 +312,7 @@ def create_day_timeline(session, device: str, date: str):
 
     summary = []
     for slot_start, slot_end in time_slots:
+        activity = "No Activity"
         slot_activities = []
         slot_start_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
         slot_end_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
@@ -327,8 +328,6 @@ def create_day_timeline(session, device: str, date: str):
         if slot_activities:
             # Choose the most frequent activity in the slot
             activity = max(set(slot_activities), key=slot_activities.count)
-        else:
-            activity = "No Activity"
 
         if seg_paths:
             # Get features
@@ -382,6 +381,7 @@ def create_day_timeline(session, device: str, date: str):
                 representative_images=list(representative_images),
             )
         )
+
 
     # Merge consecutive segments with the same activity
     merged_summary = []

@@ -99,3 +99,11 @@ def make_video_thumbnail(video_path):
         os.remove(output_path) if os.path.exists(output_path) else None
         return None
     return output_path
+
+def to_absolute_bbox(bbox, image_width, image_height):
+    x1, y1, x2, y2 = bbox
+    abs_x1 = int(x1 * image_width)
+    abs_y1 = int(y1 * image_height)
+    abs_x2 = int(x2 * image_width)
+    abs_y2 = int(y2 * image_height)
+    return abs_x1, abs_y1, abs_x2, abs_y2

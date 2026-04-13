@@ -13,6 +13,7 @@ from tqdm import tqdm
 from PIL import Image as PILImage
 from database.models import Image, ImageEmbedding
 from sqlalchemy import delete, select
+from visual import clip_model
 
 
 client = MongoClient("mongodb://localhost:27017/")
@@ -95,22 +96,27 @@ def sync_images(session, device: str):
     session.flush()
 
     # 5. Missing in embeddings
-    embeddings_exists = session.execute(
-        select(Image.image_path)
-        .where(Image.device == device)
-        .join(ImageEmbedding, Image.id == ImageEmbedding.image_id)
-        .where(ImageEmbedding.image_id.isnot(None))
-    ).scalars().all()
-    missing_in_embeddings = raw_images - set(embeddings_exists)
-    missing_in_embeddings = missing_in_embeddings - bad_images
-    missing_in_embeddings = missing_in_embeddings.intersection(raw_images)
-    missing_in_embeddings = sorted(missing_in_embeddings, reverse=True)
+    configs = [
+        (ImageEmbedding, clip_model),
+        # (CLIPEmbedding, openai_clip_model)
+    ]
+    for SQLTable, model in configs:
+        embeddings_exists = session.execute(
+            select(Image.image_path)
+            .where(Image.device == device)
+            .join(SQLTable, Image.id == SQLTable.image_id)
+            .where(SQLTable.image_id.isnot(None))
+        ).scalars().all()
+        missing_in_embeddings = raw_images - set(embeddings_exists)
+        missing_in_embeddings = missing_in_embeddings - bad_images
+        missing_in_embeddings = missing_in_embeddings.intersection(raw_images)
+        missing_in_embeddings = sorted(missing_in_embeddings, reverse=True)
 
-    matrix = get_matrix(session, device)
-    for image in tqdm(missing_in_embeddings, desc="Encoding images"):
-        encode_image(session, device, image, matrix)
+        matrix = get_matrix(session, device)
+        for image in tqdm(missing_in_embeddings, desc=f"Encoding images for {SQLTable.__tablename__}"):
+            encode_image(session, device, image, matrix, SQLTable, model)
+        session.flush()
 
-    session.flush()
     # 6. Base on raw_images, find the extra ones in mongo and zvec
     extra_in_thumbnail = thumbnail_images - raw_images
     print(f"Extra in Thumbnail: {len(extra_in_thumbnail)}")

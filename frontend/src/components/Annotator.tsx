@@ -1,7 +1,7 @@
 import { addAnnotation } from 'apis/browsing';
 import { ImageObject } from '@utils/types';
 import { THUMBNAIL_HOST_URL } from 'constants/urls';
-import React, { useRef, useState, useEffect, MouseEvent } from 'react';
+import { useRef, useState, useEffect, MouseEvent } from 'react';
 import { useAppSelector } from 'reducers/hooks';
 
 // Define the shape of our coordinate points
@@ -56,16 +56,20 @@ const Annotator = ({ image }: { image: ImageObject }) => {
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
+                const realPoints = points.map((p) => ({
+                    x: p.x * canvas.width,
+                    y: p.y * canvas.height,
+                }));
+                ctx.moveTo(realPoints[0].x, realPoints[0].y);
 
-                points.forEach((p) => {
+                realPoints.forEach((p) => {
                     ctx.lineTo(p.x, p.y);
                     // Draw point markers
                     ctx.fillStyle = '#ff0000';
                     ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
                 });
 
-                if (points.length === MAX_POINTS) {
+                if (realPoints.length === MAX_POINTS) {
                     ctx.closePath();
                 }
                 ctx.stroke();
@@ -92,8 +96,12 @@ const Annotator = ({ image }: { image: ImageObject }) => {
         const actualX = cssX * scaleX;
         const actualY = cssY * scaleY;
 
+        // 4. Get the relative coordinates (0 to 1)
+        const relativeX = actualX / canvas.width;
+        const relativeY = actualY / canvas.height;
+
         // I recommend saving the Absolute Pixels for your immediate blurring task
-        setPoints([...points, { x: actualX, y: actualY }]);
+        setPoints([...points, { x: relativeX, y: relativeY }]);
     };
 
     const submitToBackend = async (): Promise<void> => {
@@ -111,7 +119,6 @@ const Annotator = ({ image }: { image: ImageObject }) => {
                 "blur"
             );
             reloadImage();
-
         } catch (err) {
             console.error('Transmission error:', err);
         }
