@@ -1254,15 +1254,11 @@ def get_all_faces(
             image_full_path = os.path.join(DIR, device, image_path)
             if os.path.exists(image_full_path):
                 img = Image.open(image_full_path)
+                print(img.size, bbox)
                 bbox = to_absolute_bbox(bbox, img.width, img.height)
-                cropped_img = img.crop(
-                    (
-                        bbox[0],
-                        bbox[1],
-                        bbox[0] + bbox[2],
-                        bbox[1] + bbox[3],
-                    )
-                )
+                x1, y1, x2, y2 = bbox
+                print(f"Cropping image {image_path} with bbox {bbox} for face {r[0]}")
+                cropped_img = img.crop(bbox)
                 buf = io.BytesIO()
                 cropped_img.save(buf, format="JPEG")
                 cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))

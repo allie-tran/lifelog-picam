@@ -102,8 +102,16 @@ def make_video_thumbnail(video_path):
 
 def to_absolute_bbox(bbox, image_width, image_height):
     x1, y1, x2, y2 = bbox
+    # check if the coordinates are already absolute (greater than 1)
+    if x1 > 1 or y1 > 1 or x2 > 1 or y2 > 1:
+        return int(x1), int(y1), int(x2), int(y2)
     abs_x1 = int(x1 * image_width)
     abs_y1 = int(y1 * image_height)
     abs_x2 = int(x2 * image_width)
     abs_y2 = int(y2 * image_height)
+    # cap the coordinates to be within the image dimensions
+    abs_x1 = max(0, min(abs_x1, image_width - 1))
+    abs_y1 = max(0, min(abs_y1, image_height - 1))
+    abs_x2 = max(0, min(abs_x2, image_width - 1))
+    abs_y2 = max(0, min(abs_y2, image_height - 1))
     return abs_x1, abs_y1, abs_x2, abs_y2
