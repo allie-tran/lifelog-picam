@@ -151,7 +151,6 @@ const FaceIntelligence = () => {
                     </Typography>
                 </ModalWithCloseButton>
             ) : null}
-            <FaceClusters/>
         </Container>
     );
 };

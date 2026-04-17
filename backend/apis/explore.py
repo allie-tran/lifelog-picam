@@ -17,9 +17,9 @@ from auth import _require_owner
 from sqlalchemy import select, desc
 from typing import Annotated, Any
 
-from constants import DIR
+from constants import DIR, THUMBNAIL_DIR
 from database import get_session
-from database.models import Image as ImageModel, ImagePerson, Location
+from database.models import Image as ImageModel, ImagePerson, Location, PeopleCluster
 from app_types import CamelCaseModel
 from scripts.utils import to_absolute_bbox
 
@@ -137,40 +137,42 @@ def get_all_faces(
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
-    stmt = select(ImagePerson.label).join(ImageModel, ImageModel.id == ImagePerson.image_id).where(ImageModel.device == device).distinct()
-    results = session.execute(stmt).fetchall()
+    # stmt = select(PeopleCluster).join(PeopleCluster.people).join(ImagePerson.image).where(ImageModel.device == device).distinct()
+    stmt = select(PeopleCluster).where(PeopleCluster.people.any(ImagePerson.image.has(ImageModel.device == device)))
+    clusters = session.execute(stmt).scalars().all()
+    print(f"Found {len(clusters)} clusters for device {device}")
 
     faces = []
-
     # get actual images for each person
-    for r in results:
+    for cluster in clusters:
         face = {
-            "name": r[0],
-            "images": [],
+            "name": cluster.cluster_label,
+            "images": []
         }
-        # select randomly 2 images for this person
+        centroid = cluster.center_embedding
         stmt = (
-            select(ImagePerson.bbox, ImageModel.image_path)
-            .join(ImageModel, ImageModel.id == ImagePerson.image_id)
-            .where(ImageModel.device == device, ImagePerson.confidence > 0.8)
-            .where(ImagePerson.label == r[0])
-            .limit(2)
+            select(ImagePerson.rel_bbox, ImageModel.thumbnail,
+            ImagePerson.embedding.cosine_distance(centroid).label("distance"))
+            .join(ImagePerson, ImagePerson.image_id == ImageModel.id)
+            .where(ImageModel.device == device)
+            .where(ImagePerson.cluster_id == cluster.id)
+            .order_by("distance")
+            .limit(5)
         )
+
         images = session.execute(stmt).fetchall()
         # get cropped images for each bbox
         cropped = []
-        for bbox, image_path in images:
-            image_full_path = os.path.join(DIR, device, image_path)
+        for rel_bbox, thumbnail_path, _ in images:
+            image_full_path = os.path.join(THUMBNAIL_DIR, device, thumbnail_path)
             if os.path.exists(image_full_path):
                 img = Image.open(image_full_path)
-                print(img.size, bbox)
-                bbox = to_absolute_bbox(bbox, img.width, img.height)
-                x1, y1, x2, y2 = bbox
-                print(f"Cropping image {image_path} with bbox {bbox} for face {r[0]}")
+                bbox = to_absolute_bbox(rel_bbox, img.width, img.height)
                 cropped_img = img.crop(bbox)
                 buf = io.BytesIO()
                 cropped_img.save(buf, format="JPEG")
                 cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
                 face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
-        faces.append(face)
+        if len(face["images"]) > 0:
+            faces.append(face)
     return faces

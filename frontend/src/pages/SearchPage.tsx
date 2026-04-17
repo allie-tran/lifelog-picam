@@ -44,6 +44,7 @@ import { ImageZoom } from '../components/ImageZoom';
 import { TemporalFiltersHook } from 'components/TemporalFilters';
 import { LocationFiltersHook } from 'components/LocationFilters';
 import DeviceSelect from './DeviceSelect';
+import { FaceFiltersHook } from 'components/FaceFilters';
 
 const PAGE_SIZE = 20;
 
@@ -65,7 +66,7 @@ const SearchPage = () => {
     const [query, setQuery] = useState(searchParams.get('query') || '');
     const [useImageInput, setUseImageInput] = useState<boolean>(false);
     const [filterShown, setFilterShown] = useState<
-        'temporal' | 'location' | null
+        'temporal' | 'location' | 'faces' | null
     >(null);
 
     const {
@@ -75,11 +76,17 @@ const SearchPage = () => {
         nothingIsSelected,
     } = TemporalFiltersHook();
     const {
-        renderFilterOptions: renderLocationFilterOptions,
+        renderFilterOptions: LocationFilterOptions,
         renderMap,
-        renderClearButton: renderLocationClearButton,
+        renderClearButton: LocationClearButton,
         nothingIsSelected: locationNothingIsSelected,
     } = LocationFiltersHook();
+    const {
+        renderFilterOptions: FaceFilterOptions,
+        renderFaceExplorer,
+        renderClearButton: FaceClearButton,
+        nothingIsSelected: faceNothingIsSelected,
+    } = FaceFiltersHook();
 
     // Annotation Settings
     const [isSelecting, setIsSelecting] = useState(false);
@@ -320,7 +327,46 @@ const SearchPage = () => {
                         </Typography>
                     </AccordionSummary>
                     <AccordionDetails sx={{ padding: 0 }}>
-                        {renderLocationFilterOptions()}
+                        {LocationFilterOptions()}
+                    </AccordionDetails>
+                </StyledAccordion>
+                <StyledAccordion
+                    square
+                    elevation={0}
+                    expanded={filterShown === 'faces'}
+                    onChange={() =>
+                        setFilterShown((prev) =>
+                            prev === 'faces' ? null : 'faces'
+                        )
+                    }
+                >
+                    <AccordionSummary>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                            <ArrowDropDownRounded
+                                color="primary"
+                                fontSize="large"
+                                sx={{
+                                    verticalAlign: 'middle',
+                                    transition: 'transform 0.3s',
+                                    transform:
+                                        filterShown === 'faces'
+                                            ? 'rotate(180deg)'
+                                            : 'rotate(0deg)',
+                                }}
+                            />
+                            People Filter
+                        </Typography>
+                        {!faceNothingIsSelected && (
+                            <Chip
+                                label="Applied"
+                                color="primary"
+                                sx={{ ml: 1 }}
+                                variant="outlined"
+                            />
+                        )}
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ padding: 0 }}>
+                        {FaceFilterOptions()}
                     </AccordionDetails>
                 </StyledAccordion>
                 <Stack
@@ -330,7 +376,8 @@ const SearchPage = () => {
                     sx={{ mt: 2 }}
                 >
                     {filterShown === 'temporal' && renderClearButton()}
-                    {filterShown === 'location' && renderLocationClearButton()}
+                    {filterShown === 'location' && LocationClearButton()}
+                    {filterShown === 'faces' && FaceClearButton()}
                     <Button
                         variant="contained"
                         color="secondary"
@@ -386,6 +433,7 @@ const SearchPage = () => {
                         </Stack>
                         {filterShown === 'temporal' && renderHeatmap()}
                         {filterShown === 'location' && renderMap()}
+                        {filterShown === 'faces' && renderFaceExplorer()}
                     </Stack>
                 </Stack>
                 <Stack
