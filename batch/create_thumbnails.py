@@ -203,7 +203,7 @@ def check_date(date_str):
     #     return True
     # if year == "2022" and int(month) > 6:
     #     return True
-    if year == "2020" and int(month) > 6:
+    if year == "2020" and int(month) == 6:
         return True
     return False
 

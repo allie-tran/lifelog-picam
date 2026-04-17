@@ -56,6 +56,8 @@ class Location(Base):
     stop = Column(Boolean)
     timezone = Column(Text)
     address = Column(Text)
+    latitude = Column(Float)
+    longitude = Column(Float)
 
     images = relationship("Image", back_populates="location")
 
@@ -305,9 +307,9 @@ class PeopleCluster(Base):
         Index("ix_people_clusters_label", "cluster_label"),
     )
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Column[UUID] = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True)
+    cluster_label = Column(Text, nullable=False)
     center_embedding = Column(Vector(512), nullable=False)
-    cluster_label = Column(Text, primary_key=True)
 
     # The relationship to the people
     people = relationship("ImagePerson", back_populates="cluster")
@@ -333,12 +335,17 @@ class ImagePerson(Base):
     bbox = Column(JSONB)
     rel_bbox = Column(JSONB)
     embedding = Column(Vector(512), nullable=True)
-    cluster_id = Column(UUID(as_uuid=True), ForeignKey("people_clusters.id", ondelete="SET NULL"), nullable=True)
+
+    cluster_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("people_clusters.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     image = relationship("Image", back_populates="people")
     cluster = relationship(
         "PeopleCluster",
-        back_populates="people",
+        back_populates="people"
     )
 
 

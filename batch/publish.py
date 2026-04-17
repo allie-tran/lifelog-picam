@@ -76,7 +76,15 @@ matrix = generate_secure_transformation_matrix(512)
 # -------------------------------------------
 # METADATA SERIALIZATION
 # -------------------------------------------
+CLIP_EMBEDDING_DIR = '/mnt/ssd0/embeddings/cathal/vitl14336/'
 
+def get_clip_embedding(image_row):
+    basename = os.path.basename(image_row.image_path)
+    clip_path = os.path.join(CLIP_EMBEDDING_DIR, f"{basename}.npy")
+    if os.path.exists(clip_path):
+        return np.load(clip_path)
+    print(f"CLIP embedding not found for {image_row.image_path} at {clip_path}")
+    return None
 
 def encode_embedding(embedding, transform_matrix=None):
     if embedding is None:
@@ -117,7 +125,7 @@ def get_full_metadata(image_row: Image) -> dict:
         },
         "detections": {
             "objects": [
-                {"label": o.label, "conf": o.confidence, "bbox": o.bbox}
+                {"label": o.label, "conf": o.confidence, "bbox": o.bbox, "rel_bbox": o.rel_bbox}
                 for o in image_row.objects
             ],
             "faces": [
@@ -126,6 +134,7 @@ def get_full_metadata(image_row: Image) -> dict:
                     "conf": p.confidence,
                     "bbox": p.bbox,
                     "embedding": encode_embedding(p.embedding, matrix),
+                    "rel_bbox": p.rel_bbox,
                 }
                 for p in image_row.people
             ],
@@ -134,21 +143,20 @@ def get_full_metadata(image_row: Image) -> dict:
             #     for t in image_row.ocr
             # ],
         },
-        "clip_embedding": (
-            encode_embedding(image_row.clip_embedding.embedding)
-            if image_row.clip_embedding
-            else None
-        ),
+        "clip_embedding": encode_embedding(get_clip_embedding(image_row))
     }
 
 def copy_old_lsc_thumbnails():
     OLD = "/mnt/ssd0/Images/LSC23/"
     for month in os.listdir(OLD):
-        if month.startswith("2019") or month.startswith("2020"):
+        # if month.startswith("2019") or month.startswith("2020"):
+        if month.startswith("2020"):
             all_files = glob.glob(os.path.join(OLD, month, "**/*.jpg"), recursive=True)
             for file in tqdm(all_files, desc=f"Processing {month}"):
                 date = datetime.strptime(os.path.basename(file), "%Y%m%d_%H%M%S_000.jpg")
                 date_str = date.strftime("%Y-%m-%d")
+                if date_str not in ["2020-06-01", "2020-06-02"]:
+                    continue
                 new_basename = date.strftime("%Y%m%d_%H%M%S.webp")
                 # copy
                 target_dir = os.path.join(THUMB_DIR, "cathal", date_str)
@@ -156,7 +164,7 @@ def copy_old_lsc_thumbnails():
                 img = PILImage.open(file)
                 img.save(os.path.join(target_dir, new_basename), "WEBP", quality=100)
 
-def publish_batch(limit=50):
+def publish_batch(start, end):
     with Session(engine) as session:
         stmt = (
             select(Image)
@@ -168,9 +176,9 @@ def publish_batch(limit=50):
                 selectinload(Image.location),
                 selectinload(Image.annotations),
             )
-            .where(Image.device == "cathal", Image.year == 2022)
+            .where(Image.device == "cathal")
+            .where(Image.local_timestamp >= start, Image.local_timestamp < end)
             .order_by(Image.local_timestamp)
-            .limit(limit)
         )
 
         results = session.scalars(stmt).all()
@@ -181,7 +189,7 @@ def publish_batch(limit=50):
             # 1. Path Setup
             # Adjusting path logic to match your device-based subfolders
             src_path = f"{SRC_DIR}/{img.device}/{img.image_path}"
-            thumb_source = f"{THUMB_DIR}/{img.device}/{img.image_path}"
+            thumb_source = f"{THUMB_DIR}/{img.device}/{img.thumbnail}"
 
             # Destination: data/published/YYYY/MM/DD/filename.jpg
             dt = img.local_timestamp or datetime.now()
@@ -195,6 +203,7 @@ def publish_batch(limit=50):
             try:
                 # 2. Handle Image & EXIF
                 # We load EXIF from the ORIGINAL (src_path) but save it to the THUMBNAIL
+                exif_dict = {}
                 if os.path.exists(src_path) and os.path.exists(thumb_source):
                     exif_dict = piexif.load(src_path)
 
@@ -203,12 +212,28 @@ def publish_batch(limit=50):
                     exif_bytes = piexif.dump(exif_dict)
                     with PILImage.open(thumb_source) as t_img:
                         t_img.save(target_img, "JPEG", exif=exif_bytes, quality=95)
+                    # 3. Generate Metadata JSON
+                    relative_img_path = os.path.relpath(target_img, OUT_DIR)
+                    img_metadata = get_full_metadata(img)
+                    img_metadata["image_path"] = relative_img_path
+                    image_object = PILImage.open(src_path)
+                    img_metadata.update(
+                        {
+                            "image": {
+                                "path": relative_img_path,
+                                "original_width": image_object.width,
+                                "original_height": image_object.height,
+                            }
+                        }
+                    )
+                    metadata[relative_img_path] = img_metadata
+                else:
+                    if os.path.exists(src_path):
+                        print(f"Thumbnail missing for {img.id} at {thumb_source}")
+                    if not os.path.exists(src_path):
+                        print(f"Source image missing for {img.id} at {src_path}")
+                    continue
 
-                # 3. Generate Metadata JSON
-                relative_img_path = os.path.relpath(target_img, OUT_DIR)
-                img_metadata = get_full_metadata(img)
-                img_metadata["image_path"] = relative_img_path
-                metadata[relative_img_path] = img_metadata
 
             except Exception as e:
                 print(f"Failed {img.id}: {e}")
@@ -217,5 +242,8 @@ def publish_batch(limit=50):
         json.dump(metadata, f, indent=4)
 
 if __name__ == "__main__":
-    copy_old_lsc_thumbnails()
-    publish_batch()
+    # copy_old_lsc_thumbnails()
+
+    # before 31-06-2020
+    publish_batch(datetime(2019, 1, 1), datetime(2020, 6, 30))
+    publish_batch(datetime(2022, 1, 1), datetime(2022, 5, 31))

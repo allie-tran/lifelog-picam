@@ -31,6 +31,7 @@ from models import (
     ImagePerson,
     ImageObject,
     ImageOCR,
+    Base,
 )
 from dotenv import load_dotenv
 import os
@@ -116,7 +117,7 @@ def export_mongo() -> list[dict]:
     log.info("Connecting to MongoDB...")
     client = MongoClient(MONGO_URI)
     docs = list(client[MONGO_DB][MONGO_COL].find({"device": "allie"}))
-    # docs += list(client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1))
+    docs += list(client[MONGO_DB][MONGO_COL].find({"device": "cathal"}).sort("timestamp", 1))
     log.info(f"Exported {len(docs)} documents")
     return docs
 
@@ -320,9 +321,11 @@ def migrate_devices(session: Session, mongo_uri: str, mongo_db: str) -> dict[str
         else:
             transform_matrix = tm
 
-        matrices[device_id] = (
-            pickle.loads(transform_matrix) if transform_matrix else None
-        )
+        device = doc.get("device")
+        if device == "allie":
+            matrices[device_id] = (
+                pickle.loads(transform_matrix) if transform_matrix else None
+            )
 
         stmt = pg_insert(Device).values(
             mongo_id=mongo_id,
@@ -340,7 +343,7 @@ def migrate_devices(session: Session, mongo_uri: str, mongo_db: str) -> dict[str
         device_id_cache[device_id] = pg_device_id
 
         # Store transform_matrix in isolated secrets table
-        if transform_matrix is not None:
+        if device_id == "allie" and transform_matrix is not None:
             secret_stmt = pg_insert(DeviceSecret).values(
                 device_id=pg_device_id,
                 transform_matrix=transform_matrix,
@@ -465,6 +468,7 @@ def migrate_objects(session: Session, docs: list[dict], mongo_to_pg: dict[str, s
         pg_id = mongo_to_pg.get(str(doc["_id"]))
         if not pg_id:
             continue
+
         for o in doc.get("objects", []):
             rows.append(
                 {
@@ -568,7 +572,8 @@ def migrate_gps(session: Session, docs: list[dict], mongo_to_pg: dict[str, str])
 #  Migrate embeddings (from .npy files)
 # ---------------------------------------------------------------------------
 
-EMBEDDING_DIR = "/mnt/ssd0/embeddings/cathal/vitl14336"
+# EMBEDDING_DIR = "/mnt/ssd0/embeddings/cathal/vitl14336"
+EMBEDDING_DIR = "/mnt/ssd0/embeddings/conclip_vit_l14"
 IMAGE_EMBED_DIM = 768
 
 
@@ -594,12 +599,12 @@ def migrate_embeddings(session: Session):
         pg_id = r.id
 
         basename = os.path.basename(image_path)
-        # npy_path = os.path.join(
-        #     EMBEDDING_DIR, f"{device_id}_features", f"{basename}.npy"
-        # )
         npy_path = os.path.join(
-            EMBEDDING_DIR, f"{basename}.npy"
+            EMBEDDING_DIR, f"{device_id}_features", f"{basename}.npy"
         )
+        # npy_path = os.path.join(
+        #     EMBEDDING_DIR, f"{basename}.npy"
+        # )
         matrix = None
         if device_id != "allie":  # allie's embeddings are already transformed
             matrix = matrices.get(device_id)
@@ -625,7 +630,7 @@ def migrate_embeddings(session: Session):
         # Flush in batches to avoid memory buildup (embeddings can be large)
         if len(rows) >= 100:
             session.execute(
-                pg_insert(CLIPEmbedding).values(rows).on_conflict_do_nothing()
+                pg_insert(ImageEmbedding).values(rows).on_conflict_do_nothing()
             )
             session.commit()
             session.flush()
@@ -745,13 +750,13 @@ def main():
     #         session.commit()
     #     log.info("Deleted existing data from PostgreSQL")
 
-    # # Enable pgvector extension and create tables
-    # with engine.connect() as conn:
-    #     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    #     conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-    #     conn.commit()
+    # Enable pgvector extension and create tables
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        conn.commit()
 
-    # Base.metadata.create_all(engine)
+    Base.metadata.create_all(engine)
 
     # Export once
     docs = export_mongo()
@@ -762,26 +767,25 @@ def main():
             session.execute(text("SELECT mongo_id FROM images")).scalars().all()
         )
     docs = [d for d in docs if str(d["_id"]) not in existing_ids]
-    mongo_to_pg = {}
 
     # Migrate in a single transaction — rolls back entirely on failure
     with Session(engine) as session:
-        # device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
-        # location_cache = migrate_locations(session, docs)
-        # mongo_to_pg = migrate_images(session, docs, location_cache)
+        device_id_cache = migrate_devices(session, MONGO_URI, MONGO_DB)
+        location_cache = migrate_locations(session, docs)
+        mongo_to_pg = migrate_images(session, docs, location_cache)
         migrate_embeddings(session)
-        # migrate_people(session, docs, mongo_to_pg)
-        # migrate_objects(session, docs, mongo_to_pg)
-        # migrate_gps(session, docs, mongo_to_pg)
-        # migrate_ocr(session, docs, mongo_to_pg)
+        migrate_people(session, docs, mongo_to_pg)
+        migrate_objects(session, docs, mongo_to_pg)
+        migrate_gps(session, docs, mongo_to_pg)
+        migrate_ocr(session, docs, mongo_to_pg)
 
-        # link_images_to_devices(session, device_id_cache)
+        link_images_to_devices(session, device_id_cache)
         # Indexes outside transaction (DDL can't be rolled back in PG anyway)
         session.commit()
 
-    with Session(engine) as session:
-        build_indexes(session)
-        session.commit()
+    # with Session(engine) as session:
+    #     build_indexes(session)
+    #     session.commit()
 
     # with Session(engine) as session:
     #     verify(session, docs)

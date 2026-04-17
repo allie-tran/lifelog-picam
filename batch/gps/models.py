@@ -56,6 +56,8 @@ class Location(Base):
     stop = Column(Boolean)
     timezone = Column(Text)
     address = Column(Text)
+    latitude = Column(Float)
+    longitude = Column(Float)
 
     images = relationship("Image", back_populates="location")
 
@@ -148,7 +150,40 @@ class DeviceWhitelistEmbedding(Base):
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
+class EmbeddingBase(Base):
+    __abstract__ = True
 
+    image_id = Column(
+        UUID(as_uuid=True), ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
+    )
+
+# Now adding a new model takes only 3 lines of code!
+class ImageEmbedding(EmbeddingBase):
+    __tablename__ = "image_embedding"
+    __table_args__ = (
+        Index(
+            "ix_image_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+    embedding = Column(Vector(768), nullable=False)
+    image= relationship("Image", back_populates="embedding", uselist=False)
+
+
+class CLIPEmbedding(EmbeddingBase):
+    __tablename__ = "clip_embedding"
+    __table_args__ = (
+        Index(
+            "ix_clip_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+    embedding: Column = Column(Vector(768), nullable=False)
+    image= relationship("Image", back_populates="clip_embedding", uselist=False)
 
 class Image(Base):
     __tablename__ = "images"
@@ -223,40 +258,15 @@ class Image(Base):
         cascade="all, delete-orphan"
     )
 
-
-class ImageEmbedding(Base):
-    __tablename__ = "image_embedding"
-    __table_args__ = (
-        Index("ix_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
+    annotations = relationship(
+        "Annotation", back_populates="image", cascade="all, delete-orphan"
     )
 
-    # Add ForeignKey here
-    image_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("images.id", ondelete="CASCADE"),
-        primary_key=True
-    )
-    embedding = Column(Vector(768), nullable=False)
-
-    # Relationship back to Image
-    image = relationship("Image", back_populates="embedding")
-
-class CLIPEmbedding(Base):
-    __tablename__ = "clip_embedding"
-    __table_args__ = (
-        Index("ix_clip_embeddings_hnsw", "embedding", postgresql_using="hnsw", postgresql_ops={"embedding": "vector_cosine_ops"}),
-    )
-
-    # Add ForeignKey here
-    image_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("images.id", ondelete="CASCADE"),
-        primary_key=True
-    )
-    embedding = Column(Vector(768), nullable=False)
-
-    # Relationship back to Image
-    image = relationship("Image", back_populates="clip_embedding")
+    def get_embedding(self, model_type="conclip"):
+        """The 'Advanced' dynamic switcher."""
+        if model_type == "vitl14@336":
+            return self.clip_embedding
+        return self.embedding
 
 # ---------------------------------------------------------------------------
 # GPS, People, Objects, OCR
@@ -291,12 +301,23 @@ class ImageGPS(Base):
 
     image = relationship("Image", back_populates="gps")
 
+class PeopleCluster(Base):
+    __tablename__ = "people_clusters"
+    __table_args__ = (
+        Index("ix_people_clusters_label", "cluster_label"),
+    )
+
+    id: Column[UUID] = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True)
+    cluster_label = Column(Text, nullable=False)
+    center_embedding = Column(Vector(512), nullable=False)
+
+    # The relationship to the people
+    people = relationship("ImagePerson", back_populates="cluster")
 
 class ImagePerson(Base):
     __tablename__ = "image_people"
     __table_args__ = (
         Index("ix_people_image", "image_id"),
-        Index("ix_people_cluster", "cluster_label"),
         Index(
             "ix_people_embedding",
             "embedding",
@@ -312,10 +333,20 @@ class ImagePerson(Base):
     label = Column(Text)
     confidence = Column(Float)
     bbox = Column(JSONB)
-    cluster_label = Column(Integer, nullable=True)
+    rel_bbox = Column(JSONB)
     embedding = Column(Vector(512), nullable=True)
 
+    cluster_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("people_clusters.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     image = relationship("Image", back_populates="people")
+    cluster = relationship(
+        "PeopleCluster",
+        back_populates="people"
+    )
 
 
 class ImageObject(Base):
@@ -332,8 +363,10 @@ class ImageObject(Base):
     label = Column(Text)
     confidence = Column(Float)
     bbox = Column(JSONB)
+    rel_bbox = Column(JSONB)
 
     image = relationship("Image", back_populates="objects")
+
 
 
 class ImageOCR(Base):
@@ -382,3 +415,4 @@ class Annotation(Base):
 
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     author = Column(Text)
+    image = relationship("Image", back_populates="annotations")
