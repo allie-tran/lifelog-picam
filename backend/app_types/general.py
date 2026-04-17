@@ -115,6 +115,7 @@ class ObjectDetection(BaseModel):
     label: str
     confidence: float
     bbox: list[int]  # [x_min, y_min, x_max, y_max]
+    rel_bbox: Optional[list[float]] = None  # [x_min_rel, y_min_rel, x_max_rel, y_max_rel]
     embedding: Optional[list[float]] = None
     cluster_label: Optional[int] = None
 
@@ -138,6 +139,8 @@ class LocationInfo(CamelCaseModel):
     address: Optional[str] = None
     country: str
     timezone: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class LifelogImage(CamelCaseModel):

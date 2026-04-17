@@ -1,4 +1,4 @@
-import { getAllFaces } from 'apis/browsing';
+import { getAllFaces } from '@apis/searchFilters';
 import { Stack, Typography } from '@mui/material';
 import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';

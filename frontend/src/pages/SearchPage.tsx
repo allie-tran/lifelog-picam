@@ -1,20 +1,27 @@
-import { DeleteRounded } from '@mui/icons-material';
 import {
+    AddAPhotoRounded,
+    ArrowDropDownRounded,
+    DeleteRounded,
+} from '@mui/icons-material';
+import {
+    Accordion,
+    AccordionDetails,
+    AccordionSummary,
+    Badge,
     Box,
     Button,
     Checkbox,
+    Chip,
     Divider,
     Drawer,
+    IconButton,
+    InputAdornment,
     LinearProgress,
     Pagination,
-    Paper,
     Stack,
-    styled,
-    Tab,
-    Tabs,
-    ToggleButton,
-    ToggleButtonGroup,
+    TextField,
     Typography,
+    styled,
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import {
@@ -24,11 +31,9 @@ import {
     similarImagesPost,
 } from 'apis/browsing';
 import ImageDropSearch from 'components/ImageDropSearch';
-import ImageIdSearch from 'components/ImageIdSearch';
 import ImageWithDate from 'components/ImageWithDate';
 import LifelogEvent from 'components/LifelogEvent';
-import SearchBar from 'components/SearchBar';
-import { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
@@ -36,6 +41,8 @@ import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
+import { TemporalFiltersHook } from 'components/TemporalFilters';
+import { LocationFiltersHook } from 'components/LocationFilters';
 import DeviceSelect from './DeviceSelect';
 
 const PAGE_SIZE = 20;
@@ -43,22 +50,42 @@ const PAGE_SIZE = 20;
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, _] = useSearchParams();
-    const query = searchParams.get('query') || '';
-    const mode = searchParams.get('mode') || 'text';
 
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+
+    // View Settings
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [viewMode, setViewMode] = useState<'images' | 'events'>('images');
-    const [tempMode, setTempMode] = useState(mode);
-    // const [timeRange, setTimeRange] = useState<{
-    //     start: string;
-    //     end: string;
-    // } | null>(null);
-    const [isSelecting, setIsSelecting] = useState(false);
-    const [selectedImages, setSelectedImages] = useState<string[]>([]);
     const [page, setPage] = useState(1);
 
+    // Search Settings
+    const [mode, setMode] = useState<'text' | 'id' | 'similar'>('text');
+    const [textQuery, setTextQuery] = useState('');
+    const [query, setQuery] = useState(searchParams.get('query') || '');
+    const [useImageInput, setUseImageInput] = useState<boolean>(false);
+    const [filterShown, setFilterShown] = useState<
+        'temporal' | 'location' | null
+    >(null);
+
+    const {
+        renderFilterOptions,
+        renderHeatmap,
+        renderClearButton,
+        nothingIsSelected,
+    } = TemporalFiltersHook();
+    const {
+        renderFilterOptions: renderLocationFilterOptions,
+        renderMap,
+        renderClearButton: renderLocationClearButton,
+        nothingIsSelected: locationNothingIsSelected,
+    } = LocationFiltersHook();
+
+    // Annotation Settings
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectedImages, setSelectedImages] = useState<string[]>([]);
+
+    // Endpoints
     const {
         data: searchEvents,
         isLoading,
@@ -78,7 +105,8 @@ const SearchPage = () => {
                       }
                       return res;
                   })
-            : null
+            : null,
+        { revalidateOnFocus: false }
     );
 
     const { data: similar, isLoading: isSimilarLoading } = useSWR<
@@ -143,10 +171,6 @@ const SearchPage = () => {
         });
     };
 
-    useEffect(() => {
-        setTempMode(mode);
-    }, [mode]);
-
     const currentPageResults =
         results?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) || [];
 
@@ -156,120 +180,244 @@ const SearchPage = () => {
 
     return (
         <>
-            <Drawer anchor="right" open={true} variant="permanent">
-                <Stack spacing={2} padding={2} width={200}>
-                    <Typography variant="subtitle1" fontWeight="bold">
-                        Sort By
-                    </Typography>
-                    <ToggleButtonGroup
-                        color="primary"
-                        value={sortBy}
-                        exclusive
-                        onChange={(_, value) => setSortBy(value)}
-                        sx={{ width: '100%' }}
-                    >
-                        <FullWidthToggleButton value="relevance">
-                            Relevance
-                        </FullWidthToggleButton>
-                        <FullWidthToggleButton value="time">
-                            Time
-                        </FullWidthToggleButton>
-                    </ToggleButtonGroup>
-                    <Typography variant="subtitle1" fontWeight="bold">
-                        Order
-                    </Typography>
-                    <Button
-                        variant="outlined"
-                        color="primary"
-                        sx={{ textTransform: 'none' }}
-                        onClick={() =>
-                            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-                        }
-                    >
-                        {sortOrder === 'asc' ? 'Ascending' : 'Descending'}
-                        <svg
-                            width="14"
-                            height="14"
-                            fill="currentColor"
-                            viewBox="0 0 24 24"
-                            style={{
-                                transform:
-                                    sortOrder === 'asc'
-                                        ? 'rotate(180deg)'
-                                        : 'none',
-                                marginLeft: 8,
-                            }}
-                        >
-                            <path d="M7 10l5 5 5-5z" />
-                        </svg>
-                    </Button>
-                    <Typography variant="subtitle1" fontWeight="bold">
-                        View Mode
-                    </Typography>
-                    <ToggleButtonGroup
-                        color="primary"
-                        value={viewMode}
-                        exclusive
-                        onChange={(_, value) => setViewMode(value)}
-                    >
-                        <FullWidthToggleButton value="events">
-                            Events
-                        </FullWidthToggleButton>
-                        <FullWidthToggleButton value="images">
-                            Images
-                        </FullWidthToggleButton>
-                    </ToggleButtonGroup>
-                </Stack>
-            </Drawer>
-            <Box sx={{ paddingRight: '200px' }}>
-                <Box id="app" sx={{ width: '100%' }} />
+            <Drawer
+                anchor="left"
+                open={true}
+                variant="permanent"
+                slotProps={{
+                    paper: {
+                        sx: {
+                            width: 325,
+                            padding: 2,
+                            ml: 6,
+                            backgroundColor: '#f4f6e8',
+                        },
+                    },
+                }}
+            >
                 <Typography
-                    variant="h4"
-                    marginTop={4}
-                    marginBottom={2}
+                    variant="h6"
                     color="primary"
                     fontWeight="bold"
+                    gutterBottom
                 >
                     Search
                 </Typography>
-                <Box
-                    sx={{
-                        borderBottom: 1,
-                        borderColor: 'divider',
-                        marginBottom: 2,
+                <DeviceSelect />
+                <Typography variant="caption">
+                    Type in a prompt in natural language
+                </Typography>
+                {/* <DeviceSelect /> */}
+                <TextField
+                    variant="outlined"
+                    multiline
+                    rows={3}
+                    value={textQuery}
+                    onChange={(e) => setTextQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            setQuery(textQuery);
+                        }
                     }}
+                    sx={{ marginY: 1 }}
+                    slotProps={{
+                        input: {
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <IconButton
+                                        onClick={() =>
+                                            setUseImageInput((prev) => !prev)
+                                        }
+                                        edge="end"
+                                    >
+                                        <AddAPhotoRounded
+                                            color={
+                                                useImageInput
+                                                    ? 'primary'
+                                                    : 'inherit'
+                                            }
+                                        />
+                                    </IconButton>
+                                </InputAdornment>
+                            ),
+                        },
+                    }}
+                />
+                <ImageDropSearch visible={useImageInput} />
+                <StyledAccordion
+                    square
+                    elevation={0}
+                    expanded={filterShown === 'temporal'}
+                    onChange={() =>
+                        setFilterShown((prev) =>
+                            prev === 'temporal' ? null : 'temporal'
+                        )
+                    }
                 >
-                    <Tabs
-                        value={tempMode}
-                        onChange={(_, value) => setTempMode(value)}
-                    >
-                        <Tab label="Activity/Text" value="text" />
-                        <Tab label="Image ID" value="id" />
-                        <Tab label="Visual Search" value="similar" />
-                    </Tabs>
-                </Box>
-                <Paper
-                    component={Stack}
+                    <AccordionSummary>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                            <ArrowDropDownRounded
+                                color="primary"
+                                fontSize="large"
+                                sx={{
+                                    verticalAlign: 'middle',
+                                    transition: 'transform 0.3s',
+                                    transform:
+                                        filterShown === 'temporal'
+                                            ? 'rotate(180deg)'
+                                            : 'rotate(0deg)',
+                                }}
+                            />
+                            Temporal Filter
+                            {!nothingIsSelected && (
+                                <Chip
+                                    label="Applied"
+                                    color="primary"
+                                    sx={{ ml: 1 }}
+                                    variant="outlined"
+                                />
+                            )}
+                        </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ padding: 0 }}>
+                        {renderFilterOptions()}
+                    </AccordionDetails>
+                </StyledAccordion>
+                <StyledAccordion
+                    square
+                    elevation={0}
+                    expanded={filterShown === 'location'}
+                    onChange={() =>
+                        setFilterShown((prev) =>
+                            prev === 'location' ? null : 'location'
+                        )
+                    }
+                >
+                    <AccordionSummary>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                            <ArrowDropDownRounded
+                                color="primary"
+                                fontSize="large"
+                                sx={{
+                                    verticalAlign: 'middle',
+                                    transition: 'transform 0.3s',
+                                    transform:
+                                        filterShown === 'location'
+                                            ? 'rotate(180deg)'
+                                            : 'rotate(0deg)',
+                                }}
+                            />
+                            Location Filter
+                            {!locationNothingIsSelected && (
+                                <Chip
+                                    label="Applied"
+                                    color="primary"
+                                    sx={{ ml: 1 }}
+                                    variant="outlined"
+                                />
+                            )}
+                        </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ padding: 0 }}>
+                        {renderLocationFilterOptions()}
+                    </AccordionDetails>
+                </StyledAccordion>
+                <Stack
                     direction="row"
-                    justifyContent="center"
-                    alignItems="center"
+                    justifyContent="flex-end"
                     spacing={2}
-                    sx={{
-                        borderRadius: 2,
-                        width: '100%',
-                        justifySelf: 'center',
-                        marginX: 'auto',
-                        marginY: 4,
-                        px: 2,
-                        py: 1,
-                        alignItems: 'flex-start',
-                    }}
+                    sx={{ mt: 2 }}
                 >
-                    <DeviceSelect />
-                    <SearchBar visible={tempMode === 'text'} />
-                    <ImageIdSearch visible={tempMode === 'id'} />
-                    <ImageDropSearch visible={tempMode === 'similar'} />
-                </Paper>
+                    {filterShown === 'temporal' && renderClearButton()}
+                    {filterShown === 'location' && renderLocationClearButton()}
+                    <Button
+                        variant="contained"
+                        color="secondary"
+                        sx={{
+                            textTransform: 'none',
+                            width: 80,
+                        }}
+                        onClick={() => mutate()}
+                    >
+                        Search
+                    </Button>
+                </Stack>
+            </Drawer>
+
+            <Box sx={{ paddingLeft: '325px', transform: 'translateY(-80px)' }}>
+                <Box id="app" sx={{ width: '100%' }} />
+                <Stack direction="row" spacing={0.5} sx={{ width: '100%' }}>
+                    <Box
+                        sx={{
+                            width: 8,
+                            height: 'auto',
+                            backgroundColor: 'primary.main',
+                        }}
+                    />
+                    <Stack
+                        id="result-summary"
+                        sx={{
+                            width: '100%',
+                            height: 'auto',
+                            borderLeft: 2,
+                            borderColor: 'primary.main',
+                        }}
+                    >
+                        <Stack direction="row" spacing={1}>
+                            <Typography
+                                variant="h6"
+                                color="text.primary"
+                                paddingLeft={1}
+                                sx={{ width: 128 }}
+                            >
+                                Result Summary
+                            </Typography>
+                            <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                paddingLeft={1}
+                            >
+                                Coverage: 21/04/2024 – 07/09/2024 (5 months 16
+                                days) <br />
+                                # Events: 1,225 <br />
+                                # Photos: 48,209 <br />
+                            </Typography>
+                        </Stack>
+                        {filterShown === 'temporal' && renderHeatmap()}
+                        {filterShown === 'location' && renderMap()}
+                    </Stack>
+                </Stack>
+                <Stack
+                    direction="row"
+                    justifyContent="flex-end"
+                    spacing={4}
+                    sx={{ marginY: 0.5, paddingRight: 2 }}
+                >
+                    <SimpleToggleButtonGroup
+                        description="View by:"
+                        value={viewMode}
+                        onChange={(value) =>
+                            setViewMode(value as 'events' | 'images')
+                        }
+                        values={[
+                            { label: 'Events', value: 'events' },
+                            { label: 'Images', value: 'images' },
+                        ]}
+                    />
+                    <SimpleToggleButtonGroup
+                        description="Sort by:"
+                        value={sortBy}
+                        onChange={(value) =>
+                            setSortBy(value as 'time' | 'relevance')
+                        }
+                        values={[
+                            { label: 'Relevance', value: 'relevance' },
+                            { label: 'Time', value: 'time' },
+                        ]}
+                    />
+                </Stack>
+                <Divider flexItem sx={{ marginBottom: 2 }} />
                 {isLoading || isSimilarLoading ? (
                     <LinearProgress sx={{ marginBottom: 2 }} />
                 ) : viewMode === 'events' ? (
@@ -299,63 +447,64 @@ const SearchPage = () => {
                                         )
                                     )}
                                 </Stack>
-                                <Pagination
-                                    page={page}
-                                    count={Math.ceil(
-                                        results.length / PAGE_SIZE
-                                    )}
-                                    color="primary"
-                                    sx={{
-                                        display: 'flex',
-                                        justifyContent: 'center',
-                                        marginY: 4,
-                                    }}
-                                    onChange={(_, page) => {
-                                        setPage(page);
-                                        const element =
-                                            document.getElementById('app');
-                                        element?.scrollIntoView({
-                                            behavior: 'smooth',
-                                        });
-                                    }}
-                                />
+                                {page > 0 && (
+                                    <Pagination
+                                        page={page}
+                                        count={Math.ceil(
+                                            results.length / PAGE_SIZE
+                                        )}
+                                        color="primary"
+                                        sx={{
+                                            display: 'flex',
+                                            justifyContent: 'center',
+                                            marginY: 4,
+                                        }}
+                                        onChange={(_, page) => {
+                                            setPage(page);
+                                            const element =
+                                                document.getElementById('app');
+                                            element?.scrollIntoView({
+                                                behavior: 'smooth',
+                                            });
+                                        }}
+                                    />
+                                )}
                             </>
                         )}
                     </>
                 ) : (
                     <>
-                        {currentPageImages.length == 0 && images.length > 0 && (
-                            <Typography>No images on this page.</Typography>
+                        {currentPageImages.length == 0 ? null : (
+                            <Stack direction="row" alignItems="center">
+                                {/* <Button */}
+                                {/*     onClick={() => { */}
+                                {/*         mutate(); */}
+                                {/*     }} */}
+                                {/*     variant="outlined" */}
+                                {/*     sx={{ textTransform: 'none', marginBottom: 2 }} */}
+                                {/* > */}
+                                {/*     Refresh */}
+                                {/* </Button> */}
+                                <Button
+                                    color="error"
+                                    onClick={() => {
+                                        setSelectedImages(
+                                            currentPageImages.map(
+                                                (img) => img.imagePath
+                                            )
+                                        );
+                                        setIsSelecting(true);
+                                    }}
+                                    sx={{
+                                        textTransform: 'none',
+                                        marginBottom: 2,
+                                    }}
+                                >
+                                    <DeleteRounded sx={{ marginRight: 1 }} />
+                                    Delete All on This Page
+                                </Button>
+                            </Stack>
                         )}
-                        <Stack
-                            direction="row"
-                            alignItems="center"
-                        >
-                            <Button
-                                onClick={() => {
-                                    mutate();
-                                }}
-                                variant="outlined"
-                                sx={{ textTransform: 'none', marginBottom: 2 }}
-                            >
-                                Refresh
-                            </Button>
-                            <Button
-                                color="error"
-                                onClick={() => {
-                                    setSelectedImages(
-                                        currentPageImages.map(
-                                            (img) => img.imagePath
-                                        )
-                                    );
-                                    setIsSelecting(true);
-                                }}
-                                sx={{ textTransform: 'none', marginBottom: 2 }}
-                            >
-                                <DeleteRounded sx={{ marginRight: 1 }} />
-                                Delete All on This Page
-                            </Button>
-                        </Stack>
                         {isSelecting && (
                             <Stack direction="row" spacing={2} marginBottom={2}>
                                 <Button
@@ -387,7 +536,6 @@ const SearchPage = () => {
                             sx={{ flexWrap: 'wrap' }}
                             direction="row"
                             useFlexGap
-                            justifyContent="center"
                         >
                             {currentPageImages?.map((image) =>
                                 deleted.includes(image.imagePath) ? null : (
@@ -443,23 +591,28 @@ const SearchPage = () => {
                                 )
                             )}
                         </Stack>
-                        <Pagination
-                            page={page}
-                            count={Math.ceil(images.length / (PAGE_SIZE * 2))}
-                            color="primary"
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'center',
-                                marginY: 4,
-                            }}
-                            onChange={(_, page) => {
-                                setPage(page);
-                                const element = document.getElementById('app');
-                                element?.scrollIntoView({
-                                    behavior: 'smooth',
-                                });
-                            }}
-                        />
+                        {page > 0 && images.length > PAGE_SIZE * 2 && (
+                            <Pagination
+                                page={page}
+                                count={Math.ceil(
+                                    images.length / (PAGE_SIZE * 2)
+                                )}
+                                color="primary"
+                                sx={{
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                    marginY: 4,
+                                }}
+                                onChange={(_, page) => {
+                                    setPage(page);
+                                    const element =
+                                        document.getElementById('app');
+                                    element?.scrollIntoView({
+                                        behavior: 'smooth',
+                                    });
+                                }}
+                            />
+                        )}
                     </>
                 )}
                 <ImageZoom
@@ -474,9 +627,70 @@ const SearchPage = () => {
     );
 };
 
-const FullWidthToggleButton = styled(ToggleButton)(({ theme }) => ({
-    width: '100%',
-    textTransform: 'none',
+const SimpleToggleButtonGroup = ({
+    description,
+    values,
+    value,
+    onChange,
+}: {
+    description: string;
+    values: { label: string; value: string }[];
+    value: string;
+    onChange: (value: string) => void;
+}) => {
+    return (
+        <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="caption" color="text.secondary">
+                {description}
+            </Typography>
+            <Stack direction="row" spacing={0.5} alignItems="center">
+                {values.map((option, index) => (
+                    <React.Fragment key={option.value}>
+                        <Typography
+                            key={option.value}
+                            variant="caption"
+                            color={
+                                value === option.value
+                                    ? 'text.primary'
+                                    : 'grey.400'
+                            }
+                            sx={{
+                                cursor: 'pointer',
+                                textDecoration:
+                                    value === option.value
+                                        ? 'underline'
+                                        : 'none',
+                                fontWeight:
+                                    value === option.value ? 'bold' : 'normal',
+                            }}
+                            onClick={() => onChange(option.value)}
+                        >
+                            {option.label}
+                        </Typography>
+                        {index < values.length - 1 && (
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
+                                |
+                            </Typography>
+                        )}
+                    </React.Fragment>
+                ))}
+            </Stack>
+        </Stack>
+    );
+};
+
+const StyledAccordion = styled(Accordion)(({ theme }) => ({
+    borderRadius: theme.shape.borderRadius,
+    borderColor: theme.palette.primary.main,
+    backgroundColor: 'transparent',
+    '&.Mui-expanded': {
+        borderTop: '4px solid',
+        borderColor: theme.palette.primary.main,
+        borderRadius: 0,
+    },
 }));
 
 export default SearchPage;

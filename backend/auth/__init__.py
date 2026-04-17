@@ -11,10 +11,23 @@ from auth.auth_models import (
     verify_token,
     verify_user,
 )
-from auth.types import AccessChangeRequest, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
+from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
 
 auth_app = FastAPI()
 
+def _require_owner(access_level: AccessLevel):
+    if access_level not in (AccessLevel.OWNER, AccessLevel.ADMIN):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+
+def _require_any_access(access_level: AccessLevel):
+    if access_level == AccessLevel.NONE:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+
+def _require_admin(access_level: AccessLevel):
+    if access_level != AccessLevel.ADMIN:
+        raise HTTPException(status_code=403, detail="Not authorized.")
 
 @auth_app.get("/health")
 def health_check():

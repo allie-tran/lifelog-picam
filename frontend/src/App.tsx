@@ -136,6 +136,8 @@ const activityTrackerTheme = createTheme({
 
 const theme = responsiveFontSizes(activityTrackerTheme);
 dayjs.extend(localizedFormat);
+var weekOfYear = require("dayjs/plugin/weekOfYear");
+dayjs.extend(weekOfYear);
 
 const App = () => {
     return (

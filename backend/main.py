@@ -14,20 +14,20 @@ from fastapi.params import Body
 from nacl.public import Box, PrivateKey, PublicKey
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from sqlalchemy import delete,  update
+from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
 from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage,  ResultSegment
-from auth import auth_app
+from auth import auth_app, _require_admin, _require_any_access, _require_owner
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
 from auth.types import AccessLevel, User
 from constants import DIR, LOCAL_PORT, THUMBNAIL_DIR
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, ImagePerson, Location
+from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, ImagePerson
 from dependencies import CamelCaseModel
 from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
@@ -37,7 +37,7 @@ from pipelines.all import process_video, process_image
 from pipelines.delete import mark_error, remove_physical_images
 from pipelines.hourly import update_app
 from preprocess import get_similar_images, load_features, retrieve_image
-from scripts.anonymise import blur_image_gaussian, blur_image_mosaic, segment_image_with_sam
+from scripts.anonymise import blur_image_gaussian,  segment_image_with_sam
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
@@ -48,7 +48,7 @@ from scripts.utils import get_thumbnail_path, to_absolute_bbox
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
-
+from apis.explore import app as explore_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime, timezone
@@ -121,19 +121,6 @@ DEFAULT_TARGETS = [
 ]
 
 
-def _require_owner(access_level: AccessLevel):
-    if access_level not in (AccessLevel.OWNER, AccessLevel.ADMIN):
-        raise HTTPException(status_code=403, detail="Not authorized.")
-
-
-def _require_any_access(access_level: AccessLevel):
-    if access_level == AccessLevel.NONE:
-        raise HTTPException(status_code=403, detail="Not authorized.")
-
-
-def _require_admin(access_level: AccessLevel):
-    if access_level != AccessLevel.ADMIN:
-        raise HTTPException(status_code=403, detail="Not authorized.")
 
 
 def decrypt_image(box: Box, file: UploadFile):
@@ -221,6 +208,7 @@ app = CustomFastAPI(lifespan=lifespan)
 app.mount("/auth", auth_app)
 app.mount("/controls", control_app)
 app.mount("/ingest", ingest_app)
+app.mount("/explore", explore_app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -693,26 +681,6 @@ def search(
         k=1000,
     )
 
-@app.get("/get-available-values")
-def get_available_values(
-    field: str,
-    device: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
-    session: Session = Depends(get_session),
-):
-    match field:
-        case "person":
-            stmt = (
-                select(ImagePerson.label).join(ImageModel, ImageModel.id == ImagePerson.image_id).where(ImageModel.device == device).distinct()
-            )
-        case "location":
-            stmt = (
-                select(Location.name).join(ImageModel, ImageModel.location_id == Location.id).where(ImageModel.device == device).distinct()
-            )
-        case _:
-            raise HTTPException(status_code=400, detail="Invalid field name.")
-    results = session.execute(stmt).fetchall()
-    return [r[0] for r in results]
 
 @app.get("/similar-images")
 def similar_images(
@@ -1221,50 +1189,6 @@ def remove_from_whitelist(
     session.commit()
 
 
-@app.get("/all-faces")
-def get_all_faces(
-    device: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
-    session: Session = Depends(get_session),
-):
-    _require_owner(access_level)
-    stmt = select(ImagePerson.label).join(ImageModel, ImageModel.id == ImagePerson.image_id).where(ImageModel.device == device).distinct()
-    results = session.execute(stmt).fetchall()
-
-    faces = []
-
-    # get actual images for each person
-    for r in results:
-        face = {
-            "name": r[0],
-            "images": [],
-        }
-        # select randomly 2 images for this person
-        stmt = (
-            select(ImagePerson.bbox, ImageModel.image_path)
-            .join(ImageModel, ImageModel.id == ImagePerson.image_id)
-            .where(ImageModel.device == device, ImagePerson.confidence > 0.8)
-            .where(ImagePerson.label == r[0])
-            .limit(2)
-        )
-        images = session.execute(stmt).fetchall()
-        # get cropped images for each bbox
-        cropped = []
-        for bbox, image_path in images:
-            image_full_path = os.path.join(DIR, device, image_path)
-            if os.path.exists(image_full_path):
-                img = Image.open(image_full_path)
-                print(img.size, bbox)
-                bbox = to_absolute_bbox(bbox, img.width, img.height)
-                x1, y1, x2, y2 = bbox
-                print(f"Cropping image {image_path} with bbox {bbox} for face {r[0]}")
-                cropped_img = img.crop(bbox)
-                buf = io.BytesIO()
-                cropped_img.save(buf, format="JPEG")
-                cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
-                face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
-        faces.append(face)
-    return faces
 
 # ---------------------------------------------------------------------------
 # Image segmentation
@@ -1344,8 +1268,6 @@ def add_annotation(
     output_image.save(thumbnail_path, exif=exif)
 
     return {"message": "Annotation added successfully."}
-
-
 
 
 # ---------------------------------------------------------------------------

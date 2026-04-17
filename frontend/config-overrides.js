@@ -1,4 +1,5 @@
 const webpack = require('webpack');
+const path = require('path');
 
 module.exports = function override(config) {
   const fallback = config.resolve.fallback || {};
@@ -10,6 +11,9 @@ module.exports = function override(config) {
     "assert": require.resolve("assert/"),
     "process/browser": require.resolve("process/browser"),
     "buffer": require.resolve("buffer/"),
+    "fs": false,
+    "path": false,
+    "os": false,
   });
   config.resolve.fallback = fallback;
   config.plugins = (config.plugins || []).concat([
@@ -18,6 +22,10 @@ module.exports = function override(config) {
       Buffer: ['buffer', 'Buffer'],
     }),
   ]);
+  config.resolve.alias = {
+    ...config.resolve.alias,
+    '@utils': path.resolve(__dirname, 'src/utils'),
+    '@apis': path.resolve(__dirname, 'src/apis'),
+  };
   return config;
 };
-

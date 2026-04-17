@@ -79,7 +79,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     if (isAuthenticated) {
         return (
             <>
-                <AppBar position="static" color="transparent" elevation={0}>
+                <AppBar position="static" color="transparent" elevation={0} sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
                     <Typography
                         variant="h5"
                         margin={2}

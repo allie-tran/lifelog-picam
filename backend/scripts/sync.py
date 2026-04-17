@@ -59,11 +59,15 @@ def sync_images(session, device: str):
         index_to_postgres(session, device, image, skip_segmentation=True)
     extra_in_postgres = postgres_image_paths - raw_images
     print(f"Extra in Postgres: {len(extra_in_postgres)}")
-    session.execute(
-        delete(Image).where(
-            Image.device == device, Image.image_path.in_(extra_in_postgres)
+    batch_size = 2000
+    extra_in_postgres = list(extra_in_postgres)
+    for i in tqdm(range(0, len(extra_in_postgres), batch_size), desc="Removing extra in Postgres"):
+        batch = extra_in_postgres[i : i + batch_size]
+        session.execute(
+            delete(Image).where(
+                Image.device == device, Image.image_path.in_(batch)
+            )
         )
-    )
     session.commit()
     print("-" * 30)
 
@@ -120,10 +124,11 @@ def sync_images(session, device: str):
     # 6. Base on raw_images, find the extra ones in mongo and zvec
     extra_in_thumbnail = thumbnail_images - raw_images
     print(f"Extra in Thumbnail: {len(extra_in_thumbnail)}")
-    for image in tqdm(extra_in_thumbnail):
-        thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image.replace('.jpg', '.webp')}"
-        if os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
+    print(list(extra_in_thumbnail)[:10])
+    # for image in tqdm(extra_in_thumbnail):
+    #     thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image.replace('.jpg', '.webp')}"
+    #     if os.path.exists(thumbnail_path):
+    #         os.remove(thumbnail_path)
 
     # extra_in_embedding = session.execute(
     #     select(Image.image_path)

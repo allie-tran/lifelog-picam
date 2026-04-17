@@ -328,10 +328,3 @@ export const addAnnotation = async (
     );
     return response.data;
 }
-
-export const getAllFaces = async (deviceId: string) => {
-    const response = await axios.get(
-        `${BACKEND_URL}/all-faces?device=${encodeURIComponent(deviceId)}`
-    );
-    return response.data as { name: string; images: string[] }[];
-}

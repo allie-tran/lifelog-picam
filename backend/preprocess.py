@@ -35,7 +35,7 @@ def retrieve_image(session, device_id: str, text: str, sort_by, k):
     filters = query.time_to_filters()
 
     emb = search_model.encode_text(text)
-    emb = apply_transformation(emb, get_matrix(session, device_id))
+    # emb = apply_transformation(emb, get_matrix(session, device_id))
     records = search_by_embedding(session, emb, device_id, k, sort_by, filters=filters)
 
     # group by segment id

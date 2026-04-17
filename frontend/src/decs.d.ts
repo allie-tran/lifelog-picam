@@ -1,1 +1,1 @@
- declare module "react-leaflet-ant-path"
+ declare module "leaflet-area-select"

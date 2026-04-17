@@ -154,7 +154,6 @@ def yolo_process_images_task(
                     "confidence": person["confidence"],
                     "bbox": person["bbox"],
                     "embedding": person["embedding"],
-                    "cluster_label": None,
                 }
             )
         image_rows.append(relative_path)

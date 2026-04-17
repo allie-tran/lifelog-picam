@@ -60,6 +60,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                         label=class_name,
                         confidence=float(conf),
                         bbox=[x1, y1, x2, y2],
+                        rel_bbox=[x1 / w, y1 / h, x2 / w, y2 / h],
                     )
                 )
                 if class_name == "person":
@@ -74,6 +75,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                             face_bbox[2] + x1,
                             face_bbox[3] + y1,
                         ]
+                        adjusted_bbox = [max(0, adjusted_bbox[0]), max(0, adjusted_bbox[1]), min(w, adjusted_bbox[2]), min(h, adjusted_bbox[3])]
 
                         label = "redacted face"
                         confidence = float(face.confidence)
@@ -94,6 +96,12 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                                 label=label,
                                 confidence=confidence,
                                 bbox=adjusted_bbox,
+                                rel_bbox=[
+                                    adjusted_bbox[0] / w,
+                                    adjusted_bbox[1] / h,
+                                    adjusted_bbox[2] / w,
+                                    adjusted_bbox[3] / h,
+                                ],
                                 embedding=face.embedding,
                             )
                         )

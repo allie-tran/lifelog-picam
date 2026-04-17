@@ -207,7 +207,7 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
             direction="row"
             spacing={2}
             alignItems="flex-start"
-            sx={{ display: visible ? 'flex' : 'none', width: '100%', pt: 1 }}
+            sx={{ display: visible ? 'flex' : 'none', width: 300, pt: 1 }}
         >
             <ModalWithCloseButton
                 open={visualised !== ''}
@@ -267,8 +267,8 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                 >
                     <Box
                         sx={{
-                            height: 300,
-                            width: 400,
+                            height: 200,
+                            width: 300,
                             backgroundColor: webcamRef.current
                                 ? 'transparent'
                                 : 'rgb(220, 220, 220, 0.5)',
@@ -283,8 +283,8 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                                     src={url}
                                     alt="Captured"
                                     sx={{
-                                        maxWidth: '400px',
-                                        maxHeight: '300px',
+                                        maxWidth: '300px',
+                                        maxHeight: '200px',
                                         objectFit: 'contain',
                                         margin: 'auto',
                                         display: 'block',
