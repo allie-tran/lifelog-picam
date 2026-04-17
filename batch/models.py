@@ -299,12 +299,23 @@ class ImageGPS(Base):
 
     image = relationship("Image", back_populates="gps")
 
+class PeopleCluster(Base):
+    __tablename__ = "people_clusters"
+    __table_args__ = (
+        Index("ix_people_clusters_label", "cluster_label"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    center_embedding = Column(Vector(512), nullable=False)
+    cluster_label = Column(Text, primary_key=True)
+
+    # The relationship to the people
+    people = relationship("ImagePerson", back_populates="cluster")
 
 class ImagePerson(Base):
     __tablename__ = "image_people"
     __table_args__ = (
         Index("ix_people_image", "image_id"),
-        Index("ix_people_cluster", "cluster_label"),
         Index(
             "ix_people_embedding",
             "embedding",
@@ -320,10 +331,15 @@ class ImagePerson(Base):
     label = Column(Text)
     confidence = Column(Float)
     bbox = Column(JSONB)
-    cluster_label = Column(Integer, nullable=True)
+    rel_bbox = Column(JSONB)
     embedding = Column(Vector(512), nullable=True)
+    cluster_id = Column(UUID(as_uuid=True), ForeignKey("people_clusters.id", ondelete="SET NULL"), nullable=True)
 
     image = relationship("Image", back_populates="people")
+    cluster = relationship(
+        "PeopleCluster",
+        back_populates="people",
+    )
 
 
 class ImageObject(Base):
@@ -340,8 +356,10 @@ class ImageObject(Base):
     label = Column(Text)
     confidence = Column(Float)
     bbox = Column(JSONB)
+    rel_bbox = Column(JSONB)
 
     image = relationship("Image", back_populates="objects")
+
 
 
 class ImageOCR(Base):
