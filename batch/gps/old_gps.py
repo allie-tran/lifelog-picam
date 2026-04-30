@@ -1,8 +1,10 @@
+import os
 from datetime import timezone
 from tqdm import tqdm
 from pymongo import MongoClient
 import pandas as pd
 from timezonefinder import TimezoneFinder
+from datetime import datetime
 
 local_client = MongoClient('mongodb://localhost:27017/')
 old_lsc_db = local_client['LSC24_new']['images']
@@ -20,12 +22,13 @@ def move_date(date_str):
     images = old_lsc_db.find({"date": date_str})
     images = list(images)  # Convert cursor to list for multiple iterations
     date = date_str.replace("/", "-")
-
     all_entries = []
     for image in tqdm(images, desc=f"Moving images for {date_str}"):
-        utc_time = image["time"].replace(tzinfo=timezone.utc)
-        new_name = utc_time.strftime("%Y%m%d_%H%M%S")
-        assert utc_time.timestamp() == image["timestamp"], "Timestamps do not match!"
+        image_path = image['image']
+        old_name = os.path.basename(image_path)
+        time = datetime.strptime(old_name.split(".")[0], "%Y%m%d_%H%M%S_%f")
+        utc_time = time.replace(tzinfo=timezone.utc)
+        new_name = time.strftime("%Y%m%d_%H%M%S")
 
         # Update the database entry
         new_entry = {

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from PIL import Image as PILImage
 from pymongo import MongoClient
 from scipy.stats import ortho_group
-from sqlalchemy import cast, create_engine, select, Float, delete, update, or_
+from sqlalchemy import Float, cast, create_engine, delete, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 from tqdm import tqdm
 
@@ -38,6 +38,7 @@ engine = create_engine(PG_URI)
 mongo_client = MongoClient("mongodb://localhost:27018/")
 collection = mongo_client["picam"]["images"]
 
+
 def cap_bbox(bbox, img_width, img_height):
     x_min, y_min, x_max, y_max = bbox
     return [
@@ -46,6 +47,7 @@ def cap_bbox(bbox, img_width, img_height):
         max(0, min(x_max, img_width)),
         max(0, min(y_max, img_height)),
     ]
+
 
 def relative_bbox(bbox, img_width, img_height):
     x_min, y_min, x_max, y_max = bbox
@@ -59,6 +61,7 @@ def relative_bbox(bbox, img_width, img_height):
         round(x_max / img_width, 4),
         round(y_max / img_height, 4),
     ]
+
 
 def absolute_bbox(bbox, img_width, img_height):
     x_min, y_min, x_max, y_max = bbox
@@ -77,16 +80,31 @@ def absolute_bbox(bbox, img_width, img_height):
 
 BATCH_SIZE = 10000
 
+
 def update_bounding_boxes(device, date):
     with Session(engine) as session:
-        stmt = select(Image).options(
-            selectinload(Image.people), selectinload(Image.objects)
-        ).where(Image.device == device, Image.date == date)
+        stmt = (
+            select(Image)
+            .outerjoin(Image.people)
+            .outerjoin(Image.objects)
+            .options(selectinload(Image.people), selectinload(Image.objects))
+            .where(
+                Image.device == device,
+                Image.date == date,
+                or_(ImagePerson.rel_bbox.is_(None), ImageObject.rel_bbox.is_(None)),
+            )
+            .distinct()
+        )
 
         images = session.execute(stmt).scalars().all()
 
         people_rows = []
         object_rows = []
+
+        images = [img for img in images if (img.people and any(p.rel_bbox is None for p in img.people)) or (img.objects and any(o.rel_bbox is None for o in img.objects))]
+        if not images:
+            print(f"No images with missing bounding boxes for {device} {date}")
+            return
 
         for img in tqdm(images, desc=f"Updating bounding boxes for {device} {date}"):
             img_path = os.path.join(SRC_DIR, img.device, img.image_path)
@@ -94,6 +112,8 @@ def update_bounding_boxes(device, date):
 
             if img.objects:
                 for obj in img.objects:
+                    if obj.bbox is None:
+                        continue
                     original_bbox = obj.bbox
                     rel_bbox = relative_bbox(original_bbox, w, h)
                     rel_bbox = cap_bbox(rel_bbox, 1.0, 1.0)
@@ -106,6 +126,8 @@ def update_bounding_boxes(device, date):
 
             if img.people:
                 for person in img.people:
+                    if person.rel_bbox:
+                        continue
                     original_bbox = person.bbox
                     rel_bbox = relative_bbox(original_bbox, w, h)
                     rel_bbox = cap_bbox(rel_bbox, 1.0, 1.0)

@@ -197,6 +197,8 @@ class Image(Base):
         Index("ix_images_device_ref", "device_ref_id"),
         Index("ix_images_deleted", "deleted"),
         Index("ix_images_deleted_time", "deleted_time"),
+        # constraint: (device, image_path) should be unique to prevent duplicates from the same device
+        UniqueConstraint("device", "image_path", name="uq_device_image_path"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -230,6 +232,8 @@ class Image(Base):
     proc_insightface = Column(Boolean, default=False)
     proc_face_recognition = Column(Boolean, default=False)
     proc_sam3 = Column(Boolean, default=False)
+    width = Column(Integer)
+    height = Column(Integer)
 
     location = relationship("Location", back_populates="images")
     device_ref = relationship("Device", back_populates="images")
@@ -318,6 +322,7 @@ class ImagePerson(Base):
     __tablename__ = "image_people"
     __table_args__ = (
         Index("ix_people_image", "image_id"),
+        Index("ix_people_id", "id"),
         Index(
             "ix_people_embedding",
             "embedding",
