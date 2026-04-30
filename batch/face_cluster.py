@@ -9,8 +9,9 @@ import piexif
 from dotenv import load_dotenv
 from PIL import Image as PILImage
 from scipy.stats import ortho_group
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, insert, select, update
 from sqlalchemy.orm import Session, selectinload
+from collections import defaultdict
 from tqdm import tqdm
 import glob
 from names_generator import generate_name
@@ -33,18 +34,16 @@ engine = create_engine(PG_URI)
 DEVICE = "cathal"
 
 def load_embeddings():
-    with Session(engine) as session:
-        stmt = select(Image).options(selectinload(Image.people)).where(Image.device == DEVICE)
-        images = session.execute(stmt).scalars().all()
-
     image_embeddings = []
     person_ids = []
-    for img in tqdm(images, desc="Loading embeddings"):
-        if img.people:
-            for person in img.people:
-                if person.embedding is not None and person.confidence is not None and person.confidence >= 0.5:
-                    image_embeddings.append(person.embedding)
-                    person_ids.append(person.id)
+    with Session(engine) as session:
+        stmt = select(ImagePerson).where(ImagePerson.confidence >= 0.5).where(ImagePerson.embedding != None)
+        people = session.execute(stmt).scalars().all()
+        for person in tqdm(people, desc="Loading embeddings"):
+            embedding = person.embedding
+            if embedding is not None:
+                image_embeddings.append(embedding)
+                person_ids.append(person.id)
 
     return np.array(image_embeddings), person_ids
 
@@ -86,51 +85,43 @@ def main():
     centroids, cluster_labels = cluster_embeddings(embeddings, n_clusters=20)
 
     print("Saving cluster centroids to database...")
-    cluster_to_id = {}
+    cluster_label_to_cluster_id = {}
     with Session(engine) as session:
         for i, centroid in enumerate(centroids):
             name = generate_name()
+            name = name.replace("_", " ").title()
             cluster = {
                 "center_embedding": centroid.tolist(),
                 "cluster_label": name
             }
             stmt = insert(PeopleCluster).values(**cluster).returning(PeopleCluster.id)
-            cluster_id = session.execute(stmt).scalar_one()
-            cluster_to_id[i] = cluster_id
+            cluster_sql_id = session.execute(stmt).scalar_one()
+            cluster_label_to_cluster_id[i] = cluster_sql_id
         session.commit()
         print(f"Saved {len(centroids)} cluster centroids to database.")
 
-    print("Visualizing clusters...")
-    visualize_clusters(embeddings, cluster_labels)
-
     print("Updating database with cluster labels...")
-    cluster_to_name = {}
-    to_updates = []
+    cluster_to_person_ids = defaultdict(list)
+    for person_id, cluster_label in zip(person_ids, cluster_labels):
+        cluster_to_person_ids[cluster_label].append(person_id)
 
-    total = len(person_ids)
-    update_count = 0
     with Session(engine) as session:
-        for person_id, cluster_label in zip(person_ids, cluster_labels):
-            stmt = select(ImagePerson).where(ImagePerson.id == person_id)
-            person = session.execute(stmt).scalar_one()
-            if cluster_label not in cluster_to_name:
-                cluster_to_name[cluster_label] = generate_name()
-
-            person.label = cluster_to_name[cluster_label]
-            person.cluster_id = cluster_to_id[cluster_label]
-            to_updates.append(person)
-
-            if len(to_updates) >= 100:
-                session.bulk_save_objects(to_updates)
-                session.commit()
-                to_updates = []
-                update_count += 100
-                print(f"Updated {update_count}/{total} people...")
-
-        if to_updates:
-            session.bulk_save_objects(to_updates)
+        batch_size = 1000
+        for cluster_label, person_ids in cluster_to_person_ids.items():
+            cluster_sql_id = cluster_label_to_cluster_id[cluster_label]
+            name = generate_name()
+            name = name.replace("_", " ").title()
+            print(f"Updating cluster {cluster_sql_id} ({name}) with {len(person_ids)} people...")
+            for i in range(0, len(person_ids), batch_size):
+                batch_ids = person_ids[i:i+batch_size]
+                stmt = (
+                    update(ImagePerson)
+                    .where(ImagePerson.id.in_(batch_ids))
+                    .values(cluster_id=cluster_sql_id, label=name)
+                )
+                session.execute(stmt)
+                print(f"Updated {min(i + batch_size, len(person_ids))}/{len(person_ids)} people in cluster {cluster_sql_id}...")
             session.commit()
-            print(f"Updated {update_count + len(to_updates)}/{total} people...")
 
 if __name__ == "__main__":
     main()

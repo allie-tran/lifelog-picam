@@ -19,7 +19,8 @@ Requirements:
 
 import os
 import ast
-from collections import defaultdict
+import json
+from collections import defaultdict, Counter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -44,6 +45,8 @@ CHUNK = 1000
 load_dotenv()
 PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/lsc24")
 engine = create_engine(PG_URI)
+
+COUNTRY_BOUNDING_BOXES = json.load(open("country-bounding-boxes.json"))
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 from tqdm.auto import tqdm
@@ -93,6 +96,32 @@ def add_null_address(loc):
         loc["address"] = ", ".join(region) if region else loc["country"]
     return loc["address"]
 
+def change_country(country):
+    if len(country) == 2:
+        data = COUNTRY_BOUNDING_BOXES.get(country.upper())
+        if data:
+            return data[0]
+    if "[" in country:
+        countries = safe_parse(country)
+        if countries:
+            countries = [c.strip() for c in countries if c.strip()]
+            countries = [change_country(c) for c in countries]
+            countries = [c for c in countries if c]
+            return " → ".join(countries)
+        return country
+    if not country:
+        return ""
+    return country
+
+def find_best_value_for_group(all_places):
+    first_place = all_places[0]
+    for key in ["name", "country", "fsq_place_id", "address", "is_stop", "categories"]:
+        most_common = Counter(place[key] for place in all_places if place[key] not in [None, "", "None", "Unknown Place"])
+        if most_common:
+            best_val, count = most_common.most_common(1)[0]
+            first_place[key] = best_val
+    return first_place
+
 def run_segments():
     print(
         f"Loading segments from {SEGMENTS_FILE} and image GPS data from {GPS_FILE}..."
@@ -100,10 +129,19 @@ def run_segments():
     segments = pd.read_csv(SEGMENTS_FILE, sep=";")
     segments = segments.fillna("")
     segments["address"] = segments.apply(add_null_address, axis=1)
+
+    test = segments[segments["fsq_place_id"] == "4d1dc0fc0901721e70327ba5"]
+    print(test)
+    exit()
+
+
+
+    segments["country"] = segments["country"].apply(change_country)
     image_gps = pd.read_csv(GPS_FILE)
 
     # set segment_id as index
     image_gps.set_index("segment_id", inplace=True)
+
     segments["key"] = segments.apply(
         lambda row: create_key(
             row["fsq_place_id"],
@@ -122,6 +160,7 @@ def run_segments():
 
     old_gps = pd.read_csv(OLD_GPS, sep=";")
     old_gps = old_gps.fillna("")
+    old_gps["country"] = old_gps["country"].apply(change_country)
     old_gps["address"] = old_gps.apply(add_null_address, axis=1)
     old_gps["key"] = old_gps.apply(
         lambda row: create_key(
@@ -140,7 +179,11 @@ def run_segments():
 
     with Session(engine) as session:
         for key in tqdm(all_places, desc="Inserting locations"):
-            first_place = all_places[key][0]
+            first_place = find_best_value_for_group(all_places[key])
+            if first_place["fsq_place_id"] == "4d1dc0fc0901721e70327ba5":
+                print(all_places[key])
+
+            continue
             all_segment_ids = set(seg["segment_id"] for seg in all_places[key])
             images_to_update = image_gps[
                 image_gps.index.isin(all_segment_ids)
@@ -148,6 +191,16 @@ def run_segments():
             # add old image_path in old_gps that match the key
             old_images = old_gps[old_gps["key"] == key].image_path.tolist()
             images_to_update += old_images
+
+            lat = image_gps[image_gps.index.isin(all_segment_ids)].latitude.mean()
+            lon = image_gps[image_gps.index.isin(all_segment_ids)].longitude.mean()
+
+
+            # if first_place["country"] == "":
+            #     print("I don''t know why this happens but it does")
+            #     if "DCU" in first_place["name"]:
+            #         print(first_place)
+            # continue
 
             stmt = insert(Location).values(
                 key=key,
@@ -158,12 +211,23 @@ def run_segments():
                 stop=first_place["is_stop"] == 1,
                 timezone=first_place["timezone"],
                 address=first_place["address"],
+                latitude=lat,
+                longitude=lon,
             )
 
             stmt = stmt.on_conflict_do_update(
                 index_elements=["key"],
                 set_={
                     "key": stmt.excluded.key,
+                    "latitude": stmt.excluded.latitude,
+                    "country": stmt.excluded.country,
+                    "longitude": stmt.excluded.longitude,
+                    "name": stmt.excluded.name,
+                    "fsq_id": stmt.excluded.fsq_id,
+                    "info": stmt.excluded.info,
+                    "stop": stmt.excluded.stop,
+                    "timezone": stmt.excluded.timezone,
+                    "address": stmt.excluded.address,
                 },
             ).returning(Location.id)
 
@@ -188,7 +252,6 @@ def run_segments():
                     )
                     .first()
                 )
-
                 print(
                     f"Conflict detected for {key}. Fetched existing location with ID: {existing.id if existing else 'None'}"
                 )
