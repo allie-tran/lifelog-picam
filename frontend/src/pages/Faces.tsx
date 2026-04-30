@@ -10,7 +10,6 @@ import {
     Typography,
 } from '@mui/material';
 import { getWhiteList, removeFromWhiteList } from 'apis/browsing';
-import FaceClusters from 'components/FaceClusters';
 import FaceEnroll from 'components/FaceEnroll';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React, { useEffect } from 'react';

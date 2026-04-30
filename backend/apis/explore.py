@@ -71,9 +71,53 @@ def get_locations(
     for loc, display_name in res:
         loc_info = LocationInfo.model_validate(loc.__dict__)
         loc_info.name = display_name
+        loc_info.id = str(loc_info.id)
         locations.append(loc_info)
 
     return locations
+
+@app.post("/get-moving-periods")
+def get_moving_periods(
+    device: str,
+    request: ValuesRequest,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    extra_params = request.extra_params
+
+    country_filter = extra_params.get("country")
+    display_name = case(
+        (Location.name.in_(["---", "Unknown Place", ""]), Location.address),
+        else_=Location.name
+    ).label("display_name")
+
+    stmt = (
+        select(Location, display_name)
+        .join(ImageModel, ImageModel.location_id == Location.id)
+        .where(ImageModel.device == device)
+        .where(Location.stop == False)
+    )
+    if country_filter:
+        stmt = stmt.where(Location.country.in_(country_filter))
+
+    stmt = (stmt
+        .group_by(Location.id)
+        .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+        .limit(20)
+    )
+
+    res = session.execute(stmt).fetchall()
+
+    locations = []
+    for loc, display_name in res:
+        loc_info = LocationInfo.model_validate(loc.__dict__)
+        loc_info.name = display_name
+        locations.append(loc_info)
+
+    return locations
+
+
 
 @app.post("/available-values")
 def available_values(
@@ -122,6 +166,17 @@ def available_values(
                 .where(Location.stop == True)
                 .limit(20)
             )
+        case "moving-cross-country":
+            stmt = (
+                select(Location.country)
+                .join(ImageModel, ImageModel.location_id == Location.id)
+                .where(ImageModel.device == device)
+                .group_by(Location.country)
+                .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+                .where(Location.country != None, Location.country != "")
+                .where(Location.stop == False)
+                .limit(20)
+            )
         case "year":
             stmt = select(ImageModel.year).where(ImageModel.device == device).distinct()
 
@@ -146,6 +201,7 @@ def get_all_faces(
     # get actual images for each person
     for cluster in clusters:
         face = {
+            "id" : str(cluster.id),
             "name": cluster.cluster_label,
             "images": []
         }

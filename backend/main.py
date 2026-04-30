@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
 from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage,  ResultSegment
+from app_types.search import SearchQuery
 from auth import auth_app, _require_admin, _require_any_access, _require_owner
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_token
@@ -36,7 +37,7 @@ from ingest import app as ingest_app
 from pipelines.all import process_video, process_image
 from pipelines.delete import mark_error, remove_physical_images
 from pipelines.hourly import update_app
-from preprocess import get_similar_images, load_features, retrieve_image
+from preprocess import get_similar_images, load_features, retrieve_image_with_filters
 from scripts.anonymise import blur_image_gaussian,  segment_image_with_sam
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
@@ -660,23 +661,31 @@ def get_all_dates(
     return sorted(dates)
 
 
-@app.get("/search-images")
+@app.post("/search-images")
 def search(
-    query: str,
     device: str,
+    request: SearchQuery,
     sort_by: str = "relevance",
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
 
-    if not query:
+    print(f"Received search query for device {device}: {request}")
+    if request.empty:
         return []
 
-    return retrieve_image(
+    # return retrieve_image(
+    #     session,
+    #     device,
+    #     request.text,
+    #     sort_by,
+    #     k=1000,
+    # )
+    return retrieve_image_with_filters(
         session,
         device,
-        query,
+        request,
         sort_by,
         k=1000,
     )

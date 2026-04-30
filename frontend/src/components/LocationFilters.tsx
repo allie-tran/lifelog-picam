@@ -1,4 +1,8 @@
-import { getAvailableValues, getLocations } from '@apis/searchFilters';
+import {
+    getAvailableValues,
+    getLocations,
+    getMovingPeriods,
+} from '@apis/searchFilters';
 import {
     Box,
     Button,
@@ -11,21 +15,25 @@ import {
     MenuItem,
     Select,
     Stack,
-    Tab,
     Typography,
-    styled
 } from '@mui/material';
 import countryBoundingBoxes from 'country-bounding-boxes.json';
 import { useCallback, useEffect, useState } from 'react';
-import { useAppSelector } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
+import { setSearchQuery } from 'reducers/search';
 // { countryCode: [countryName, [minLat, minLng, maxLat, maxLng]] }
 
 const countryNameToBounds: Record<string, number[]> = {};
 for (const entry of Object.values(countryBoundingBoxes)) {
     const [countryName, bounds] = entry as [string, number[]];
-    countryNameToBounds[countryName] = [bounds[3], bounds[0], bounds[1], bounds[2]]; // Convert to [minLat, minLng, maxLat, maxLng]
+    countryNameToBounds[countryName] = [
+        bounds[3],
+        bounds[0],
+        bounds[1],
+        bounds[2],
+    ]; // Convert to [minLat, minLng, maxLat, maxLng]
 }
 
 const getCountryBounds = (countries: string[]) => {
@@ -40,39 +48,45 @@ const getCountryBounds = (countries: string[]) => {
     const maxLat = Math.max(...boundsList.map((b) => b[2]));
     const maxLng = Math.max(...boundsList.map((b) => b[3]));
     return [minLat, minLng, maxLat, maxLng] as [number, number, number, number];
-}
+};
 
 const LocationFiltersHook = () => {
+    const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId);
-    const [locations, setLocations] = useState<string[]>([]);
-    const [countries, setCountries] = useState<string[]>([]);
-    const [bounds, setBounds] = useState<
-        [number, number, number, number] | null
-    >(null);
-
+    const { isMoving, countries, locationIds, bounds } = useAppSelector(
+        (state) => state.search.query
+    );
     const [visualBounds, setVisualBounds] = useState<
         [number, number, number, number] | null
     >(null);
 
     const { data: availableCountries } = useSWR(
-        [deviceId, 'country'],
-        async () => getAvailableValues(deviceId, 'country'),
+        [deviceId, isMoving, 'country'],
+        async () =>
+            getAvailableValues(
+                deviceId,
+                isMoving ? 'moving-cross-country' : 'country'
+            ),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
     const { data: availableLocations } = useSWR(
-        [deviceId, 'location', countries],
-        async () => getLocations(deviceId, countries),
+        [deviceId, 'location', countries, isMoving],
+        async () =>
+            isMoving
+                ? getMovingPeriods(deviceId, countries)
+                : getLocations(deviceId, countries),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
     useEffect(() => {
         const newBounds = getCountryBounds(countries);
         setVisualBounds(newBounds);
-        setLocations([]); // Clear locations when countries change
+        dispatch(setSearchQuery({ locationIds: [] }));
     }, [countries]);
 
-    const nothingIsSelected = locations.length === 0 && countries.length === 0 && bounds === null;
+    const nothingIsSelected =
+        locationIds.length === 0 && countries.length === 0 && bounds === null;
 
     const renderFilterOptions = () => (
         <Box>
@@ -88,17 +102,27 @@ const LocationFiltersHook = () => {
                     />
                 )}
             </Stack>
-            <FormControl sx={{ mt: 1, minWidth: 200 }}>
+            <CheckboxWithText
+                label="On the Move"
+                checked={isMoving}
+                onChange={(checked) =>
+                    dispatch(setSearchQuery({ isMoving: checked }))
+                }
+            />
+            <FormControl sx={{ mt: 1, width: '100%' }}>
                 <InputLabel id="country-select-label">Countries</InputLabel>
                 <Select
                     labelId="country-select-label"
                     multiple
                     value={countries}
                     onChange={(e) =>
-                        setCountries(
-                            typeof e.target.value === 'string'
-                                ? e.target.value.split(',')
-                                : e.target.value
+                        dispatch(
+                            setSearchQuery({
+                                countries:
+                                    typeof e.target.value === 'string'
+                                        ? e.target.value.split(',')
+                                        : e.target.value,
+                            })
                         )
                     }
                     renderValue={(selected) => selected.join(', ')}
@@ -111,24 +135,34 @@ const LocationFiltersHook = () => {
                     ))}
                 </Select>
             </FormControl>
-            <FormControl sx={{ mt: 1, minWidth: 200 }}>
+            <FormControl sx={{ mt: 1, width: '100%' }}>
                 <InputLabel id="location-select-label">Locations</InputLabel>
                 <Select
                     labelId="location-select-label"
                     multiple
-                    value={locations}
+                    value={locationIds}
                     onChange={(e) =>
-                        setLocations(
-                            typeof e.target.value === 'string'
-                                ? e.target.value.split(',')
-                                : e.target.value
+                        dispatch(
+                            setSearchQuery({
+                                locationIds:
+                                    typeof e.target.value === 'string'
+                                        ? e.target.value.split(',')
+                                        : e.target.value,
+                            })
                         )
                     }
-                    renderValue={(selected) => selected.join(', ')}
+                    renderValue={(selected) =>
+                        availableLocations
+                            ?.filter((loc) => selected.includes(loc.id as string))
+                            .map((loc) => loc.name)
+                            .join(', ') || ''
+                    }
                 >
-                    {availableLocations?.map((loc, idx) => (
-                        <MenuItem key={idx} value={loc.name}>
-                            <Checkbox checked={locations.includes(loc.name)} />
+                    {availableLocations?.map((loc) => (
+                        <MenuItem key={loc.id} value={loc.id}>
+                            <Checkbox
+                                checked={locationIds.includes(loc.id as string)}
+                            />
                             <ListItemText primary={loc.name} />
                         </MenuItem>
                     ))}
@@ -139,15 +173,20 @@ const LocationFiltersHook = () => {
 
     const handleAddBound = useCallback(
         (minLat: number, minLng: number, maxLat: number, maxLng: number) => {
-            setBounds([minLat, minLng, maxLat, maxLng]);
+            dispatch(
+                setSearchQuery({ bounds: [minLat, minLng, maxLat, maxLng] })
+            );
         },
         []
     );
 
     const renderMap = () => {
-        return <MapSearch 
-            visualBounds={visualBounds}
-        onBoundsChange={handleAddBound} />;
+        return (
+            <MapSearch
+                visualBounds={visualBounds}
+                onBoundsChange={handleAddBound}
+            />
+        );
     };
 
     const renderClearButton = () => {
@@ -158,9 +197,14 @@ const LocationFiltersHook = () => {
                 color="primary"
                 sx={{ mt: 2 }}
                 onClick={() => {
-                    setCountries([]);
-                    setLocations([]);
-                    setBounds(null);
+                    dispatch(
+                        setSearchQuery({
+                            isMoving: false,
+                            countries: [],
+                            locationIds: [],
+                            bounds: null,
+                        })
+                    );
                     setVisualBounds(null);
                 }}
             >
@@ -176,70 +220,6 @@ const LocationFiltersHook = () => {
         nothingIsSelected,
     };
 };
-
-const ListOfCheckBoxes = ({
-    options,
-    selectedOptions,
-    onChange,
-}: {
-    options: string[];
-    selectedOptions: string[];
-    onChange: (selected: string[]) => void;
-}) => {
-    return (
-        <Grid container spacing={1} mt={1}>
-            <CheckboxWithText
-                label="All"
-                checked={selectedOptions.length === options.length}
-                onChange={(checked) => {
-                    if (checked) {
-                        onChange(options);
-                    } else {
-                        onChange([]);
-                    }
-                }}
-            />
-            {options.map((option) => (
-                <CheckboxWithText
-                    key={option}
-                    label={option}
-                    checked={selectedOptions.includes(option)}
-                    onChange={(checked) => {
-                        if (checked) {
-                            onChange([...selectedOptions, option]);
-                        } else {
-                            onChange(
-                                selectedOptions.filter((o) => o !== option)
-                            );
-                        }
-                    }}
-                />
-            ))}
-            <CheckboxWithText
-                label="None"
-                disabled={selectedOptions.length === 0}
-                checked={false}
-                onChange={(checked) => {
-                    if (checked) {
-                        onChange([]);
-                    }
-                }}
-            />
-        </Grid>
-    );
-};
-
-const StyledTab = styled(Tab)({
-    borderRadius: '8px px 0 0',
-    marginRight: '4px',
-    fontSize: '12px',
-    minHeight: '32px',
-    padding: '4px 12px',
-    '&.Mui-selected': {
-        backgroundColor: 'primary.main',
-        color: 'primary.contrastText',
-    },
-});
 
 const CheckboxWithText = ({
     label,

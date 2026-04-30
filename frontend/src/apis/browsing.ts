@@ -1,6 +1,14 @@
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { ActionType, CustomGoal, GPSData, ImageObject, Point, ResultSegment } from 'utils/types';
+import {
+    ActionType,
+    CustomGoal,
+    GPSData,
+    ImageObject,
+    Point,
+    ResultSegment,
+    SearchQuery,
+} from 'utils/types';
 import { getCookie, parseErrorResponse } from 'utils/misc';
 
 axios.defaults.headers.common['Authorization'] = `Bearer ${getCookie('token')}`;
@@ -76,16 +84,12 @@ export const getImagesByRange = async (
     return response.data as ImageObject[];
 };
 
-export const getContextImages = async (
-    device: string,
-    imagePath: string,
-) => {
+export const getContextImages = async (device: string, imagePath: string) => {
     const response = await axios.get(
         `${BACKEND_URL}/get-context-images?device=${encodeURIComponent(device)}&image=${encodeURIComponent(imagePath)}`
     );
     return response.data as ResultSegment[];
-}
-
+};
 
 export const getImage = async (deviceId: string, filename: string) => {
     const response = await axios.get(
@@ -104,11 +108,14 @@ export const getAllDates = async (deviceId: string) => {
 
 export const searchImages = async (
     deviceId: string,
-    query: string,
+    query: SearchQuery,
     sortBy: 'time' | 'relevance' = 'time'
 ) => {
-    const response = await axios.get(
-        `${BACKEND_URL}/search-images?query=${query}&device=${encodeURIComponent(deviceId)}&sort_by=${sortBy}`
+    const response = await axios.post(
+        `${BACKEND_URL}/search-images?device=${encodeURIComponent(deviceId)}&sort_by=${sortBy}`,
+        {
+            ...query,
+        }
     );
     return response.data as ImageObject[][];
 };
@@ -299,7 +306,7 @@ export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
             visualisation: string;
             masks: string[];
             bboxes: [number, number, number, number][];
-        }
+        };
     } catch (error) {
         console.error('Segmentation failed', error);
         return {
@@ -327,4 +334,4 @@ export const addAnnotation = async (
         }
     );
     return response.data;
-}
+};

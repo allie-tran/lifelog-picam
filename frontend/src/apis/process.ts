@@ -9,10 +9,11 @@ export const processDate = async (deviceId: string, dateString: string, resegmen
     return response.data;
 }
 
-export const changeSegmentActivity = async (deviceId: string, segmentId: number, newActivityInfo: string) => {
+export const changeSegmentActivity = async (deviceId: string, date: string, segmentId: number, newActivityInfo: string) => {
     const response = await axios.post(
         `${BACKEND_URL}/change-segment-activity?device=${encodeURIComponent(deviceId)}`,
         {
+            date,
             segmentId,
             newActivityInfo,
         }

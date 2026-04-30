@@ -24,22 +24,22 @@ import {
 import TimeHeatmap from './TimeHeatmap';
 import useSWR from 'swr';
 import { getAvailableValues } from '@apis/searchFilters';
-import { useAppSelector } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setSearchQuery } from 'reducers/search';
 
 const TemporalFiltersHook = () => {
+    const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId);
     const [tabIndex, setTabIndex] = useState(0);
-    const [timeOfDay, setTimeOfDay] = useState<TimeOfDay[]>([]);
-    const [dayOfWeek, setDayOfWeek] = useState<DayOfWeek[]>([]);
-    const [season, setSeason] = useState<Season[]>([]);
-    const [month, setMonth] = useState<Month[]>([]);
-    const [year, setYear] = useState<number[]>([]);
     const [currentYear, setCurrentYear] = useState<number>(
         new Date().getFullYear()
     );
     const [customCells, setCustomCells] = useState<
         Set<{ row: number; col: number; value: number }>
     >(new Set());
+    const { timeOfDays, dayOfWeeks, seasons, months, years } = useAppSelector(
+        (state) => state.search.query
+    );
 
     const { data: availableYears } = useSWR([deviceId, 'year'], async () => {
         const years = await getAvailableValues(deviceId, 'year');
@@ -50,19 +50,19 @@ const TemporalFiltersHook = () => {
     });
 
     const nothingIsSelected =
-        timeOfDay.length === 0 &&
-        dayOfWeek.length === 0 &&
-        season.length === 0 &&
-        month.length === 0 &&
-        year.length === 0 &&
+        timeOfDays.length === 0 &&
+        dayOfWeeks.length === 0 &&
+        seasons.length === 0 &&
+        months.length === 0 &&
+        years.length === 0 &&
         customCells.size === 0;
 
     const noFiltersSelected =
-        timeOfDay.length === 0 &&
-        dayOfWeek.length === 0 &&
-        season.length === 0 &&
-        month.length === 0 &&
-        year.length === 0;
+        timeOfDays.length === 0 &&
+        dayOfWeeks.length === 0 &&
+        seasons.length === 0 &&
+        months.length === 0 &&
+        years.length === 0;
 
     const renderFilterOptions = () => (
         <Box>
@@ -88,41 +88,57 @@ const TemporalFiltersHook = () => {
             {tabIndex === 0 && (
                 <ListOfCheckBoxes
                     options={timeOfDayOptions}
-                    selectedOptions={timeOfDay}
+                    selectedOptions={timeOfDays}
                     onChange={(selected) =>
-                        setTimeOfDay(selected as TimeOfDay[])
+                        dispatch(
+                            setSearchQuery({
+                                timeOfDays: selected as TimeOfDay[],
+                            })
+                        )
                     }
                 />
             )}
             {tabIndex === 1 && (
                 <ListOfCheckBoxes
                     options={dayOfWeekOptions}
-                    selectedOptions={dayOfWeek}
+                    selectedOptions={dayOfWeeks}
                     onChange={(selected) =>
-                        setDayOfWeek(selected as DayOfWeek[])
+                        dispatch(
+                            setSearchQuery({
+                                dayOfWeeks: selected as DayOfWeek[],
+                            })
+                        )
                     }
                 />
             )}
             {tabIndex === 2 && (
                 <ListOfCheckBoxes
                     options={seasonOptions}
-                    selectedOptions={season}
-                    onChange={(selected) => setSeason(selected as Season[])}
+                    selectedOptions={seasons}
+                    onChange={(selected) =>
+                        dispatch(
+                            setSearchQuery({ seasons: selected as Season[] })
+                        )
+                    }
                 />
             )}
             {tabIndex === 3 && (
                 <ListOfCheckBoxes
                     options={monthOptions}
-                    selectedOptions={month}
-                    onChange={(selected) => setMonth(selected as Month[])}
+                    selectedOptions={months}
+                    onChange={(selected) =>
+                        dispatch(
+                            setSearchQuery({ months: selected as Month[] })
+                        )
+                    }
                 />
             )}
             {tabIndex === 4 && (
                 <ListOfCheckBoxes
                     options={availableYears ? availableYears.map(String) : []}
-                    selectedOptions={year.map(String)}
+                    selectedOptions={years.map(String)}
                     onChange={(selected) =>
-                        setYear(selected.map((y) => parseInt(y)) as number[])
+                        dispatch(setSearchQuery({ years: selected.map(Number) }))
                     }
                 />
             )}
@@ -133,11 +149,11 @@ const TemporalFiltersHook = () => {
         return (
             <Stack alignItems="center" mt={4}>
                 <TimeHeatmap
-                    timeOfDay={timeOfDay}
-                    dayOfWeek={dayOfWeek}
-                    season={season}
-                    month={month}
-                    year={year}
+                    timeOfDays={timeOfDays}
+                    dayOfWeeks={dayOfWeeks}
+                    seasons={seasons}
+                    months={months}
+                    years={years}
                     currentYear={currentYear}
                     customCells={customCells}
                     setCustomCells={setCustomCells}
@@ -169,10 +185,15 @@ const TemporalFiltersHook = () => {
                 color="primary"
                 sx={{ mt: 2 }}
                 onClick={() => {
-                    setTimeOfDay([]);
-                    setDayOfWeek([]);
-                    setSeason([]);
-                    setMonth([]);
+                    dispatch(
+                        setSearchQuery({
+                            timeOfDays: [],
+                            dayOfWeeks: [],
+                            seasons: [],
+                            months: [],
+                            years: [],
+                        })
+                    );
                     setCustomCells(new Set());
                 }}
             >

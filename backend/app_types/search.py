@@ -1,7 +1,10 @@
 from __future__ import annotations
-from datetime import datetime, date
-from typing import List, Optional, Union, Literal
-from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import List, Optional, Literal, Tuple
+from pydantic import BaseModel, Field, computed_field
+
+from app_types.general import LocationInfo
+from dependencies import CamelCaseModel
 
 class GeoProximity(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
@@ -11,34 +14,66 @@ class GeoProximity(BaseModel):
 class TimeRange(BaseModel):
     start: Optional[datetime] = None
     end: Optional[datetime] = None
-    gt: Optional[datetime] = Field(None, description="Greater than")
-    lt: Optional[datetime] = Field(None, description="Less than")
 
-class BaseFilters(BaseModel):
+
+TimeOfDay = Literal["morning", "afternoon", "evening", "night", "midday"]
+DayOfWeek = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+MonthOfYear = Literal["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+class SearchQuery(CamelCaseModel):
     # Text Search
-    text_query: Optional[str] = None
-    location_name: Optional[str] = None
+    text: str = ""
+    is_image_query: bool = False
 
-    # Exact Matches
-    exact_date: Optional[date] = None
-    person_name: Optional[List[str]] = None
-    weekdays: Optional[List[Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]]] = None
-    month: Optional[int] = Field(None, ge=1, le=12)
-    year: Optional[int] = None
-    day: Optional[int] = Field(None, ge=1, le=31)
+    # time
+    time_of_days: List[TimeOfDay] = []
+    day_of_weeks: List[DayOfWeek] = []
+    seasons: List[Literal["spring", "summer", "autumn", "winter"]] = []
+    months: List[MonthOfYear] = []
+    years: List[int] = []
+    custom_ranges: List[TimeRange] = []
 
-    # Spatiotemporal
-    time_range: Optional[TimeRange] = None
-    geo_proximity: Optional[GeoProximity] = None
+    # location
+    is_moving: bool = False
+    countries: List[str] = []
+    location_ids: List[str] = []
+    bounds: Optional[List[float]] = None  # [min_lat, min_lon, max_lat, max_lon]
 
-class FilterGroup(BaseModel):
-    # Logical Operators
-    operator: Literal["AND", "OR", "NOT"] = "AND"
-    conditions: List[Union[BaseFilters, 'FilterGroup']]
+    # people
+    people_ids: List[str] = []
 
-class SearchRequest(BaseModel):
-    # The root can be a simple set of filters or a complex logical group
-    query: Union[BaseFilters, FilterGroup]
+    @computed_field
+    @property
+    def empty(self) -> bool:
+        return not any([
+            self.text,
+            self.time_of_days,
+            self.day_of_weeks,
+            self.months,
+            self.years,
+            self.custom_ranges,
+            self.countries,
+            self.location_ids,
+            self.bounds,
+            self.people_ids
+        ])
 
-# Required for recursive models in Pydantic
-FilterGroup.model_rebuild()
+
+class ResultSummary(CamelCaseModel):
+    total_images: int
+    total_segments: int = 0
+
+    # time breakdowns
+    time_of_days: List[Tuple[TimeOfDay, int]] = []
+    day_of_weeks: List[Tuple[DayOfWeek, int]] = []
+    seasons: List[Tuple[Literal["spring", "summer", "autumn", "winter"], int]] = []
+    months: List[Tuple[MonthOfYear, int]] = []
+    years: List[Tuple[int, int]] = []
+    custom_ranges: List[Tuple[TimeRange, int]] = []
+
+    # location breakdowns
+    locations: List[Tuple[LocationInfo, int]] = []
+    countries: List[Tuple[str, int]] = []
+
+    # people breakdowns
+    people: List[Tuple[str, int]] = []

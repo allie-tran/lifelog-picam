@@ -1,3 +1,5 @@
+import { DayOfWeek, Month, Season, TimeOfDay } from "types/filters";
+
 declare module '@mui/material/styles' {
     interface Theme {
         status: {
@@ -20,6 +22,7 @@ export type GPSData = {
 };
 
 export type LocationData = {
+    id?: string;
     name: string;
     address: string;
     country: string;
@@ -98,3 +101,25 @@ interface Point {
 }
 
 export type { ImageObject, SummarySegment, DaySummary, Point };
+
+export type SearchQuery = {
+    text: string;
+    isImageQuery: boolean;
+
+    // temporal
+    timeOfDays: TimeOfDay[];
+    dayOfWeeks: DayOfWeek[];
+    seasons: Season[];
+    months: Month[];
+    years: number[];
+    customRanges: { start: string; end: string }[];
+
+    // location
+    isMoving: boolean,
+    countries: string[];
+    locationIds: string[];
+    bounds: [number, number, number, number] | null;
+
+    // people
+    peopleIds: string[];
+}

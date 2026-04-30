@@ -3,11 +3,13 @@ import zoomedImageSlice from './zoomedImage';
 import feedbackSlice from './feedback';
 import authSlice from './auth';
 import mapSlice from './map';
+import searchSlice from './search';
 
 export const store = configureStore({
     reducer: {
         zoomedImage: zoomedImageSlice,
         feedback: feedbackSlice,
+        search: searchSlice,
         auth: authSlice,
         map: mapSlice
     },

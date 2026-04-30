@@ -47,31 +47,26 @@ def describe_segment_task(
 ):
     mongo_client = MongoClient("mongodb://localhost:27017/")
     try:
-        # activity_obj = describe_segment(
-        #     device,
-        #     date,
-        #     thumbnail_paths,
-        #     segment_id=segment_id,
-        #     extra_info=extra_info,
-        # )
-        # stmt = select(Image.embedding).where(
+        activity_obj = describe_segment(
+            device,
+            date,
+            thumbnail_paths,
+            segment_id=segment_id,
+            extra_info=extra_info,
+        )
+        # stmt = select(ImageEmbedding.embedding).join(Image).where(
         #     Image.device == device,
         #     Image.segment_id == segment_id,
         #     Image.date == date,
-        # ).options(selectinload(Image.embedding))
-        stmt = select(ImageEmbedding.embedding).join(Image).where(
-            Image.device == device,
-            Image.segment_id == segment_id,
-            Image.date == date,
-        )
-        embeddings = [r.embedding for r in self.session.execute(stmt).fetchall()]
-        logging.info(f"Retrieved {len(embeddings)} embeddings for segment {segment_id} of device {device} on date {date}")
+        # )
+        # embeddings = [r.embedding for r in self.session.execute(stmt).fetchall()]
+        # logging.info(f"Retrieved {len(embeddings)} embeddings for segment {segment_id} of device {device} on date {date}")
 
-        activity_obj = simple_describe_segment(
-            embeddings=embeddings,
-            matrix=get_matrix(self.session, device),
-            segment_id=segment_id,
-        )
+        # activity_obj = simple_describe_segment(
+        #     embeddings=embeddings,
+        #     matrix=get_matrix(self.session, device),
+        #     segment_id=segment_id,
+        # )
 
         stmt = update(Image).where(
                 Image.device == device,
@@ -142,6 +137,7 @@ def yolo_process_images_task(
                     "label": obj["label"],
                     "confidence": obj["confidence"],
                     "bbox": obj["bbox"],
+                    "rel_bbox": obj["rel_bbox"],
                 }
             )
 
@@ -153,6 +149,7 @@ def yolo_process_images_task(
                     "label": person["label"],
                     "confidence": person["confidence"],
                     "bbox": person["bbox"],
+                    "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
                 }
             )

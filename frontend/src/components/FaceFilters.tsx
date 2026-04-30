@@ -1,5 +1,6 @@
 import { getAllFaces } from '@apis/searchFilters';
 import {
+    Box,
     Button,
     Checkbox,
     FormControl,
@@ -8,17 +9,17 @@ import {
     ListItemText,
     MenuItem,
     Select,
-    Stack
+    Stack,
+    Typography,
 } from '@mui/material';
-import { useState } from 'react';
-import { useAppSelector } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setSearchQuery } from 'reducers/search';
 import useSWR from 'swr';
-import FaceClusters from './FaceClusters';
-
 
 const FaceFiltersHook = () => {
+    const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId);
-    const [faces, setFaces] = useState<string[]>([]);
+    const { peopleIds } = useAppSelector((state) => state.search.query);
 
     const { data: availableFaces } = useSWR(
         [deviceId, 'faces'],
@@ -26,28 +27,32 @@ const FaceFiltersHook = () => {
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
-    const nothingIsSelected = faces.length === 0;
+    const nothingIsSelected = peopleIds.length === 0;
 
     const renderFilterOptions = () => (
         <Stack spacing={2}>
-            <FormControl
-                fullWidth
-                variant="outlined"
-            >
+            <FormControl fullWidth variant="outlined">
                 <InputLabel id="face-select-label">Faces</InputLabel>
                 <Select
                     labelId="face-select-label"
                     multiple
-                    value={faces}
+                    value={peopleIds}
                     onChange={(e) => {
                         const value = e.target.value;
-                        setFaces(typeof value === 'string' ? value.split(',') : value);
+                        dispatch(
+                            setSearchQuery({
+                                peopleIds:
+                                    typeof value === 'string'
+                                        ? value.split(',')
+                                        : value,
+                            })
+                        );
                     }}
                     renderValue={(selected) => selected.join(', ')}
                 >
                     {availableFaces?.map((face) => (
-                        <MenuItem key={face.name} value={face.name}>
-                            <Checkbox checked={faces.indexOf(face.name) > -1} />
+                        <MenuItem key={face.id} value={face.id}>
+                            <Checkbox checked={peopleIds.includes(face.id)} />
                             <ListItemIcon>
                                 <img
                                     src={face.images[0]} // Assuming the first image represents the face
@@ -69,7 +74,43 @@ const FaceFiltersHook = () => {
         </Stack>
     );
 
-    const renderFaceExplorer = () => null;
+    const renderFaceExplorer = () => (
+        <Box sx={{ ml: 1, mt: 2 }}>
+            <Typography fontWeight="bold">
+                Selected Faces
+            </Typography>
+            {nothingIsSelected && (
+                <Typography variant="caption" color="textSecondary">
+                    Explore images containing the selected faces.
+                </Typography>
+            )}
+            <Stack spacing={2} mt={2} direction="row" flexWrap="wrap">
+                {availableFaces?.map((face) => {
+                    if (!peopleIds.includes(face.id)) return null; // Only show selected faces
+                    return (
+                        <Stack
+                            key={face.id}
+                            direction="row"
+                            spacing={2}
+                            alignItems="center"
+                        >
+                            <img
+                                src={face.images[0]} // Assuming the first image represents the face
+                                alt={face.name}
+                                style={{
+                                    width: 30,
+                                    height: 30,
+                                    objectFit: 'cover',
+                                    borderRadius: '50%',
+                                }}
+                            />
+                            <span>{face.name}</span>
+                        </Stack>
+                    );
+                })}
+            </Stack>
+        </Box>
+    );
 
     const renderClearButton = () => {
         return (
@@ -79,7 +120,11 @@ const FaceFiltersHook = () => {
                 color="primary"
                 sx={{ mt: 2 }}
                 onClick={() => {
-                    setFaces([]);
+                    dispatch(
+                        setSearchQuery({
+                            peopleIds: [],
+                        })
+                    );
                 }}
             >
                 Clear Filters

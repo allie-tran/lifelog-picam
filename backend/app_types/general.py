@@ -18,7 +18,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from fastapi import FastAPI
-from pydantic import BaseModel, Field, GetPydanticSchema, InstanceOf, computed_field
+from pydantic import BaseModel, Field, GetPydanticSchema, InstanceOf, computed_field, field_validator
 from sqlalchemy import UUID
 from typing_extensions import TypeAlias
 
@@ -134,6 +134,7 @@ class GPSInfo(BaseModel):
 
 
 class LocationInfo(CamelCaseModel):
+    id: Optional[str] = None
     name: Optional[str] = None
     info: Optional[str] = None
     address: Optional[str] = None
@@ -141,6 +142,14 @@ class LocationInfo(CamelCaseModel):
     timezone: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def parse_id(cls, id: Any) -> Optional[str]:
+        try:
+            return str(id)
+        except (ValueError, TypeError):
+            return None
 
 
 class LifelogImage(CamelCaseModel):

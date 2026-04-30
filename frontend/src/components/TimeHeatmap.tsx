@@ -181,22 +181,22 @@ const nothingIsSelectedScale: ColorScale = [
 ];
 
 const TimeHeatmap = ({
-    timeOfDay,
-    dayOfWeek,
-    season,
-    month,
-    year,
+    timeOfDays: timeOfDay,
+    dayOfWeeks: dayOfWeek,
+    seasons: season,
+    months: month,
+    years: year,
     currentYear,
     customCells,
     setCustomCells,
     nothingIsSelected,
     noFiltersSelected,
 }: {
-    timeOfDay: TimeOfDay[];
-    dayOfWeek: DayOfWeek[];
-    season: Season[];
-    month: Month[];
-    year: number[];
+    timeOfDays: TimeOfDay[];
+    dayOfWeeks: DayOfWeek[];
+    seasons: Season[];
+    months: Month[];
+    years: number[];
     currentYear: number;
     customCells: Set<{ row: number; col: number; value: number }>;
     setCustomCells: React.Dispatch<

@@ -45,6 +45,7 @@ import { TemporalFiltersHook } from 'components/TemporalFilters';
 import { LocationFiltersHook } from 'components/LocationFilters';
 import DeviceSelect from './DeviceSelect';
 import { FaceFiltersHook } from 'components/FaceFilters';
+import { setSearchQuery } from 'reducers/search';
 
 const PAGE_SIZE = 20;
 
@@ -53,6 +54,7 @@ const SearchPage = () => {
     const [searchParams, _] = useSearchParams();
 
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const searchQuery = useAppSelector((state) => state.search.query);
 
     // View Settings
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
@@ -61,9 +63,7 @@ const SearchPage = () => {
     const [page, setPage] = useState(1);
 
     // Search Settings
-    const [mode, setMode] = useState<'text' | 'id' | 'similar'>('text');
     const [textQuery, setTextQuery] = useState('');
-    const [query, setQuery] = useState(searchParams.get('query') || '');
     const [useImageInput, setUseImageInput] = useState<boolean>(false);
     const [filterShown, setFilterShown] = useState<
         'temporal' | 'location' | 'faces' | null
@@ -98,53 +98,20 @@ const SearchPage = () => {
         isLoading,
         mutate,
     } = useSWR(
-        ['search', query, sortBy, deviceId],
-        mode === 'text'
-            ? () =>
-                  searchImages(deviceId, query, sortBy).then((res) => {
-                      dispatch(setLoading(false));
-                      setPage(1);
-                      if (sortBy === 'relevance') {
-                          setSortOrder('desc');
-                          return res.slice().reverse();
-                      } else {
-                          setSortOrder('asc');
-                      }
-                      return res;
-                  })
-            : null,
+        ['search', deviceId, sortBy, searchQuery],
+        () =>
+            searchImages(deviceId, searchQuery, sortBy).then((res) => {
+                dispatch(setLoading(false));
+                setPage(1);
+                if (sortBy === 'relevance') {
+                    setSortOrder('desc');
+                    return res.slice().reverse();
+                } else {
+                    setSortOrder('asc');
+                }
+                return res;
+            }),
         { revalidateOnFocus: false }
-    );
-
-    const { data: similar, isLoading: isSimilarLoading } = useSWR<
-        ImageObject[]
-    >(
-        ['similar-images', searchParams.get('query'), deviceId],
-        mode === 'id'
-            ? () =>
-                  similarImages(deviceId, searchParams.get('query') || '').then(
-                      (res) => {
-                          dispatch(setLoading(false));
-                          setPage(1);
-                          setViewMode('images');
-                          return res as ImageObject[];
-                      }
-                  )
-            : mode === 'similar'
-              ? () =>
-                    similarImagesPost(
-                        deviceId,
-                        searchParams.get('query') || ''
-                    ).then((res) => {
-                        dispatch(setLoading(false));
-                        setPage(1);
-                        setViewMode('images');
-                        return res as ImageObject[];
-                    })
-              : null,
-        {
-            revalidateOnFocus: false,
-        }
     );
 
     const results = useMemo(() => {
@@ -156,17 +123,13 @@ const SearchPage = () => {
     }, [searchEvents, sortOrder]);
 
     const images = useMemo(() => {
-        if (mode === 'text') {
-            if (results.length !== 0) {
-                return results.reduce((acc, segment) => {
-                    return [...acc, ...segment];
-                });
-            }
-            return [];
-        } else {
-            return similar || [];
+        if (results.length !== 0) {
+            return results.reduce((acc, segment) => {
+                return [...acc, ...segment];
+            });
         }
-    }, [results, similar, mode]);
+        return [];
+    }, [results]);
 
     const [deleted, setDeleted] = useState<string[]>([]);
 
@@ -224,7 +187,7 @@ const SearchPage = () => {
                     onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
-                            setQuery(textQuery);
+                            dispatch(setSearchQuery({ text: textQuery }));
                         }
                     }}
                     sx={{ marginY: 1 }}
@@ -466,73 +429,56 @@ const SearchPage = () => {
                     />
                 </Stack>
                 <Divider flexItem sx={{ marginBottom: 2 }} />
-                {isLoading || isSimilarLoading ? (
+                {isLoading ? (
                     <LinearProgress sx={{ marginBottom: 2 }} />
                 ) : viewMode === 'events' ? (
                     <>
-                        <Typography>
-                            Showing results for: "{searchParams.get('query')}"
-                        </Typography>
-                        <Divider sx={{ marginY: 2 }} />
-                        {viewMode === 'events' && (
-                            <>
-                                <Stack
-                                    direction="row"
-                                    spacing={2}
-                                    sx={{ width: '100%' }}
-                                    flexWrap="wrap"
-                                    useFlexGap
-                                >
-                                    {currentPageResults.map(
-                                        (segment, index) => (
-                                            <LifelogEvent
-                                                key={index}
-                                                segment={segment}
-                                                onChange={() => mutate()}
-                                                deleteRow={deleteRow}
-                                                fullTime
-                                            />
-                                        )
-                                    )}
-                                </Stack>
-                                {page > 0 && (
-                                    <Pagination
-                                        page={page}
-                                        count={Math.ceil(
-                                            results.length / PAGE_SIZE
-                                        )}
-                                        color="primary"
-                                        sx={{
-                                            display: 'flex',
-                                            justifyContent: 'center',
-                                            marginY: 4,
-                                        }}
-                                        onChange={(_, page) => {
-                                            setPage(page);
-                                            const element =
-                                                document.getElementById('app');
-                                            element?.scrollIntoView({
-                                                behavior: 'smooth',
-                                            });
-                                        }}
+                        <Stack
+                            direction="row"
+                            spacing={2}
+                            sx={{ width: '100%' }}
+                            flexWrap="wrap"
+                            useFlexGap
+                        >
+                            {currentPageResults.map(
+                                (segment, index) => (
+                                    <LifelogEvent
+                                        key={index}
+                                        segment={segment}
+                                        onChange={() => mutate()}
+                                        deleteRow={deleteRow}
+                                        fullTime
                                     />
+                                )
+                            )}
+                        </Stack>
+                        {page > 0 && (
+                            <Pagination
+                                page={page}
+                                count={Math.ceil(
+                                    results.length / PAGE_SIZE
                                 )}
-                            </>
+                                color="primary"
+                                sx={{
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                    marginY: 4,
+                                }}
+                                onChange={(_, page) => {
+                                    setPage(page);
+                                    const element =
+                                        document.getElementById('app');
+                                    element?.scrollIntoView({
+                                        behavior: 'smooth',
+                                    });
+                                }}
+                            />
                         )}
                     </>
                 ) : (
                     <>
                         {currentPageImages.length == 0 ? null : (
                             <Stack direction="row" alignItems="center">
-                                {/* <Button */}
-                                {/*     onClick={() => { */}
-                                {/*         mutate(); */}
-                                {/*     }} */}
-                                {/*     variant="outlined" */}
-                                {/*     sx={{ textTransform: 'none', marginBottom: 2 }} */}
-                                {/* > */}
-                                {/*     Refresh */}
-                                {/* </Button> */}
                                 <Button
                                     color="error"
                                     onClick={() => {

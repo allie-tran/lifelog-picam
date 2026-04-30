@@ -40,6 +40,7 @@ const LifelogEvent = ({
     const deviceId = useAppSelector((state) => state.auth.deviceId);
     const firstImage = segment[0];
     const lastImage = segment[segment.length - 1];
+    const date = dayjs(firstImage.timestamp).format('YYYY-MM-DD');
     // const count = segment.length;
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
@@ -220,6 +221,7 @@ const LifelogEvent = ({
                             dispatch(setLoading(true));
                             changeSegmentActivity(
                                 deviceId,
+                                date,
                                 firstImage.segmentId as unknown as number,
                                 activityEditText
                             ).then(() => {

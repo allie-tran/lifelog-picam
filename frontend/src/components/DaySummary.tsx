@@ -632,7 +632,7 @@ function Timeline({ daySummary }: { daySummary: DaySummary }) {
                                     <Box
                                         sx={{
                                             height: 48,
-                                            width: segment.duration / 3600 / 25,
+                                            width: segment.duration / 3600 / 15,
                                             backgroundColor:
                                                 CATEGORIES[segment.activity] ||
                                                 '#bdc3c7',
