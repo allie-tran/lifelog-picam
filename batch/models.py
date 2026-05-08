@@ -275,6 +275,23 @@ class Image(Base):
 # ---------------------------------------------------------------------------
 # GPS, People, Objects, OCR
 # ---------------------------------------------------------------------------
+class RawGPS(Base):
+    __tablename__ = "raw_gps"
+    __table_args__ = (
+        Index("ix_raw_gps_device", "device_id"),
+        Index("ix_raw_gps_time", "timestamp"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    elevation = Column(Float)
+    timestamp = Column(Float)
 
 
 class ImageGPS(Base):
