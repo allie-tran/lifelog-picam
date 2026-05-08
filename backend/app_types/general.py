@@ -151,6 +151,12 @@ class LocationInfo(CamelCaseModel):
         except (ValueError, TypeError):
             return None
 
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def parse_nan_to_none(cls, value: Any) -> Optional[float]:
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return None
+        return value
 
 class LifelogImage(CamelCaseModel):
     device: str

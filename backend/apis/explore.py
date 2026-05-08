@@ -5,16 +5,16 @@ import os
 from fastapi import Depends, FastAPI, HTTPException
 
 from fastapi import Depends, HTTPException
-from sqlalchemy import  func,   case
+from sqlalchemy import  func, case, select, desc
 from sqlalchemy.orm import Session
 
 from app_types.general import LocationInfo
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from auth import _require_owner
+import numpy as np
 
 
-from sqlalchemy import select, desc
 from typing import Annotated, Any
 
 from constants import DIR, THUMBNAIL_DIR
@@ -117,6 +117,53 @@ def get_moving_periods(
 
     return locations
 
+
+@app.post("/locations/map-markers")
+async def get_map_markers(query: ValuesRequest,
+                          device: str,
+                          db: Session = Depends(get_session)):
+    # 1. Select coordinates and count the related images
+    # We join Location to Image using the relationship
+    stmt = (
+        select(
+            Location.id,
+            Location.latitude,
+            Location.longitude,
+            Location.name,
+            Location.address,
+            func.count(ImageModel.id).label("image_count")
+        )
+        .join(Location.images) # This follows your relationship "images"
+        .where(Location.stop == True, ImageModel.device == device, ImageModel.deleted == False)
+    )
+
+    # 2. Apply SearchQuery Filters
+    extra_params = query.extra_params
+    country_filter = extra_params.get("country")
+    if country_filter:
+        stmt = stmt.where(Location.country.in_(country_filter))
+
+    bounds = extra_params.get("bounds")
+    if bounds and len(bounds) == 4:
+        stmt = stmt.where(
+            Location.latitude.between(bounds[0], bounds[2]),
+            Location.longitude.between(bounds[1], bounds[3])
+        )
+
+    # 3. Grouping is required because of the count() function
+    stmt = stmt.group_by(Location.id)
+    result = db.execute(stmt).all()
+
+    # 4. Format the response
+    return [
+        {
+            "id": str(r.id),
+            "lat": r.latitude if not np.isnan(r.latitude) else None,
+            "lng": r.longitude if not np.isnan(r.longitude) else None,
+            "name": r.name if r.name not in ["---", "Unknown Place"] else r.address,
+            "weight": r.image_count # We'll use this for custom clustering
+        } for r in result
+    ]
 
 
 @app.post("/available-values")

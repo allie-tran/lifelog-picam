@@ -56,6 +56,8 @@ class Location(Base):
     stop = Column(Boolean)
     timezone = Column(Text)
     address = Column(Text)
+    latitude = Column(Float)
+    longitude = Column(Float)
 
     images = relationship("Image", back_populates="location")
 
@@ -195,6 +197,8 @@ class Image(Base):
         Index("ix_images_device_ref", "device_ref_id"),
         Index("ix_images_deleted", "deleted"),
         Index("ix_images_deleted_time", "deleted_time"),
+        # constraint: (device, image_path) should be unique to prevent duplicates from the same device
+        UniqueConstraint("device", "image_path", name="uq_device_image_path"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -228,6 +232,8 @@ class Image(Base):
     proc_insightface = Column(Boolean, default=False)
     proc_face_recognition = Column(Boolean, default=False)
     proc_sam3 = Column(Boolean, default=False)
+    width = Column(Integer)
+    height = Column(Integer)
 
     location = relationship("Location", back_populates="images")
     device_ref = relationship("Device", back_populates="images")
@@ -305,9 +311,9 @@ class PeopleCluster(Base):
         Index("ix_people_clusters_label", "cluster_label"),
     )
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Column[UUID] = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True)
+    cluster_label = Column(Text, nullable=False)
     center_embedding = Column(Vector(512), nullable=False)
-    cluster_label = Column(Text, primary_key=True)
 
     # The relationship to the people
     people = relationship("ImagePerson", back_populates="cluster")
@@ -316,6 +322,7 @@ class ImagePerson(Base):
     __tablename__ = "image_people"
     __table_args__ = (
         Index("ix_people_image", "image_id"),
+        Index("ix_people_id", "id"),
         Index(
             "ix_people_embedding",
             "embedding",
@@ -333,12 +340,17 @@ class ImagePerson(Base):
     bbox = Column(JSONB)
     rel_bbox = Column(JSONB)
     embedding = Column(Vector(512), nullable=True)
-    cluster_id = Column(UUID(as_uuid=True), ForeignKey("people_clusters.id", ondelete="SET NULL"), nullable=True)
+
+    cluster_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("people_clusters.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     image = relationship("Image", back_populates="people")
     cluster = relationship(
         "PeopleCluster",
-        back_populates="people",
+        back_populates="people"
     )
 
 

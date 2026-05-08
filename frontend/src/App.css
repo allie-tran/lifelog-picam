@@ -43,3 +43,23 @@ video {
     animation: map-flow 2s linear infinite !important;
     z-index: 1;
 }
+
+/* Custom Cluster Styling */
+.image-cluster {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 0 10px rgba(0,0,0,0.2);
+  border: 2px solid white;
+  & span {
+    margin: auto;
+    font-size: 12px;
+  }
+}
+
+.cluster-small  { background: rgba(59, 130, 246, 0.8); } /* Blue */
+.cluster-medium { background: rgba(245, 158, 11, 0.8); } /* Orange */
+.cluster-large  { background: rgba(239, 68, 68, 0.8); }  /* Red */

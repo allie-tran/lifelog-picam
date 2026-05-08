@@ -49,5 +49,22 @@ export const getAllFaces = async (deviceId: string) => {
     const response = await axios.get(
         `/explore/all-faces?device=${encodeURIComponent(deviceId)}`
     );
-    return response.data as { name: string; images: string[], id: string }[];
+    return response.data as { name: string; images: string[]; id: string }[];
+};
+
+export const getMapMarkers = async (deviceId: string, countries: string[]) => {
+    const response = await axios.post(
+        `/explore/locations/map-markers?device=${deviceId}`,
+        {
+            field: 'location',
+            extraParams: { country: countries },
+        }
+    );
+    return response.data as {
+        id: string;
+        lat: number;
+        lng: number;
+        name: string;
+        weight: number;
+    }[];
 };

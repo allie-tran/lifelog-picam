@@ -1,6 +1,7 @@
 import {
     getAvailableValues,
     getLocations,
+    getMapMarkers,
     getMovingPeriods,
 } from '@apis/searchFilters';
 import {
@@ -76,6 +77,13 @@ const LocationFiltersHook = () => {
             isMoving
                 ? getMovingPeriods(deviceId, countries)
                 : getLocations(deviceId, countries),
+        { revalidateOnFocus: false, revalidateOnReconnect: false }
+    );
+
+    const { data: markersData } = useSWR(
+        [deviceId, locationIds],
+        async () => getMapMarkers(deviceId, countries),
+        
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
@@ -185,6 +193,7 @@ const LocationFiltersHook = () => {
             <MapSearch
                 visualBounds={visualBounds}
                 onBoundsChange={handleAddBound}
+                markersData={markersData || []}
             />
         );
     };
