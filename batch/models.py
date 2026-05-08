@@ -280,6 +280,8 @@ class RawGPS(Base):
     __table_args__ = (
         Index("ix_raw_gps_device", "device_id"),
         Index("ix_raw_gps_time", "timestamp"),
+        # device and timestamp should be unique to prevent duplicates from the same device at the same time
+        UniqueConstraint("device_id", "timestamp", name="uq_raw_gps_device_time"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -292,6 +294,8 @@ class RawGPS(Base):
     longitude = Column(Float, nullable=False)
     elevation = Column(Float)
     timestamp = Column(Float)
+
+    device = relationship("Device", back_populates="raw_gps")
 
 
 class ImageGPS(Base):
