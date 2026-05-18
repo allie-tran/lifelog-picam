@@ -65,9 +65,8 @@ def process_queue():
                 # Your existing send_video returns True/False based on success
                 success = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
+                send_gps(file_path.replace(IMAGE_EXTENSION, ".txt"), uploaded_files, LOG_FILE)
                 success = send_image(file_path, uploaded_files, LOG_FILE)
-            elif file_path.endswith(".txt"):
-                success = send_gps(file_path)
 
             if not success:
                 failed_again.append(file_path)
