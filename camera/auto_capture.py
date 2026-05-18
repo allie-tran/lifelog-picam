@@ -13,7 +13,6 @@ cam = Camera()
 # orginally 4056 x 3040
 cam.still_size = (2028, 1520)
 
-
 def check_if_camera_connected():
     try:
         cam.take_photo("test.jpg")
@@ -146,18 +145,14 @@ async def main():
         await asyncio.sleep(10)
 
     print("Camera connected. Starting concurrent tasks...")
-
+    
     # Run both workers simultaneously
-    await asyncio.gather(gps_worker(), image_worker())
-
+    await asyncio.gather(
+        gps_worker(),
+        image_worker()
+    )
 
 if __name__ == "__main__":
-    while not check_if_camera_connected():
-        print("Camera not connected. Retrying in 10 seconds...")
-        time.sleep(1)
-
-    print("Camera connected.")
-
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
