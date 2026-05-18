@@ -101,7 +101,6 @@ if __name__ == "__main__":
                             send_video(file, uploaded_files, LOG_FILE)
                         elif file.endswith(IMAGE_EXTENSION):
                             send_image(file, uploaded_files, LOG_FILE)
-                        elif file.endswith(".txt"):
 
                     if check_if_outdated(date_str):
                         cleanup(folder_path)

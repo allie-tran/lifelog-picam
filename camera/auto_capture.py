@@ -25,7 +25,6 @@ def check_if_camera_connected():
 # --- Configuration ---
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 9600
-OUTPUT = "/path/to/output"  # Set your output directory
 CAPTURE_INTERVAL = 10  # seconds
 
 # Global dictionary holding the latest valid state.
