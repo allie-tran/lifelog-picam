@@ -8,3 +8,12 @@ export const dayOfWeekOptions: DayOfWeek[] = ['Monday', 'Tuesday', 'Wednesday', 
 export const seasonOptions: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 export const monthOptions: Month[] = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+
+export interface MapMarker {
+  id: string;
+  lat: number;
+  lng: number;
+  title: string;
+  count: number; // This is the image frequency from the join
+}
+

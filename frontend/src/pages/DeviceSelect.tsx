@@ -6,14 +6,15 @@ import useSWR from 'swr';
 import { getDevices } from '../apis/browsing';
 import '../App.css';
 import { useEffect } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 const DeviceSelect = ({
     onChange,
 }: {
     onChange?: (deviceId: string) => void;
 }) => {
-    const searchParams = useSearchParams();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const dispatch = useAppDispatch();
 
@@ -25,15 +26,19 @@ const DeviceSelect = ({
         }
     );
 
+    const selfOnChange = (newDeviceId: string) => {
+        dispatch(setDeviceId(newDeviceId));
+        searchParams.set('device', newDeviceId);
+        navigate({ search: searchParams.toString() });
+        onChange?.(newDeviceId);
+    }
+
     useEffect(() => {
         if (devices && devices.length > 0) {
             if (deviceId && devices.includes(deviceId)) {
                 return; // Current deviceId is valid
             }
-            console.log('Auto-selecting device:', devices[0]);
-            dispatch(setDeviceId(devices[0]));
-            searchParams[0].set('device', devices[0]);
-            onChange?.(devices[0]);
+            selfOnChange(devices[0]);
         }
     }, [devices, deviceId, onChange]);
 
@@ -58,8 +63,7 @@ const DeviceSelect = ({
                 label="Device"
                 onChange={(e) => {
                     const selectedDeviceId = e.target.value;
-                    dispatch(setDeviceId(selectedDeviceId));
-                    onChange?.(selectedDeviceId);
+                    selfOnChange(selectedDeviceId);
                 }}
                 disabled={devicesLoading}
             >

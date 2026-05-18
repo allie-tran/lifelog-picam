@@ -117,7 +117,7 @@ const CustomDatePicker = ({
         const nextDate = dayjs(date).add(1, 'day').format('YYYY-MM-DD');
         setPage(1);
         setHour(null);
-        navigate(`/?device_id=${deviceId}&date=${nextDate}`);
+        navigate(`/?device=${deviceId}&date=${nextDate}`);
     };
 
     const goToPreviousDate = () => {
@@ -125,7 +125,7 @@ const CustomDatePicker = ({
         const prevDate = dayjs(date).subtract(1, 'day').format('YYYY-MM-DD');
         setPage(1);
         setHour(null);
-        navigate(`/?device_id=${deviceId}&date=${prevDate}`);
+        navigate(`/?device=${deviceId}&date=${prevDate}`);
     };
 
     useEffect(() => {
@@ -164,7 +164,7 @@ const CustomDatePicker = ({
                         setPage(1);
                         setHour(null);
                         navigate(
-                            `/?device_id=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`
+                            `/?device=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`
                         );
                     }}
                     slots={{
@@ -197,7 +197,7 @@ const CustomDatePicker = ({
                             setPage(1);
                             setHour(null);
                             navigate(
-                                `/?device_id=${deviceId}&date=${dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD')}`
+                                `/?device=${deviceId}&date=${dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD')}`
                             );
                         }
                     }}

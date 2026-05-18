@@ -45,11 +45,12 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_thumbnail_path, to_absolute_bbox
+from scripts.utils import get_device_from_headers, get_thumbnail_path, to_absolute_bbox
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
 from apis.explore import app as explore_app
+from apis.location import app as location_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime, timezone
@@ -131,17 +132,6 @@ def decrypt_image(box: Box, file: UploadFile):
     return Image.open(io.BytesIO(decrypted))
 
 
-def get_device_from_headers(request: Request):
-    device_token = request.headers.get("X-Device-ID")
-    if not device_token:
-        raise HTTPException(status_code=400, detail="Missing X-Device-ID header.")
-    device = verify_device_token(device_token)["device"]
-    device = PiCamControl.find_one({"username": device})
-    if not device:
-        raise HTTPException(status_code=403, detail="Device not registered.")
-    return device.username
-
-
 def _mark_images_not_new(session: Session, image_paths: list[str], device: str):
     if not image_paths:
         return
@@ -210,6 +200,7 @@ app.mount("/auth", auth_app)
 app.mount("/controls", control_app)
 app.mount("/ingest", ingest_app)
 app.mount("/explore", explore_app)
+app.mount("/location", location_app)
 
 app.add_middleware(
     CORSMiddleware,

@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileUploader } from 'react-drag-drop-files';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import Webcam from 'react-webcam';
 import '../App.css';
 import ModalWithCloseButton from './ModalWithCloseButton';
@@ -122,6 +122,7 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
     const navigate = useNavigate();
     const dispatch = useAppDispatch();
     const webcamRef = useRef<Webcam>(null);
+    const [searchParams] = useSearchParams();
 
     const [useCamera, setUseCamera] = useState(true);
     const [flipCamera, setFlipCamera] = useState(false);
@@ -158,7 +159,9 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
     const onSearch = (blobUrl: string | null) => {
         if (!blobUrl) return;
         setUrl(blobUrl);
-        navigate(`/search?mode=similar&&query=${encodeURIComponent(blobUrl)}`);
+        searchParams.set('mode', 'similar');
+        searchParams.set('query', blobUrl);
+        navigate({ search: searchParams.toString() });
     };
 
     const onSegment = async (blobUrl: string | null) => {

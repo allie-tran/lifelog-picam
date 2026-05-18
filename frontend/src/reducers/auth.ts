@@ -14,7 +14,7 @@ const initialState: AuthState = {
     isAuthenticated: false,
     username: null,
     devices: [],
-    deviceId: "allie",
+    deviceId: "",
     deviceAccess: AccessLevel.NONE,
 };
 
