@@ -1,12 +1,12 @@
 #!/bin/bash
-LOGFILE="/home/allie/Camera/auto_capture.log"
+LOGFILE="/home/allie/Camera/camera/auto_capture.log"
 TIMEOUT=60  # Seconds to wait before deciding it's "stuck"
 
 while true; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting auto_capture.py" >> "$LOGFILE"
 
     # Start the python script in the background
-    python3 -u /home/allie/Camera/auto_capture.py >> "$LOGFILE" 2>&1 &
+    python3 -u /home/allie/Camera/camera/auto_capture.py >> "$LOGFILE" 2>&1 &
     PYTHON_PID=$!
 
     while kill -0 $PYTHON_PID 2>/dev/null; do

@@ -29,7 +29,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         return "photo"
 
     timestamp = datetime.strptime(
-        os.path.basename(image_path).replace(IMAGE_EXTENSION, ""), "%Y%m%d_%H%M%S_%Z"
+        os.path.basename(image_path).replace(IMAGE_EXTENSION, ""), "%Y%m%d_%H%M%S%z"
     )
 
     # Send form-data request
@@ -55,7 +55,7 @@ def send_video(video_path, uploaded_files, LOG_FILE):
         return "video"
 
     timestamp = datetime.strptime(
-        os.path.basename(video_path).replace(".h264", ""), "%Y%m%d_%H%M%S"
+            os.path.basename(video_path).replace(".h264", ""), "%Y%m%d_%H%M%S%z"
     )
     timestamp = int(timestamp.timestamp() * 1000)
 
