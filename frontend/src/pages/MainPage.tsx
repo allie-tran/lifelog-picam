@@ -135,15 +135,7 @@ function MainPage() {
                         alignItems="center"
                         mb={2}
                     >
-                        <DeviceSelect
-                            onChange={(device: string) => {
-                                navigate(
-                                    `/?date=${date || ''}${
-                                        device ? `&device_id=${device}` : ''
-                                    }`
-                                );
-                            }}
-                        />
+                        <DeviceSelect />
                         <CustomDatePicker
                             date={date}
                             setPage={setPage}

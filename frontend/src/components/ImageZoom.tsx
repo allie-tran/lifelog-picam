@@ -50,7 +50,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
     const handleSimilarImages = () => {
         dispatch(clearZoomedImage());
         navigate(
-            '/search?mode=id&&query=' + encodeURIComponent(imagePath || '')
+            '/search?mode=id&&query=' + encodeURIComponent(imagePath || '') + '&device=' + deviceId
         );
     };
 

@@ -31,7 +31,7 @@ import {
 
 const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
-    const { isAuthenticated } = useAppSelector((state) => state.auth);
+    const { isAuthenticated, deviceId } = useAppSelector((state) => state.auth);
     const dispatch = useAppDispatch();
     const [cookies, _setCookies, removeCookies] = useCookies(['token']);
 
@@ -100,7 +100,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate('/')}
+                                onClick={() => navigate(`/${deviceId ? `?device=${deviceId}` : ''}`)}
                             >
                                 <HomeRounded />
                             </IconButton>
@@ -112,7 +112,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate('/search?mode=text')}
+                                onClick={() => navigate(`/search?mode=text${deviceId ? `&device=${deviceId}` : ''}`)}
                             >
                                 <SearchRounded />
                             </IconButton>
@@ -121,7 +121,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate('/faces')}
+                                onClick={() => navigate(`/faces${deviceId ? `?device=${deviceId}` : ''}`)}
                             >
                                 <FaceRounded />
                             </IconButton>
@@ -139,7 +139,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate('/upload')}
+                                onClick={() => navigate(`/upload${deviceId ? `?device=${deviceId}` : ''}`)}
                             >
                                 <UploadRounded />
                             </IconButton>
