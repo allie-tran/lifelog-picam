@@ -12,6 +12,7 @@ from common import (
     IMAGE_EXTENSION,
     OUTPUT,
     check_if_connected,
+    send_gps,
     send_image,
     send_video,
 )
@@ -65,6 +66,8 @@ def process_queue():
                 success = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
                 success = send_image(file_path, uploaded_files, LOG_FILE)
+            elif file_path.endswith(".txt"):
+                success = send_gps(file_path)
 
             if not success:
                 failed_again.append(file_path)

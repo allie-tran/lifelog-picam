@@ -1,16 +1,18 @@
+import asyncio
 import os
-import signal
-import subprocess
 import time
 from datetime import datetime, timezone
 
+import aioserial
 import cv2
 from picamzero import Camera
+
 from common import OUTPUT, box
 
 cam = Camera()
 # orginally 4056 x 3040
 cam.still_size = (2028, 1520)
+
 
 def check_if_camera_connected():
     try:
@@ -20,60 +22,143 @@ def check_if_camera_connected():
         print(e)
         return False
 
-def capture_image():
-    file_name = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S%z.jpg")
-    DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
-    if not os.path.exists(DATE_DIR):
-        os.makedirs(DATE_DIR)
+# --- Configuration ---
+SERIAL_PORT = "/dev/serial0"
+BAUD_RATE = 9600
+OUTPUT = "/path/to/output"  # Set your output directory
+CAPTURE_INTERVAL = 10  # seconds
 
-    image_path = os.path.join(DATE_DIR, file_name)
+# Global dictionary holding the latest valid state.
+# If no fix has happened yet, it will fallback gracefully to "Searching..."
+LATEST_GPS = {"timestamp": "", "latitude": "", "longitude": "", "elevation": ""}
+
+
+def parse_nmea_degrees(nmea_value, direction):
+    """Converts NMEA DDMM.MMMM to Decimal Degrees"""
+    if not nmea_value:
+        return ""
+    try:
+        float_val = float(nmea_value)
+        degrees = int(float_val / 100)
+        minutes = float_val - (degrees * 100)
+        decimal_degrees = degrees + (minutes / 60.0)
+        if direction in ["S", "W"]:
+            decimal_degrees = -decimal_degrees
+        return decimal_degrees
+    except ValueError:
+        return ""
+
+
+# --- Async Task 1: Continuous GPS Monitor ---
+async def gps_worker():
+    global LATEST_GPS
+    print("Starting background GPS worker...")
 
     try:
-        array = cam.capture_array() # RGB
-        # Convert to BGR for OpenCV
-        frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
-        # resize to 2028 x 1520
-        frame = cv2.resize(frame, (2028, 1520), interpolation=cv2.INTER_AREA)
-        # encode to webp in memory
-        io_buf = cv2.imencode('.jpg', frame)[1].tobytes()
+        # Open serial port asynchronously
+        aioserial_instance = aioserial.AioSerial(
+            port=SERIAL_PORT, baudrate=BAUD_RATE, timeout=0.1
+        )
 
-        encrypted = box.encrypt(io_buf)
-        with open(image_path, "wb") as f:
-            f.write(encrypted)
-        print("Captured image:", file_name)
+        while True:
+            # Check if there is data to read natively without stalling the event loop
+            if aioserial_instance.in_waiting > 0:
+                # Read a line asynchronously
+                raw_line = await aioserial_instance.readline_async()
+                line = raw_line.decode("utf-8", errors="replace").strip()
+
+                if line.startswith("$GPRMC"):
+                    data = line.split(",")
+
+                    if len(data) > 2 and data[2] == "A":  # 'A' = Valid Active Fix
+                        lat = parse_nmea_degrees(data[3], data[4])
+                        lon = parse_nmea_degrees(data[5], data[6])
+                        elevation = float(data[9]) if len(data) > 9 and data[9] else 0.0
+
+                        # Update the global object immediately
+                        LATEST_GPS = {
+                            "timestamp": datetime.now(timezone.utc)
+                            .astimezone()
+                            .isoformat(),
+                            "latitude": lat,
+                            "longitude": lon,
+                            "elevation": elevation,
+                        }
+
+            # Yield control to allow the image worker to run
+            await asyncio.sleep(0.01)
 
     except Exception as e:
-        print("Failed to capture image:", e)
-        return None
+        print(f"GPS Worker Error: {e}")
 
-    return image_path
 
-def main():
+# --- Async Task 2: Strict Camera Schedule ---
+async def image_worker():
+    global LATEST_GPS
+    print("Starting background Image capture worker...")
+
+    while True:
+        # Capture an image immediately when the loop starts / hits interval
+        file_name = (
+            datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S%z.jpg")
+        )
+        DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+
+        if not os.path.exists(DATE_DIR):
+            os.makedirs(DATE_DIR)
+
+        image_path = os.path.join(DATE_DIR, file_name)
+
+        try:
+            # Capture logic (keeps your exact encoding steps)
+            array = cam.capture_array()
+            frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+            frame = cv2.resize(frame, (2028, 1520), interpolation=cv2.INTER_AREA)
+            io_buf = cv2.imencode(".jpg", frame)[1].tobytes()
+
+            encrypted = box.encrypt(io_buf)
+            with open(image_path, "wb") as f:
+                f.write(encrypted)
+
+            # Snapshot the current values of LATEST_GPS.
+            # Even if the GPS is still searching, it will write "Searching..." safely instead of breaking.
+            txt_path = image_path.replace(".jpg", ".txt")
+            with open(txt_path, "w") as f:
+                f.write(
+                    f"{LATEST_GPS['timestamp']},{LATEST_GPS['latitude']},{LATEST_GPS['longitude']},{LATEST_GPS['elevation']}"
+                )
+
+            print(f"Captured image & text: {file_name} | Lat: {LATEST_GPS['latitude']}")
+
+        except Exception as e:
+            print("Failed to capture image:", e)
+
+        # Strictly wait 10 seconds before taking the next photo
+        # Unlike time.sleep(), asyncio.sleep() lets the GPS continue processing lines!
+        await asyncio.sleep(CAPTURE_INTERVAL)
+
+
+# --- Core Async Loop Controller ---
+async def main():
+    while not check_if_camera_connected():
+        print("Camera not connected. Retrying in 10 seconds...")
+        await asyncio.sleep(10)
+
+    print("Camera connected. Starting concurrent tasks...")
+
+    # Run both workers simultaneously
+    await asyncio.gather(gps_worker(), image_worker())
+
+
+if __name__ == "__main__":
     while not check_if_camera_connected():
         print("Camera not connected. Retrying in 10 seconds...")
         time.sleep(1)
 
     print("Camera connected.")
 
-    CAPTURE_INTERVAL = 10  # seconds
-    # mode = check_capturing_mode(timeout=5)
-    mode = "photo"
-    print(f"Initial capturing mode: {mode}")
-    while True:
-        try:
-            last_capture_time = time.time()
-            capture_image()
-            now = time.time()
-            if now - last_capture_time < CAPTURE_INTERVAL:
-                time.sleep(CAPTURE_INTERVAL - (now - last_capture_time))
-        except KeyboardInterrupt:
-            print("Exiting...")
-            break
-        except Exception as e:
-            print(f"Error in main loop: {e}")
-            time.sleep(5)
-        time.sleep(1)
-
-if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nProgram stopped safely by user.")

@@ -18,6 +18,7 @@ UPLOAD_URL = f"{BACKEND_URL}/upload-image"
 UPLOAD_VIDEO_URL = f"{BACKEND_URL}/upload-video"
 CHECK_URL = f"{BACKEND_URL}/check-image-uploaded"
 CHECK_ALL_URL = f"{BACKEND_URL}/check-all-images-uploaded"
+UPLOAD_GPS_URL = f"{BACKEND_URL}/location/upload-gps"
 
 OUTPUT = "Camera/timelapse"
 
@@ -75,6 +76,26 @@ def send_video(video_path, uploaded_files, LOG_FILE):
 
     return "video"
 
+def send_gps(gps_path):
+    with open(gps_path, "r") as gps_file:
+        data = gps_file.read().strip()
+
+    timestamp, latitude, longitude, elevation = data.strip().split(",")
+
+    payload = {
+        "timestamp": timestamp,
+        "latitude": latitude,
+        "longitude": longitude,
+        "elevation": elevation,
+    }
+    response = requests.put(UPLOAD_GPS_URL, json=payload, headers={"X-Device-ID": device_id})
+
+    if response.status_code == 200:
+        print(f"Uploaded GPS data: {payload}")
+        return response.json()
+    else:
+        print(f"Failed to upload GPS data: {response.status_code} - {response.text}")
+        return None
 
 def check_if_connected():
     try:

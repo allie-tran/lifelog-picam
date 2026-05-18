@@ -293,9 +293,8 @@ class RawGPS(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     elevation = Column(Float)
-    timestamp = Column(Float)
-
-    device = relationship("Device", back_populates="raw_gps")
+    timestamp = Column(DateTime(timezone=False))
+    timezone = Column(Text)
 
 
 class ImageGPS(Base):
