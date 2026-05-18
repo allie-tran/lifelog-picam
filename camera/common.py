@@ -77,6 +77,8 @@ def send_video(video_path, uploaded_files, LOG_FILE):
     return "video"
 
 def send_gps(gps_path):
+    if not os.path.exists(gps_path):
+        return None
     with open(gps_path, "r") as gps_file:
         data = gps_file.read().strip()
 

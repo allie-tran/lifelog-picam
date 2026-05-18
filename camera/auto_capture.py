@@ -65,6 +65,7 @@ async def gps_worker():
                 # Read a line asynchronously
                 raw_line = await aioserial_instance.readline_async()
                 line = raw_line.decode("utf-8", errors="replace").strip()
+                print("Debug GPS Line:", line)
 
                 if line.startswith("$GPRMC"):
                     data = line.split(",")
@@ -85,7 +86,7 @@ async def gps_worker():
                         }
 
             # Yield control to allow the image worker to run
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
 
     except Exception as e:
         print(f"GPS Worker Error: {e}")
@@ -119,13 +120,13 @@ async def image_worker():
             with open(image_path, "wb") as f:
                 f.write(encrypted)
 
-            # Snapshot the current values of LATEST_GPS.
-            # Even if the GPS is still searching, it will write "Searching..." safely instead of breaking.
-            txt_path = image_path.replace(".jpg", ".txt")
-            with open(txt_path, "w") as f:
-                f.write(
-                    f"{LATEST_GPS['timestamp']},{LATEST_GPS['latitude']},{LATEST_GPS['longitude']},{LATEST_GPS['elevation']}"
-                )
+            if LATEST_GPS["latitude"]:
+                # Snapshot the current values of LATEST_GPS.
+                txt_path = image_path.replace(".jpg", ".txt")
+                with open(txt_path, "w") as f:
+                    f.write(
+                        f"{LATEST_GPS['timestamp']},{LATEST_GPS['latitude']},{LATEST_GPS['longitude']},{LATEST_GPS['elevation']}"
+                    )
 
             print(f"Captured image & text: {file_name} | Lat: {LATEST_GPS['latitude']}")
 
@@ -144,7 +145,7 @@ async def main():
         await asyncio.sleep(10)
 
     print("Camera connected. Starting concurrent tasks...")
-    
+
     # Run both workers simultaneously
     await asyncio.gather(
         gps_worker(),
