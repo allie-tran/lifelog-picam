@@ -23,9 +23,13 @@ def verify_device_token(token: str) -> Dict[str, str]:
     try:
         data = decode(token, SECRET, algorithms=["HS256"])
         if "device" not in data:
+            print("Token missing 'device' field:", data)
             raise HTTPException(status_code=401, detail="Invalid token")
+        print("Ok token for device:", data["device"])
         return data  # type: ignore
     except ExpiredSignatureError:
+        print("Token expired:", token)
         raise HTTPException(status_code=401, detail="Token has expired")
     except InvalidTokenError:
+        print("Invalid token:", token)
         raise HTTPException(status_code=401, detail="Invalid token")

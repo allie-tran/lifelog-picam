@@ -26,11 +26,12 @@ import GpsTrack from 'components/GpsTrack';
 import { getGPSByDate } from 'apis/process';
 
 function MainPage() {
-    const navigate = useNavigate();
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
-    const device = searchParams.get('device_id');
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const today = dayjs().format('YYYY-MM-DD');
+    const device = searchParams.get('device');
+    const deviceId =
+        useAppSelector((state) => state.auth.deviceId) || device || '';
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
@@ -68,6 +69,7 @@ function MainPage() {
         },
         {
             revalidateOnFocus: false,
+            refreshInterval: date === today ? 60 * 1000 : 0,
         }
     );
 
@@ -83,15 +85,17 @@ function MainPage() {
     );
 
     const { data: gpsTrack } = useSWR(
-        ['gps-track', deviceId, date],
+        ['gps-track', deviceId, date, deviceAccess],
         async () => {
             if (
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
                 const data = await getGPSByDate(deviceId, date || '');
+                console.log('GPS data:', data);
                 return data;
             } else {
+                console.warn('User does not have access to GPS data', deviceAccess);
                 return [] as GPSData[];
             }
         },

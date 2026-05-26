@@ -122,7 +122,6 @@ def to_absolute_bbox(bbox, image_width, image_height):
     return abs_x1, abs_y1, abs_x2, abs_y2
 
 
-
 def get_device_from_headers(request: Request):
     device_token = request.headers.get("X-Device-ID")
     if not device_token:

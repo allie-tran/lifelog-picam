@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import os
@@ -19,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
+from apis.polar import mqtt_consumer
 from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage,  ResultSegment
 from app_types.search import SearchQuery
 from auth import auth_app, _require_admin, _require_any_access, _require_owner
@@ -187,8 +189,14 @@ async def lifespan(app: CustomFastAPI):
                 upsert=True,
             )
     app.features = load_features(app)
+    mqtt_task = asyncio.create_task(mqtt_consumer())
     yield
     close_db()
+    mqtt_task.cancel()
+    try:
+        await mqtt_task
+    except asyncio.CancelledError:
+        print("MQTT consumer safely stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +293,7 @@ async def upload_image(
                     device,
                     date,
                     f"{date}/{file_name}",
-                    timestamp.astimezone(timezone.utc).timestamp(),
+                    timestamp.astimezone(timezone.utc),
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 

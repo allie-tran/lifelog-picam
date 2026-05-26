@@ -14,6 +14,7 @@ import 'leaflet/dist/leaflet.css';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import { useAppSelector } from 'reducers/hooks';
+import GpsTrackerHook from './GpsTracker';
 
 let DefaultIcon = L.icon({
     iconUrl: icon,
@@ -73,6 +74,7 @@ export function GpsTrackMap({
     gpsTrack: GPSData[];
     currentTrack: GPSData[];
 }) {
+    const { GpsComponent, currentPosition } = GpsTrackerHook();
     const highlightedTrack = useAppSelector(
         (state) => state.map.highlightedTrack
     );
@@ -90,33 +92,51 @@ export function GpsTrackMap({
         });
     }, [gpsTrack]);
 
-    if (gpsTrack.length < 2) {
-        return null;
+    const allPositions: L.LatLngExpression[] =
+        gpsTrack?.map((point) => [point.latitude, point.longitude]) || [];
+
+    const currentPositions: L.LatLngExpression[] =
+        currentTrack?.map((point) => [point.latitude, point.longitude]) || [];
+
+    let endPos: L.LatLngExpression | undefined;
+    if (currentPositions.length > 0) {
+        endPos = currentPositions[currentPositions.length - 1];
+    } else if (allPositions.length > 0) {
+        endPos = allPositions[allPositions.length - 1];
     }
 
-    const allPositions: L.LatLngExpression[] = gpsTrack.map((point) => [
-        point.latitude,
-        point.longitude,
-    ]);
-
-    const currentPositions: L.LatLngExpression[] = currentTrack.map((point) => [
-        point.latitude,
-        point.longitude,
-    ]);
-
-    const endPos =
-        currentPositions.length > 0
-            ? currentPositions[currentPositions.length - 1]
-            : allPositions[allPositions.length - 1];
+    const currentPos = [
+        currentPosition?.coords.latitude || 0,
+        currentPosition?.coords.longitude || 0,
+    ] as L.LatLngExpression;
 
     return (
-        <Box sx={{ height: '100%', width: 400, border: '1px solid #ccc', borderRadius: 1, overflow: 'hidden' }}>
+        <Box
+            sx={{
+                height: '100%',
+                width: 400,
+                border: '1px solid #ccc',
+                borderRadius: 1,
+                overflow: 'hidden',
+            }}
+        >
+            {GpsComponent()}
             <MapContainer
-                center={endPos}
+                center={endPos || currentPos}
                 zoom={13}
                 scrollWheelZoom={true}
                 style={{ height: '100%', width: '100%' }}
             >
+                {currentPosition && (
+                    <Marker
+                        position={[
+                            currentPosition.coords.latitude,
+                            currentPosition.coords.longitude,
+                        ]}
+                    >
+                        <Popup>Current Position</Popup>
+                    </Marker>
+                )}
                 <TileLayer
                     // url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; OpenStreetMap contributors"
@@ -126,7 +146,9 @@ export function GpsTrackMap({
                     positions={
                         currentPositions.length > 0
                             ? currentPositions
-                            : allPositions
+                            : allPositions.length > 0
+                              ? allPositions
+                              : [currentPos]
                     }
                 />
                 {/* Gradient segments */}
@@ -147,7 +169,7 @@ export function GpsTrackMap({
                         gpsTrack={highlightedTrack}
                         showMarkers={true}
                         pathOptions={{
-                            color: "#4682B4",
+                            color: '#4682B4',
                             weight: 5,
                             opacity: 1,
                         }}
@@ -155,7 +177,7 @@ export function GpsTrackMap({
                 )}
                 {/* Current track overlay */}
                 <Tracks
-                    className='gps-direction-flow'
+                    className="gps-direction-flow"
                     gpsTrack={currentTrack}
                     showMarkers={false}
                     pathOptions={{
@@ -220,7 +242,7 @@ const Tracks = ({
     }
     return (
         <Polyline
-            pane='markerPane'
+            pane="markerPane"
             positions={gpsTrack.map((point) => [
                 point.latitude,
                 point.longitude,

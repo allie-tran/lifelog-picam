@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, select, update, insert
 from constants import DIR, THUMBNAIL_DIR, BACKUP_DIR
 from database.models import Image
 from datetime import datetime, timezone
@@ -33,9 +33,7 @@ def remove_physical_images(session, device_id: str, image_paths: list[str]):
     session.commit()
 
 
-
-def mark_error(
-    session, device_id: str, date: str, image_path: str, timestamp: float
+def mark_error( session, device_id: str, date: str, image_path: str, timestamp: datetime
 ):
     """
     This function adds a MongoDB placeholder entry just to tell the device to not keep sending the same image over and over again. It doesn't do any cleanup.
@@ -50,14 +48,14 @@ def mark_error(
     if existing:
         session.execute(update(Image).where(Image.device == device_id, Image.image_path == image_path).values(deleted=True))
     else:
-        session.execute(
-            insert(Image).values(
-                device=device_id,
-                image_path=image_path,
-                deleted=True,
-                deleted_time=datetime.now(timezone.utc),
-                timestamp=timestamp,
-                is_video=False,
-                date=date,
-            )
+        stmt = insert(Image).values(
+            device=device_id,
+            image_path=image_path,
+            deleted=True,
+            deleted_time=datetime.now(timezone.utc),
+            thumbnail=image_path.replace(".jpg", ".webp"),
+            timestamp=timestamp,
+            is_video=False,
+            date=date,
         )
+        session.execute(stmt)

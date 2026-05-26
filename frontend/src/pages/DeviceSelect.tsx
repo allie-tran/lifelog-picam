@@ -15,7 +15,7 @@ const DeviceSelect = ({
 }) => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || searchParams.get('device') || '';
     const dispatch = useAppDispatch();
 
     const { data: devices, isLoading: devicesLoading } = useSWR(
@@ -41,7 +41,6 @@ const DeviceSelect = ({
             selfOnChange(devices[0]);
         }
     }, [devices, deviceId, onChange]);
-
 
     return (
         <FormControl fullWidth sx={{ width: '200px', pt: 1 }}>

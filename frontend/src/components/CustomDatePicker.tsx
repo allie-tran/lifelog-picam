@@ -160,7 +160,7 @@ const CustomDatePicker = ({
                     value={date ? dayjs(date) : null}
                     views={['year', 'month', 'day']}
                     sx={{ width: '250px', transform: 'translateY(4px)' }}
-                    onAccept={(newValue) => {
+                    onChange={(newValue) => {
                         setPage(1);
                         setHour(null);
                         navigate(

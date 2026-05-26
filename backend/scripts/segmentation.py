@@ -144,6 +144,11 @@ def segment_images(
     ]
 
     window_size = 3
+    if len(similarities) == 0:
+        return [image_paths]
+    elif len(similarities) < window_size:
+        window_size = len(similarities)
+
     smoothed = np.convolve(
         similarities, np.ones(window_size) / window_size, mode="same"
     )

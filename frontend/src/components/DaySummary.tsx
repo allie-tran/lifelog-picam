@@ -5,6 +5,7 @@ import {
     SettingsRounded,
 } from '@mui/icons-material';
 import {
+    alpha,
     Box,
     Button,
     Card,
@@ -61,6 +62,8 @@ const DaySummaryComponent = () => {
         mutate,
     } = useSWR({ date, deviceId }, () => getDaySummary(deviceId, date || ''), {
         revalidateOnFocus: false,
+        revalidateIfStale: false,
+        shouldRetryOnError: false,
     });
 
     // const {
@@ -108,15 +111,24 @@ const DaySummaryComponent = () => {
             </Stack>
         );
 
-    if (isError || !daySummary)
+    if (isError || !daySummary || isLoading)
         return (
-            <>
-                <Typography p={2}>No data available.</Typography>
-                <ReprocessButton
-                    onReprocess={handleProcess}
-                    isLoading={isLoading}
-                />
-            </>
+            <Card variant="outlined" sx={{ backgroundColor: alpha('#333', 0.2) }}>
+                <CardContent>
+                    <Stack
+                        spacing={0}
+                        padding={0}
+                        alignItems="center"
+                        justifyContent="center"
+                    >
+                        <Typography p={2} color="text.secondary">No Summary Available</Typography>
+                        <ReprocessButton
+                            onReprocess={handleProcess}
+                            isLoading={isLoading}
+                        />
+                    </Stack>
+                </CardContent>
+            </Card>
         );
 
     const allPeriodNames = Object.keys(daySummary.periodMetrics);
@@ -704,6 +716,7 @@ const ReprocessButton = ({
                 variant="outlined"
                 onClick={() => setShow(true)}
                 disabled={isLoading}
+                sx={{ backgroundColor: 'background.paper' }}
             >
                 {isLoading ? 'Processing...' : 'Reprocess'}
             </Button>

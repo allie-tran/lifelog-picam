@@ -273,9 +273,12 @@ def get_all_faces(
                 bbox = to_absolute_bbox(rel_bbox, img.width, img.height)
                 cropped_img = img.crop(bbox)
                 buf = io.BytesIO()
-                cropped_img.save(buf, format="JPEG")
-                cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
-                face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
+                try:
+                    cropped_img.save(buf, format="JPEG")
+                    cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
+                    face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
+                except ValueError as e:
+                    print(f"Error processing image {image_full_path}: {e}")
         if len(face["images"]) > 0:
             faces.append(face)
     return faces
