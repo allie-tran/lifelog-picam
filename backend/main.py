@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
-from apis.polar import mqtt_consumer
+from biometrics import mqtt_consumer
 from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSInfo, LifelogImage,  ResultSegment
 from app_types.search import SearchQuery
 from auth import auth_app, _require_admin, _require_any_access, _require_owner
