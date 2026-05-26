@@ -450,29 +450,16 @@ class Annotation(Base):
 # ---------------------------------------------------------------------------
 # Health Data
 
-
-# --- INHERITANCE HIERARCHY FOR MEASUREMENTS ---
-
-class MeasurementData(Base):
-    __tablename__ = "measurement_data"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-
+class HeartRateData(Base):
+    __tablename__ = "bio_heart_rate"
+    __table_args__ = (
+        Index("ix_hr_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_hr_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_id: Mapped[str] = mapped_column(String(100))
     time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
 
-    # Polymorphic configuration column
-    sensor_type: Mapped[str] = mapped_column(String(50))
-
-    __mapper_args__ = {
-        "polymorphic_on": "sensor_type",
-        "polymorphic_identity": "base_measurement",
-    }
-
-
-class HeartRateData(MeasurementData):
-    __tablename__ = "heart_rate_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
 
     contact_status: Mapped[bool] = mapped_column(Boolean)
     contact_status_supported: Mapped[bool] = mapped_column(Boolean)
@@ -486,9 +473,16 @@ class HeartRateData(MeasurementData):
     __mapper_args__ = {"polymorphic_identity": "HR"}
 
 
-class MagnetometerData(MeasurementData):
-    __tablename__ = "magnetometer_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+class MagnetometerData(Base):
+    __tablename__ = "bio_magnetometer"
+    __table_args__ = (
+        Index("ix_mag_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_mag_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
 
     x: Mapped[float] = mapped_column(Float)
     y: Mapped[float] = mapped_column(Float)
@@ -497,9 +491,16 @@ class MagnetometerData(MeasurementData):
     __mapper_args__ = {"polymorphic_identity": "MAGNETOMETER"}
 
 
-class AccelerometerData(MeasurementData):
-    __tablename__ = "accelerometer_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+class AccelerometerData(Base):
+    __tablename__ = "bio_accelerometer"
+    __table_args__ = (
+        Index("ix_acc_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_acc_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
 
     x: Mapped[float] = mapped_column(Float)
     y: Mapped[float] = mapped_column(Float)
@@ -508,9 +509,16 @@ class AccelerometerData(MeasurementData):
     __mapper_args__ = {"polymorphic_identity": "ACC"}
 
 
-class GyroscopeData(MeasurementData):
-    __tablename__ = "gyroscope_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+class GyroscopeData(Base):
+    __tablename__ = "bio_gyroscope"
+    __table_args__ = (
+        Index("ix_gyro_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_gyro_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
 
     x: Mapped[float] = mapped_column(Float)
     y: Mapped[float] = mapped_column(Float)
@@ -519,9 +527,16 @@ class GyroscopeData(MeasurementData):
     __mapper_args__ = {"polymorphic_identity": "GYRO"}
 
 
-class PPGData(MeasurementData):
-    __tablename__ = "ppg_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+class PPGData(Base):
+    __tablename__ = "bio_ppg"
+    __table_args__ = (
+        Index("ix_ppg_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_ppg_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
 
     channel_samples: Mapped[list] = mapped_column(JSON, default=list)
     status_bits: Mapped[list] = mapped_column(JSON, default=list)
@@ -529,9 +544,15 @@ class PPGData(MeasurementData):
     __mapper_args__ = {"polymorphic_identity": "PPG"}
 
 
-class PPIData(MeasurementData):
-    __tablename__ = "ppi_data"
-    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+class PPIData(Base):
+    __tablename__ = "bio_ppi"
+    __table_args__ = (
+        Index("ix_ppi_device_time", "device_id", "time_stamp"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
 
     blocker_bit: Mapped[bool] = mapped_column(Boolean)
     error_estimate: Mapped[int] = mapped_column(Integer)
