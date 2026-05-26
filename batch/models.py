@@ -25,6 +25,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+from typing import List, Optional
+from sqlalchemy import String, Integer, Boolean, Float, BigInteger, ForeignKey, JSON
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 
 class Base(DeclarativeBase):
     pass
@@ -441,3 +445,109 @@ class Annotation(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     author = Column(Text)
     image = relationship("Image", back_populates="annotations")
+
+
+# ---------------------------------------------------------------------------
+# Health Data
+
+
+# --- INHERITANCE HIERARCHY FOR MEASUREMENTS ---
+
+class MeasurementData(Base):
+    __tablename__ = "measurement_data"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+    # Polymorphic configuration column
+    sensor_type: Mapped[str] = mapped_column(String(50))
+
+    __mapper_args__ = {
+        "polymorphic_on": "sensor_type",
+        "polymorphic_identity": "base_measurement",
+    }
+
+
+class HeartRateData(MeasurementData):
+    __tablename__ = "heart_rate_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    contact_status: Mapped[bool] = mapped_column(Boolean)
+    contact_status_supported: Mapped[bool] = mapped_column(Boolean)
+    corrected_hr: Mapped[int] = mapped_column(Integer)
+    hr: Mapped[int] = mapped_column(Integer)
+    ppg_quality: Mapped[int] = mapped_column(Integer)
+    rr_available: Mapped[bool] = mapped_column(Boolean)
+    # Using JSON column for lists guarantees cross-compatibility (SQLite/Postgres)
+    rrs_ms: Mapped[list] = mapped_column(JSON, default=list)
+
+    __mapper_args__ = {"polymorphic_identity": "HR"}
+
+
+class MagnetometerData(MeasurementData):
+    __tablename__ = "magnetometer_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "MAGNETOMETER"}
+
+
+class AccelerometerData(MeasurementData):
+    __tablename__ = "accelerometer_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "ACC"}
+
+
+class GyroscopeData(MeasurementData):
+    __tablename__ = "gyroscope_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "GYRO"}
+
+
+class PPGData(MeasurementData):
+    __tablename__ = "ppg_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    channel_samples: Mapped[list] = mapped_column(JSON, default=list)
+    status_bits: Mapped[list] = mapped_column(JSON, default=list)
+
+    __mapper_args__ = {"polymorphic_identity": "PPG"}
+
+
+class PPIData(MeasurementData):
+    __tablename__ = "ppi_data"
+    id: Mapped[int] = mapped_column(ForeignKey("measurement_data.id", ondelete="CASCADE"), primary_key=True)
+
+    blocker_bit: Mapped[bool] = mapped_column(Boolean)
+    error_estimate: Mapped[int] = mapped_column(Integer)
+    hr: Mapped[int] = mapped_column(Integer)
+    ppi: Mapped[int] = mapped_column(Integer)
+    skin_contact_status: Mapped[bool] = mapped_column(Boolean)
+    skin_contact_supported: Mapped[bool] = mapped_column(Boolean)
+
+    __mapper_args__ = {"polymorphic_identity": "PPI"}
+
+# Updated mapping pointing directly to the SQLalchemy Entities
+db_type_mapping = {
+    "PPG": PPGData,
+    "ACC": AccelerometerData,
+    "HR": HeartRateData,
+    "MAGNETOMETER": MagnetometerData,
+    "GYRO": GyroscopeData,
+    "PPI": PPIData,
+}
