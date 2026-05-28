@@ -33,6 +33,9 @@ def _require_admin(access_level: AccessLevel):
 def health_check():
     return {"status": "ok"}
 
+# -----------------------------------------------------------------------
+# USERS
+# -----------------------------------------------------------------------
 @auth_app.post(
     "/register",
     response_model=UserResponse,
@@ -73,6 +76,9 @@ def verify(token: str):
     return { "success": True, "username": user.username, "devices": user.devices }
 
 
+# -----------------------------------------------------------------------
+# ADMIN
+# -----------------------------------------------------------------------
 @auth_app.get("/users", response_model=list[UserResponse], dependencies=[Depends(auth_dependency)])
 def get_users(user: Annotated[User, Depends(get_user)]):
     """

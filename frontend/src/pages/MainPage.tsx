@@ -5,30 +5,29 @@ import {
     Stack,
     Typography,
 } from '@mui/material';
+import { GPSData } from '@utils/types';
+import { getGPSByDate } from 'apis/process';
 import CustomDatePicker from 'components/CustomDatePicker';
-import DaySummaryComponent from 'components/DaySummary';
+import DeleteRange from 'components/DeleteRange';
+import GpsTrack from 'components/GpsTrack';
 import LifelogEvent from 'components/LifelogEvent';
+import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 import { setDeviceId } from 'reducers/auth';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
-import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import '../App.css';
+import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 import DeviceSelect from './DeviceSelect';
-import DeleteRange from 'components/DeleteRange';
-import dayjs from 'dayjs';
-import { GPSData } from '@utils/types';
-import GpsTrack from 'components/GpsTrack';
-import { getGPSByDate } from 'apis/process';
 
 function MainPage() {
     const [searchParams, _] = useSearchParams();
-    const date = searchParams.get('date');
     const today = dayjs().format('YYYY-MM-DD');
+    const date = searchParams.get('date');
     const device = searchParams.get('device');
     const deviceId =
         useAppSelector((state) => state.auth.deviceId) || device || '';
@@ -69,7 +68,7 @@ function MainPage() {
         },
         {
             revalidateOnFocus: false,
-            refreshInterval: date === today ? 60 * 1000 : 0,
+            refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
 
@@ -95,7 +94,10 @@ function MainPage() {
                 console.log('GPS data:', data);
                 return data;
             } else {
-                console.warn('User does not have access to GPS data', deviceAccess);
+                console.warn(
+                    'User does not have access to GPS data',
+                    deviceAccess
+                );
                 return [] as GPSData[];
             }
         },
@@ -148,7 +150,8 @@ function MainPage() {
                         />
                     </Stack>
                     {/* <Settings /> */}
-                    <DaySummaryComponent />
+                    {/* <DaySummaryComponent /> */}
+                    {/* <SensorHistory /> */}
                 </Container>
                 {availableHours.length > 0 && (
                     <Typography

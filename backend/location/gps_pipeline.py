@@ -28,6 +28,8 @@ def load_all_points(session: Session, device: str, date: str) -> pd.DataFrame:
     stmt = select(RawGPS).join(Device, Device.id == RawGPS.device_id).where(Device.device_id == device, func.date(RawGPS.timestamp) == date).order_by(RawGPS.timestamp)
     all_points = session.execute(stmt).scalars().all()
     all_points = [p.__dict__ for p in all_points]  # Convert ORM objects to dicts
+    if not all_points:
+        return pd.DataFrame(columns=["latitude", "longitude", "elevation", "timestamp"])
     df = pd.DataFrame(all_points)
     df.sort_values("timestamp", inplace=True)
     # add date column as "YYYY-MM-DD" string for easier merging later
@@ -44,7 +46,12 @@ def assign_tracks_by_gap(df: pd.DataFrame, gap_seconds: int = GAP_SECONDS) -> pd
     whenever consecutive points are more than gap_seconds apart.
     """
     df = df.copy()
-    dt = df["timestamp"].diff().dt.total_seconds().fillna(0)
+    try:
+        dt = df["timestamp"].diff().dt.total_seconds().fillna(0)
+    except Exception as e:
+        print("Error calculating time differences:", e)
+        print("Timestamps:", df["timestamp"])
+        raise e
     df["track_id"] = (dt > gap_seconds).cumsum()
     return df
 
@@ -61,6 +68,8 @@ def haversine_distance(lat1, lon1, lat2, lon2, alt1, alt2):
     d = 2 * R * np.arcsin(np.sqrt(a))
 
     # Apply vertical (altitude) distance
+    if alt1 is None or alt2 is None:
+        alt1 = alt2 = 0
     dz = alt2 - alt1
     return np.sqrt(d ** 2 + dz ** 2)
 
@@ -459,6 +468,9 @@ def run_pipeline(session: Session, device: str, date: str):
     print("1. Loading GPX files…")
     df = load_all_points(session, device, date)
     print(f"   {len(df)} raw points loaded")
+    if len(df) == 0:
+        print("No GPS data found for this date/device. Exiting.")
+        return
 
     print("2. Re-splitting tracks by time gap…")
     df = assign_tracks_by_gap(df)
@@ -519,6 +531,7 @@ def run_pipeline(session: Session, device: str, date: str):
                 rows = []
         if rows:
             stmt = insert(ImageGPS).values(rows)
+            stmt.on_conflict_do_nothing(constraint="image_gps_image_id_key")
             session.execute(stmt)
         image_data.extend(data)
     session.commit()

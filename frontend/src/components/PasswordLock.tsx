@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useCookies } from 'react-cookie';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { verifyTokenRequest } from '../apis/auth';
 import {
     AppBar,
@@ -24,6 +24,7 @@ import {
     HomeRounded,
     LogoutOutlined,
     LogoutRounded,
+    MonitorHeartRounded,
     RotateLeftRounded,
     SearchRounded,
     UploadRounded,
@@ -31,6 +32,7 @@ import {
 
 const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
+    const [searchParams, _] = useSearchParams();
     const { isAuthenticated, deviceId } = useAppSelector((state) => state.auth);
     const dispatch = useAppDispatch();
     const [cookies, _setCookies, removeCookies] = useCookies(['token']);
@@ -100,9 +102,29 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate(`/${deviceId ? `?device=${deviceId}` : ''}`)}
+                                // onClick={() => navigate(`/${deviceId ? `?device=${deviceId}` : ''}`)}
+                                onClick={() => {
+                                    // keep device and date
+                                    const date = searchParams.get('date');
+                                    const device = searchParams.get('device');
+                                    navigate(`/?${device ? `device=${device}&` : ''}${date ? `date=${date}` : ''}`);
+                                }}
                             >
                                 <HomeRounded />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Biometrics">
+                            <IconButton
+                                size="large"
+                                color="secondary"
+                                onClick={() => {
+                                    // keep device and date
+                                    const date = searchParams.get('date');
+                                    const device = searchParams.get('device');
+                                    navigate(`/biometrics?${device ? `device=${device}&` : ''}${date ? `date=${date}` : ''}`);
+                                }}
+                            >
+                                <MonitorHeartRounded />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title="Deleted Images">

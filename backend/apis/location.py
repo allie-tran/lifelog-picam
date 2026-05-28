@@ -38,8 +38,10 @@ async def upload_gps(
 ):
     # find device
     timezone = tf.timezone_at(lng=request.longitude, lat=request.latitude)
+    device_id = session.execute(select(Device.id).where(Device.device_id == device)).scalar_one_or_none()
+
     stmt = insert(RawGPS).values(
-        device_id=select(Device.id).where(Device.device_id == device),
+        device_id=device_id,
         latitude=request.latitude,
         longitude=request.longitude,
         elevation=request.elevation,

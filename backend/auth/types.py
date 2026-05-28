@@ -41,12 +41,23 @@ class AccessChangeRequest(CamelCaseModel):
     device_id: str
     access_level: AccessLevel
 
+class SensorType(StrEnum):
+    CAMERA = "camera"
+    BIOMETRIC = "biometric"
+    LOCATION = "location"
+
+class SensorDevice(CamelCaseModel):
+    device_id: str
+    sensor_type: SensorType
+    secret: str | None = None
+
 class User(Document):
     username: str
     email: str
     password: str # hashed password
     is_admin: bool = False
     devices: list[DeviceAccess] | None = None
+    sensors: list[SensorDevice] | None = None
     goal_targets: list[CustomTarget] = []
 
     class ODMConfig(Document.ODMConfig):

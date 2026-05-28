@@ -7,6 +7,7 @@ import os
 import numpy as np
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from app_types import ActionType, CustomTarget, DaySummary, SummarySegment
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, GROUPED_CATEGORIES
@@ -32,6 +33,13 @@ encoded_activities_dict = {
     for idx, activity in enumerate(GROUPED_CATEGORIES.keys())
 }
 
+encoded_prompts = {}
+
+def encode_with_cache(session: Session, prompt: str, device: str):
+    if prompt not in encoded_prompts:
+        encoded = clip_model.encode_text(prompt, normalize=True)
+        encoded_prompts[prompt] = apply_transformation(encoded, get_matrix(session, device))
+    return encoded_prompts[prompt]
 
 def summarize_lifelog_by_day(
     session,
@@ -58,11 +66,14 @@ def summarize_lifelog_by_day(
         print(f"Encoding prompt for target: {target.name} with action type {target.action_type}")
         name = target.name
         action_type = target.action_type
-        encoded_query = clip_model.encode_text(f"a photo of {name}", normalize=True)
-        encoded_negative_query = clip_model.encode_text(f"a photo without {name}", normalize=True)
+        encoded_query = encode_with_cache(session, f"a photo of {name}", summary.device)
+        encoded_negative_query = encode_with_cache(session, f"a photo without {name}", summary.device)
 
-        encoded_query = apply_transformation(encoded_query, get_matrix(session, summary.device))
-        encoded_negative_query = apply_transformation(encoded_negative_query, get_matrix(session, summary.device))
+        # encoded_query = clip_model.encode_text(f"a photo of {name}", normalize=True)
+        # encoded_negative_query = clip_model.encode_text(f"a photo without {name}", normalize=True)
+
+        # encoded_query = apply_transformation(encoded_query, get_matrix(session, summary.device))
+        # encoded_negative_query = apply_transformation(encoded_negative_query, get_matrix(session, summary.device))
 
         target_configs.append((name, action_type, encoded_query, encoded_negative_query))
 
@@ -129,7 +140,8 @@ def summarize_lifelog_by_day(
         merged.append(current_seg)
 
         # Attach Visuals and LLM Summaries for the Period
-        query_vec = clip_model.encode_text(f"a photo of {target_name}", normalize=True)
+        # query_vec = clip_model.encode_text(f"a photo of {target_name}", normalize=True)
+        query_vec = encode_with_cache(session, f"a photo of {target_name}", summary.device)
         for seg in merged:
             # (Selection logic for representative images remains same as your snippet)
             seg_paths, seg_feats = get_segment_data(session, summary, seg)
@@ -329,46 +341,46 @@ def create_day_timeline(session, device: str, date: str):
             # Choose the most frequent activity in the slot
             activity = max(set(slot_activities), key=slot_activities.count)
 
-        if seg_paths:
-            # Get features
-            feats = (
-                session.execute(
-                    select(ImageEmbedding.embedding, Image.image_path).where(
-                        Image.image_path.in_(seg_paths),
-                    ).join(Image, ImageEmbedding.image_id == Image.id)
-                )
-            )
-            image_to_feats = {row.image_path: row.embedding for row in feats}
-            seg_paths = [path for path in seg_paths if path in image_to_feats]
-            seg_feats = np.array([image_to_feats[path] for path in seg_paths if path in image_to_feats])
-            if len(seg_feats) == 0:
-                representative_image = None
-                representative_images = []
-            else:
-                representative_image_paths = pick_representative_index_for_segment(
-                    seg_paths,
-                    seg_feats,
-                    encoded_activities_dict.get(activity),
-                )
-                representative_image = session.execute(select(Image).where(
-                    Image.device == device,
-                    Image.image_path == representative_image_paths[0],
-                )).scalar_one_or_none()
+        # if seg_paths:
+        #     # Get features
+        #     feats = (
+        #         session.execute(
+        #             select(ImageEmbedding.embedding, Image.image_path).where(
+        #                 Image.image_path.in_(seg_paths),
+        #             ).join(Image, ImageEmbedding.image_id == Image.id)
+        #         )
+        #     )
+        #     image_to_feats = {row.image_path: row.embedding for row in feats}
+        #     seg_paths = [path for path in seg_paths if path in image_to_feats]
+        #     seg_feats = np.array([image_to_feats[path] for path in seg_paths if path in image_to_feats])
+        #     if len(seg_feats) == 0:
+        #         representative_image = None
+        #         representative_images = []
+        #     else:
+        #         representative_image_paths = pick_representative_index_for_segment(
+        #             seg_paths,
+        #             seg_feats,
+        #             encoded_activities_dict.get(activity),
+        #         )
+        #         representative_image = session.execute(select(Image).where(
+        #             Image.device == device,
+        #             Image.image_path == representative_image_paths[0],
+        #         )).scalar_one_or_none()
 
-                representative_image = _orm_to_lifelog(representative_image) if representative_image else None
+        #         representative_image = _orm_to_lifelog(representative_image) if representative_image else None
 
-                representative_images = session.execute(
-                    select(Image).where(
-                        Image.device == device,
-                        Image.image_path.in_(representative_image_paths),
-                    ).order_by(Image.timestamp.asc())
-                ).scalars().all()
-                representative_images = [
-                    _orm_to_lifelog(img) for img in representative_images
-                ]
-        else:
-            representative_image = None
-            representative_images = []
+        #         representative_images = session.execute(
+        #             select(Image).where(
+        #                 Image.device == device,
+        #                 Image.image_path.in_(representative_image_paths),
+        #             ).order_by(Image.timestamp.asc())
+        #         ).scalars().all()
+        #         representative_images = [
+        #             _orm_to_lifelog(img) for img in representative_images
+        #         ]
+        # else:
+        representative_image = None
+        representative_images = []
 
         summary.append(
             SummarySegment(

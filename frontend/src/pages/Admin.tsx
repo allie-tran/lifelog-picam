@@ -6,6 +6,7 @@ import {
 } from '@mui/icons-material';
 import {
     Button,
+    Container,
     Divider,
     FormControl,
     InputLabel,
@@ -173,71 +174,79 @@ const Admin = () => {
                     </Stack>
                 </React.Fragment>
             ))}
-            <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
-                <Typography variant="h6" align="center" marginTop={2}>
-                    <VerifiedUserRounded
-                        sx={{ mr: 1, verticalAlign: 'middle' }}
+
+            <ModalWithCloseButton open={open} onClose={() => setOpen(false)} fitContent>
+                <Stack spacing={2} sx={{ width: 400, p: 3 }}>
+                    <Typography variant="h6" align="center" marginY={2}>
+                        <VerifiedUserRounded
+                            sx={{ mr: 1, verticalAlign: 'middle' }}
+                        />
+                        Modify User Access
+                    </Typography>
+
+                    {/* Select user and device access form goes here */}
+                    <FormControl sx={{ mt: 2 }}>
+                        <InputLabel id="select-user-label">
+                            Select User
+                        </InputLabel>
+                        <Select
+                            labelId="select-user-label"
+                            value={userForAccess || ''}
+                            label="Select User"
+                            onChange={(e) => setUserForAccess(e.target.value)}
+                        >
+                            {users?.map((user: UserInfo) => (
+                                <MenuItem
+                                    key={user.username}
+                                    value={user.username}
+                                >
+                                    {user.username}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                    <TextField
+                        label="Device ID"
+                        onChange={(e) => setDeviceId(e.target.value)}
+                        value={deviceId}
                     />
-                    Modify User Access
-                </Typography>
-                {/* Select user and device access form goes here */}
-                <FormControl fullWidth sx={{ mt: 2 }}>
-                    <InputLabel id="select-user-label">Select User</InputLabel>
-                    <Select
-                        labelId="select-user-label"
-                        value={userForAccess || ''}
-                        label="Select User"
-                        onChange={(e) => setUserForAccess(e.target.value)}
+                    <FormControl>
+                        <InputLabel id="select-access-level-label">
+                            Access Level
+                        </InputLabel>
+                        <Select
+                            labelId="select-access-level-label"
+                            value={accessLevel}
+                            label="Access Level"
+                            onChange={(e) =>
+                                setAccessLevel(
+                                    e.target.value.toLowerCase() as AccessLevel
+                                )
+                            }
+                        >
+                            <MenuItem value={AccessLevel.OWNER}>OWNER</MenuItem>
+                            <MenuItem value={AccessLevel.VIEWER}>VIEWER</MenuItem>
+                            <MenuItem value={AccessLevel.ADMIN}>ADMIN</MenuItem>
+                            <MenuItem value={AccessLevel.NONE}>NONE</MenuItem>
+                        </Select>
+                    </FormControl>
+                    <Button
+                        variant="contained"
+                        sx={{ mt: 3 }}
+                        onClick={() => {
+                            if (userForAccess) {
+                                addDeviceAccessToUser(
+                                    userForAccess,
+                                    deviceId,
+                                    accessLevel
+                                );
+                                setOpen(false);
+                            }
+                        }}
                     >
-                        {users?.map((user: UserInfo) => (
-                            <MenuItem key={user.username} value={user.username}>
-                                {user.username}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-                <TextField
-                    label="Device ID"
-                    sx={{ mt: 2 }}
-                    onChange={(e) => setDeviceId(e.target.value)}
-                    value={deviceId}
-                />
-                <FormControl fullWidth sx={{ mt: 2 }}>
-                    <InputLabel id="select-access-level-label">
-                        Access Level
-                    </InputLabel>
-                    <Select
-                        labelId="select-access-level-label"
-                        value={accessLevel}
-                        label="Access Level"
-                        onChange={(e) =>
-                            setAccessLevel(
-                                e.target.value.toLowerCase() as AccessLevel
-                            )
-                        }
-                    >
-                        <MenuItem value={AccessLevel.OWNER}>OWNER</MenuItem>
-                        <MenuItem value={AccessLevel.VIEWER}>VIEWER</MenuItem>
-                        <MenuItem value={AccessLevel.ADMIN}>ADMIN</MenuItem>
-                        <MenuItem value={AccessLevel.NONE}>NONE</MenuItem>
-                    </Select>
-                </FormControl>
-                <Button
-                    variant="contained"
-                    sx={{ mt: 3 }}
-                    onClick={() => {
-                        if (userForAccess) {
-                            addDeviceAccessToUser(
-                                userForAccess,
-                                deviceId,
-                                accessLevel
-                            );
-                            setOpen(false);
-                        }
-                    }}
-                >
-                    Save Changes
-                </Button>
+                        Save Changes
+                    </Button>
+                </Stack>
             </ModalWithCloseButton>
         </Stack>
     );

@@ -10,7 +10,7 @@ import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import '../App.css';
 
@@ -92,7 +92,9 @@ const CustomDatePicker = ({
     allDates: string[] | undefined;
 }) => {
     const navigate = useNavigate();
+    const today = dayjs().format('YYYY-MM-DD');
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams, _] = useSearchParams();
     const [usePicker, setUsePicker] = React.useState(true);
     const [textDate, setTextDate] = React.useState(date || '');
 
@@ -117,7 +119,8 @@ const CustomDatePicker = ({
         const nextDate = dayjs(date).add(1, 'day').format('YYYY-MM-DD');
         setPage(1);
         setHour(null);
-        navigate(`/?device=${deviceId}&date=${nextDate}`);
+        searchParams.set('date', nextDate);
+        navigate({ search: searchParams.toString() });
     };
 
     const goToPreviousDate = () => {
@@ -125,12 +128,22 @@ const CustomDatePicker = ({
         const prevDate = dayjs(date).subtract(1, 'day').format('YYYY-MM-DD');
         setPage(1);
         setHour(null);
-        navigate(`/?device=${deviceId}&date=${prevDate}`);
+        searchParams.set('date', prevDate);
+        navigate({ search: searchParams.toString() });
     };
+
+    useEffect(() => {
+        if (!date) {
+            searchParams.set('date', today);
+            navigate({ search: searchParams.toString() });
+        }
+    }, [date, navigate, today]);
 
     useEffect(() => {
         setTextDate(date ? dayjs(date).format('DD/MM/YYYY') : '');
     }, [date]);
+
+
 
     return (
         <>
@@ -163,9 +176,8 @@ const CustomDatePicker = ({
                     onChange={(newValue) => {
                         setPage(1);
                         setHour(null);
-                        navigate(
-                            `/?device=${deviceId}&date=${newValue?.format('YYYY-MM-DD') || ''}`
-                        );
+                        searchParams.set('date', newValue ? newValue.format('YYYY-MM-DD') : '');
+                        navigate({ search: searchParams.toString() });
                     }}
                     slots={{
                         day: (props) => (
@@ -196,9 +208,8 @@ const CustomDatePicker = ({
                         if (e.key === 'Enter') {
                             setPage(1);
                             setHour(null);
-                            navigate(
-                                `/?device=${deviceId}&date=${dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD')}`
-                            );
+                            searchParams.set('date', dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD'));
+                            navigate({ search: searchParams.toString() });
                         }
                     }}
                     sx={{ width: '250px', transform: 'translateY(4px)' }}

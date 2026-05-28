@@ -60,4 +60,5 @@ data_type_mapping = {
     "MAGNETOMETER": MagnetometerData,
     "GYRO": GyroscopeData,
     "PPI": PPIData,
+    "LOG": LogData
 }

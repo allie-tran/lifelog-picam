@@ -27,7 +27,6 @@ def _split_text(text: str, max_length: int):
 
     return sentences
 
-
 class SIGLIP:
     def __init__(self):
         self.name = "siglip"

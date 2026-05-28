@@ -9,7 +9,7 @@ from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 SECRET = os.getenv("JWT_SECRET", "")
 assert SECRET, "JWT_SECRET is not set"
 
-def generate_token_for_device(device_id: str) -> bytes:
+def generate_token_for_device(device_id: str):
     """
     Generate a token for the device
     """

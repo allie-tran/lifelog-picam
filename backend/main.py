@@ -9,7 +9,7 @@ from typing import Annotated, List, Optional
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Body
 from nacl.public import Box, PrivateKey, PublicKey
@@ -25,13 +25,13 @@ from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary, GPSIn
 from app_types.search import SearchQuery
 from auth import auth_app, _require_admin, _require_any_access, _require_owner
 from auth.auth_models import auth_dependency, get_user
-from auth.devices import verify_device_token
 from auth.types import AccessLevel, User
 from constants import DIR, LOCAL_PORT, THUMBNAIL_DIR
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS, ImagePerson
+from database.models import Annotation, AnnotationType, DeviceWhitelistEntry, Image as ImageModel, Device, ImageGPS
 from dependencies import CamelCaseModel
+from location.gps_pipeline import run_pipeline
 from scripts.date_utils import parse_date
 from scripts.face_recognition import add_face_to_whitelist, search_for_faces
 from tasks import describe_segment_task
@@ -47,12 +47,13 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_device_from_headers, get_thumbnail_path, to_absolute_bbox
+from scripts.utils import get_device_from_headers, get_thumbnail_path
 from settings import control_app, get_mode
 from settings.types import PiCamControl
 from settings.utils import create_device
 from apis.explore import app as explore_app
 from apis.location import app as location_app
+from apis.browse import app as browse_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime, timezone
@@ -208,6 +209,7 @@ app.mount("/auth", auth_app)
 app.mount("/controls", control_app)
 app.mount("/ingest", ingest_app)
 app.mount("/explore", explore_app)
+app.mount("/browse", browse_app)
 app.mount("/location", location_app)
 
 app.add_middleware(
@@ -297,12 +299,12 @@ async def upload_image(
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
-        if image.width > image.height:
-            image = image.rotate(-90, expand=True)
-            exif = image.getexif()
-            exif[274] = 1
-        else:
-            exif = image.getexif()
+        # if image.width > image.height:
+        #     image = image.rotate(-90, expand=True)
+        #     exif = image.getexif()
+        #     exif[274] = 1
+        # else:
+        exif = image.getexif()
 
         image.save(f"{folder}/{file_name}", exif=exif)
 
@@ -626,6 +628,7 @@ def get_gps_by_date(
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
+    nested=False,
 ):
     _require_owner(access_level)
     gps = session.execute(
@@ -636,7 +639,11 @@ def get_gps_by_date(
         .join(ImageModel, ImageModel.id == ImageGPS.image_id)
         .order_by(ImageModel.timestamp.desc())
     ).scalars().all()
-    return [GPSInfo.model_validate(g.__dict__) for g in gps]
+    res = [GPSInfo.model_validate(g.__dict__) for g in gps]
+    if len(res) == 0 and not nested and date:
+        run_pipeline(session, device, date)
+        return get_gps_by_date(date, device, access_level, session, nested=True)
+    return res
 
 @app.get("/get-all-dates")
 def get_all_dates(
@@ -990,9 +997,10 @@ def get_day_summary(
         raise HTTPException(status_code=400, detail="Date is required.")
 
     day_summary = DaySummaryRecord.find_one(filter={"date": date, "device": device})
-    if day_summary and not day_summary.updated:
+    if day_summary and day_summary.segments:
         return day_summary
 
+    print(f"Creating day summary for date {date} and device {device}.")
     summary = DaySummary(
         device=device, date=date, segments=[], summary_text="", updated=False
     )
@@ -1014,7 +1022,7 @@ def get_day_summary(
             "date": date,
             "device": device,
         },
-        data={"$set": {"updated": False}},
+        data={"$set": { **summary.model_dump(), "updated": False}},
         upsert=True,
     )
 

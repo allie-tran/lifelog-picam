@@ -26,6 +26,7 @@ import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
+import Biometrics from 'pages/Biometrics';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 const activityTrackerTheme = createTheme({
@@ -43,7 +44,7 @@ const activityTrackerTheme = createTheme({
         },
         background: {
             default: '#FDFCF0',
-            paper: 'rgba(255, 255, 255, 0.85)', // Slightly translucent for glassmorphism effect
+            paper: 'rgba(255, 255, 255, 0.95)', // Slightly translucent for glassmorphism effect
         },
         text: {
             primary: '#2D3436',
@@ -217,6 +218,12 @@ const App = () => {
                                             path="/faces"
                                             element=<PasswordLock>
                                                 <FaceIntelligence />
+                                            </PasswordLock>
+                                        />
+                                        <Route
+                                            path="/biometrics"
+                                            element=<PasswordLock>
+                                                <Biometrics />
                                             </PasswordLock>
                                         />
                                     </Routes>

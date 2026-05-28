@@ -34,6 +34,7 @@ import GoalConfig from './GoalConfig';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import dayjs from 'dayjs';
+import SensorHistory from './Biometrics';
 
 const minutesToHM = (m: number): string => {
     const total = Math.round(m);
@@ -113,7 +114,10 @@ const DaySummaryComponent = () => {
 
     if (isError || !daySummary || isLoading)
         return (
-            <Card variant="outlined" sx={{ backgroundColor: alpha('#333', 0.2) }}>
+            <Card
+                variant="outlined"
+                sx={{ backgroundColor: alpha('#333', 0.2) }}
+            >
                 <CardContent>
                     <Stack
                         spacing={0}
@@ -121,7 +125,9 @@ const DaySummaryComponent = () => {
                         alignItems="center"
                         justifyContent="center"
                     >
-                        <Typography p={2} color="text.secondary">No Summary Available</Typography>
+                        <Typography p={2} color="text.secondary">
+                            No Summary Available
+                        </Typography>
                         <ReprocessButton
                             onReprocess={handleProcess}
                             isLoading={isLoading}

@@ -25,6 +25,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+from typing import List, Optional
+from sqlalchemy import String, Integer, Boolean, Float, BigInteger, ForeignKey, JSON
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 
 class Base(DeclarativeBase):
     pass
@@ -293,7 +297,7 @@ class RawGPS(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     elevation = Column(Float)
-    timestamp = Column(DateTime(timezone=False), nullable=False)
+    timestamp = Column(DateTime(timezone=False))
     timezone = Column(Text)
 
 
@@ -441,3 +445,130 @@ class Annotation(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     author = Column(Text)
     image = relationship("Image", back_populates="annotations")
+
+
+# ---------------------------------------------------------------------------
+# Health Data
+
+class HeartRateData(Base):
+    __tablename__ = "bio_heart_rate"
+    __table_args__ = (
+        Index("ix_hr_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_hr_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    contact_status: Mapped[bool] = mapped_column(Boolean)
+    contact_status_supported: Mapped[bool] = mapped_column(Boolean)
+    corrected_hr: Mapped[int] = mapped_column(Integer)
+    hr: Mapped[int] = mapped_column(Integer)
+    ppg_quality: Mapped[int] = mapped_column(Integer)
+    rr_available: Mapped[bool] = mapped_column(Boolean)
+    # Using JSON column for lists guarantees cross-compatibility (SQLite/Postgres)
+    rrs_ms: Mapped[list] = mapped_column(JSON, default=list)
+
+    __mapper_args__ = {"polymorphic_identity": "HR"}
+
+
+class MagnetometerData(Base):
+    __tablename__ = "bio_magnetometer"
+    __table_args__ = (
+        Index("ix_mag_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_mag_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "MAGNETOMETER"}
+
+
+class AccelerometerData(Base):
+    __tablename__ = "bio_accelerometer"
+    __table_args__ = (
+        Index("ix_acc_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_acc_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "ACC"}
+
+
+class GyroscopeData(Base):
+    __tablename__ = "bio_gyroscope"
+    __table_args__ = (
+        Index("ix_gyro_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_gyro_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+
+    __mapper_args__ = {"polymorphic_identity": "GYRO"}
+
+
+class PPGData(Base):
+    __tablename__ = "bio_ppg"
+    __table_args__ = (
+        Index("ix_ppg_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_ppg_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    channel_samples: Mapped[list] = mapped_column(JSON, default=list)
+    status_bits: Mapped[list] = mapped_column(JSON, default=list)
+
+    __mapper_args__ = {"polymorphic_identity": "PPG"}
+
+
+class PPIData(Base):
+    __tablename__ = "bio_ppi"
+    __table_args__ = (
+        Index("ix_ppi_device_time", "device_id", "time_stamp"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+
+    blocker_bit: Mapped[bool] = mapped_column(Boolean)
+    error_estimate: Mapped[int] = mapped_column(Integer)
+    hr: Mapped[int] = mapped_column(Integer)
+    ppi: Mapped[int] = mapped_column(Integer)
+    skin_contact_status: Mapped[bool] = mapped_column(Boolean)
+    skin_contact_supported: Mapped[bool] = mapped_column(Boolean)
+
+    __mapper_args__ = {"polymorphic_identity": "PPI"}
+
+# Updated mapping pointing directly to the SQLalchemy Entities
+db_type_mapping = {
+    "PPG": PPGData,
+    "ACC": AccelerometerData,
+    "HR": HeartRateData,
+    "MAGNETOMETER": MagnetometerData,
+    "GYRO": GyroscopeData,
+    "PPI": PPIData,
+}
