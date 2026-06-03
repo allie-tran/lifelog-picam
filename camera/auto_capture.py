@@ -7,7 +7,7 @@ import aioserial
 import cv2
 from picamzero import Camera
 
-from common import OUTPUT, box
+from common import OUTPUT, box, get_latest_gps
 
 cam = Camera()
 # orginally 4056 x 3040
@@ -145,6 +145,16 @@ async def main():
         await asyncio.sleep(10)
 
     print("Camera connected. Starting concurrent tasks...")
+
+    # Check latest GPS
+    gps_data = get_latest_gps()
+    print(
+        f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}"
+    )
+    os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
+    time.tzset()  # Apply the timezone change
+    print(f"System timezone set to: {time.tzname}")
+    LATEST_GPS.update(gps_data)  # Update the global state with the initial GPS data
 
     # Run both workers simultaneously
     await asyncio.gather(

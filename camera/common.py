@@ -88,9 +88,10 @@ def send_gps(gps_path):
             "timestamp": datetime.fromisoformat(timestamp),
             "latitude": float(latitude),
             "longitude": float(longitude),
+            "device_id": device_id,
             "elevation": float(elevation) if elevation else None
         }
-        response = requests.put(UPLOAD_GPS_URL, json=payload, headers={"X-Device-ID": device_id})
+        response = requests.put(UPLOAD_GPS_URL, json=payload)
 
         if response.status_code == 200:
             print(f"Uploaded GPS data: {payload}")
@@ -98,6 +99,15 @@ def send_gps(gps_path):
         else:
             print(f"Failed to upload GPS data: {response.status_code} - {response.text}")
             return None
+
+def get_latest_gps():
+    response = requests.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}")
+    if response.status_code == 200:
+        gps_data = response.json()
+        return gps_data
+    else:
+        print(f"Failed to fetch latest GPS data: {response.status_code} - {response.text}")
+        return None
 
 def check_if_connected():
     try:
