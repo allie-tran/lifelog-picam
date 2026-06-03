@@ -89,7 +89,7 @@ def send_gps(gps_path):
             "latitude": float(latitude),
             "longitude": float(longitude),
             "device_id": device_id,
-            "elevation": float(elevation) if elevation else None
+            "elevation": float(elevation) if elevation != "None" else None
         }
         response = requests.put(UPLOAD_GPS_URL, json=payload)
 
