@@ -44,7 +44,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         response = requests.put(
             UPLOAD_URL,
             files=files,
-            json={"rotation": -90, "device": device_id},
+            data={"rotation": -90, "device": device_id},
         )
 
     if response.status_code == 200:

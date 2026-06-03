@@ -161,7 +161,7 @@ class SensorDevice(Base):
                       UniqueConstraint("device_id", "sensor_type", name="uq_sensor_device_id_type"))
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    device_id = Column(Text, unique=True, nullable=False)
+    device_id = Column(Text, unique=False, nullable=False)
     device_nickname = Column(Text, nullable=True)
     secret = Column(Text, nullable=True)
     sensor_type = Column(Text, nullable=False)

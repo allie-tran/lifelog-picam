@@ -54,6 +54,7 @@ from settings.utils import create_device
 from apis.explore import app as explore_app
 from apis.location import app as location_app
 from apis.browse import app as browse_app
+from apis.images import app as image_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime, timezone
@@ -211,6 +212,7 @@ app.mount("/ingest", ingest_app)
 app.mount("/explore", explore_app)
 app.mount("/browse", browse_app)
 app.mount("/location", location_app)
+app.mount("/images", image_app)
 
 app.add_middleware(
     CORSMiddleware,
