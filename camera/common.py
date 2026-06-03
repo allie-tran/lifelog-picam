@@ -39,7 +39,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
             "file": (os.path.basename(image_path), img_file, f"image/jpeg"),
             "timestamp": (None, str(timestamp)),
             # rotate 90 clockwise
-            "rotation": 90,
+            "rotation": (None, "90"),
         }
         response = requests.put(UPLOAD_URL, files=files, headers={"X-Device-ID": device_id})
 
