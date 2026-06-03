@@ -70,13 +70,13 @@ const Admin = () => {
         mutate();
     };
 
-    const addSensorAccessToUser = (
+    const addSensorAccessToUser = async (
         deviceId: string,
         sensorType: string,
         deviceNickname: string,
         associatedUsername: string
     ) => {
-        addSensorToUser(
+        await addSensorToUser(
             deviceId,
             sensorType,
             deviceNickname,

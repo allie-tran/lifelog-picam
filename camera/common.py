@@ -18,11 +18,13 @@ box = Box(
 )
 
 BACKEND_URL = "https://dcu.allietran.com/selfhealth/be"
-UPLOAD_URL = f"{BACKEND_URL}/upload-image"
+# New
+UPLOAD_URL = f"{BACKEND_URL}/images/upload-image"
+UPLOAD_GPS_URL = f"{BACKEND_URL}/location/upload-gps"
+# Old
 UPLOAD_VIDEO_URL = f"{BACKEND_URL}/upload-video"
 CHECK_URL = f"{BACKEND_URL}/check-image-uploaded"
 CHECK_ALL_URL = f"{BACKEND_URL}/check-all-images-uploaded"
-UPLOAD_GPS_URL = f"{BACKEND_URL}/location/upload-gps"
 
 OUTPUT = "Camera/timelapse"
 
@@ -33,10 +35,6 @@ def send_image(image_path, uploaded_files, LOG_FILE):
     if image_path in uploaded_files:
         return "photo"
 
-    timestamp = datetime.strptime(
-        os.path.basename(image_path).replace(IMAGE_EXTENSION, ""), "%Y%m%d_%H%M%S%z"
-    )
-
     # Send form-data request
     with open(image_path, "rb") as img_file:
         # the file is encrypted, so we don't need to encrypt it again. Just send it as is.
@@ -46,8 +44,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         response = requests.put(
             UPLOAD_URL,
             files=files,
-            data={"rotation": -90},
-            headers={"X-Device-ID": device_id},
+            json={"rotation": -90, "device": device_id},
         )
 
     if response.status_code == 200:

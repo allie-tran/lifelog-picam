@@ -579,6 +579,18 @@ class PPIData(Base):
 
     __mapper_args__ = {"polymorphic_identity": "PPI"}
 
+class SkinTemperatureData(Base):
+    __tablename__ = "bio_skin_temperature"
+    __table_args__ = (
+        Index("ix_skin_temp_device_time", "device_id", "time_stamp"),
+        UniqueConstraint("device_id", "time_stamp", name="uq_skin_temp_device_time")
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100))
+    time_stamp: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 18-digit ns
+
+    temperature: Mapped[float] = mapped_column(Float)
+
 # Updated mapping pointing directly to the SQLalchemy Entities
 db_type_mapping = {
     "PPG": PPGData,
@@ -587,4 +599,5 @@ db_type_mapping = {
     "MAGNETOMETER": MagnetometerData,
     "GYRO": GyroscopeData,
     "PPI": PPIData,
+    "SKIN_TEMPERATURE": SkinTemperatureData,
 }

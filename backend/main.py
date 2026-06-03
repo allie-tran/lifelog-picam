@@ -260,6 +260,7 @@ async def check_image(date: str, timestamp: str):
 async def upload_image(
     file: UploadFile,
     background_tasks: BackgroundTasks,
+    rotation: Optional[int] = None,
     device: str = Depends(get_device_from_headers),
     session: Session = Depends(get_session),
 ):
@@ -299,12 +300,13 @@ async def upload_image(
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
-        # if image.width > image.height:
-        #     image = image.rotate(-90, expand=True)
-        #     exif = image.getexif()
-        #     exif[274] = 1
-        # else:
-        exif = image.getexif()
+        print("Rotation:", rotation)
+        if  rotation is not None:
+            image = image.rotate(rotation, expand=True)
+            exif = image.getexif()
+            exif[274] = 1
+        else:
+            exif = image.getexif()
 
         image.save(f"{folder}/{file_name}", exif=exif)
 

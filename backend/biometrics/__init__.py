@@ -12,7 +12,7 @@ from biometrics.types import data_type_mapping
 from database.models import Device, SensorDevice, db_type_mapping
 
 # 1. Paste the exact settings from your screenshot
-MQTT_TOPIC = "polar/#"
+MQTT_TOPIC = "#"
 
 MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt.hivemq.com")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 8883))  # Default TLS port for MQTT
@@ -28,29 +28,36 @@ timedelta_seconds = epoch_year - old_epoch_year
 
 def parse_data(topic: str, payload_str: str):
     with Session(engine) as session:
-        _, data_type, device_id = topic.split("/")
+        user_id, data_type, device_id = topic.split("/")
         payload: Any = json.loads(str(payload_str))
         data_class = data_type_mapping.get(data_type)
         assert data_class is not None, f"Unknown data type: {data_type}"
 
-        # Get device id in DB
-        device_obj = session.execute(
-            select(SensorDevice).where(SensorDevice.device_id == device_id)
+        # # Get device id in DB
+        # device_obj = session.execute(
+        #     select(SensorDevice).where(SensorDevice.device_id == device_id)
+        # ).scalar_one_or_none()
+
+        # if not device_obj:
+        #     print(f"Device {device_id} not registered in DB. Please register using:")
+        #     rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
+        #     return
+
+        # user = device_obj.associated_user
+        # user_id = session.execute(
+        #     select(Device.device_id).where(Device.id == user)
+        # ).scalar_one_or_none()
+
+        # if not user_id:
+        #     print(f"Device {device_id} is not associated with any user. Please associate using:")
+        #     rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
+        #     return
+        user = session.execute(
+            select(Device).where(Device.device_id == user_id)
         ).scalar_one_or_none()
-
-        if not device_obj:
-            print(f"Device {device_id} not registered in DB. Please register using:")
-            rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
-            return
-
-        user = device_obj.associated_user
-        user_id = session.execute(
-            select(Device.device_id).where(Device.id == user)
-        ).scalar_one_or_none()
-
-        if not user_id:
-            print(f"Device {device_id} is not associated with any user. Please associate using:")
-            rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
+        if user is None:
+            print(f"User {user_id} not found in DB. Please register using:")
+            rprint(f"""curl <URL>/auth/register?device_id={device_id}&username={user_id} -X PUT""")
             return
 
         try:

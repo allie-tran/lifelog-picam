@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from typing import  Optional
 
+from auth.devices import verify_device_and_user
 from database import get_session
 from app_types import CamelCaseModel
 
@@ -38,17 +39,10 @@ async def upload_gps(
 ):
     # find device
     device_id = request.device_id
-    user = session.execute(select(SensorDevice.associated_user).where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == "location")).scalar_one_or_none()
-    if not user:
-        print("Device not found or not associated with a user. Please register the device first. (device_id: {})".format(device_id))
-        raise HTTPException(status_code=404, detail="Device not found or not associated with a user. Please register the device first. (device_id: {})".format(device_id))
-    username = session.execute(select(Device.id).where(Device.id == user)).scalar_one_or_none()
-    if not username:
-        raise HTTPException(status_code=404, detail="Associated user not found for device. Please register the device first. (device_id: {})".format(device_id))
-
+    user = verify_device_and_user(session, device_id, "location")
     timezone = tf.timezone_at(lng=request.longitude, lat=request.latitude)
     stmt = insert(RawGPS).values(
-        device_id=username,
+        device_id=user.id,
         latitude=request.latitude,
         longitude=request.longitude,
         elevation=request.elevation,
@@ -82,14 +76,21 @@ async def process_gps(
     run_pipeline(session, device, date)
 
 
-@app.get("/last-gps")
+@app.get("/latest-gps")
 async def last_gps(
     device: str,
     session: Session = Depends(get_session)
 ):
-    last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == device).order_by(RawGPS.timestamp.desc())).scalars().first()
+    associated_user = session.execute(select(SensorDevice.associated_user).where(SensorDevice.device_id == device, SensorDevice.sensor_type == "location")).scalar_one_or_none()
+    if not associated_user:
+        raise HTTPException(status_code=404, detail="Device not found or not associated with a user")
+
+    last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == associated_user).order_by(RawGPS.timestamp.desc())).scalars().first()
     if not last_gps:
         raise HTTPException(status_code=404, detail="No GPS data found for device")
+    print("Last GPS data for device {}: lat={}, lon={}, elev={}, time={}, tz={}".format(
+        device, last_gps.latitude, last_gps.longitude, last_gps.elevation, last_gps.timestamp, last_gps.timezone
+    ))
     return {
         "latitude": last_gps.latitude,
         "longitude": last_gps.longitude,
