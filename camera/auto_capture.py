@@ -120,7 +120,7 @@ async def image_worker():
             with open(image_path, "wb") as f:
                 f.write(encrypted)
 
-            if LATEST_GPS["latitude"]:
+            if LATEST_GPS["latitude"] and time.time() - datetime.fromisoformat(LATEST_GPS["timestamp"]).timestamp() < 60:
                 # Snapshot the current values of LATEST_GPS.
                 txt_path = image_path.replace(".jpg", ".txt")
                 with open(txt_path, "w") as f:
