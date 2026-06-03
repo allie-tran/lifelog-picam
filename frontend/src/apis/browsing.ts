@@ -32,20 +32,6 @@ export const getDevices = async () => {
     return response.data as string[];
 };
 
-export const getImages = async (
-    page: number = 1,
-    device: string | null = null,
-    date: string | null = null
-) => {
-    const response = await axios.get(
-        `${BACKEND_URL}/get-images?page=${page}${date ? `&date=${date}` : ''}${device ? `&device=${encodeURIComponent(device)}` : ''}`
-    );
-    return response.data as {
-        date: string;
-        images: ImageObject[];
-        total_pages: number;
-    };
-};
 
 export const getImagesByHour = async (
     device: string,
@@ -54,7 +40,7 @@ export const getImagesByHour = async (
     page: number = 1
 ) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-images-by-hour?date=${date}&hour=${hour}&page=${page}&device=${encodeURIComponent(device)}`
+        `${BACKEND_URL}/browse/get-images-by-hour?date=${date}&hour=${hour}&page=${page}&device=${encodeURIComponent(device)}`
     );
     return response.data as {
         date: string;
@@ -74,7 +60,7 @@ export const getImagesByRange = async (
     endTime: number
 ) => {
     const response = await axios.post(
-        `${BACKEND_URL}/get-images-by-range?device=${encodeURIComponent(device)}`,
+        `${BACKEND_URL}/browse/get-images-by-range?device=${encodeURIComponent(device)}`,
         {
             start_time: startTime,
             date: date,
@@ -86,7 +72,7 @@ export const getImagesByRange = async (
 
 export const getContextImages = async (device: string, imagePath: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-context-images?device=${encodeURIComponent(device)}&image=${encodeURIComponent(imagePath)}`
+        `${BACKEND_URL}/browse/get-context-images?device=${encodeURIComponent(device)}&image=${encodeURIComponent(imagePath)}`
     );
     return response.data as ResultSegment[];
 };
@@ -112,7 +98,7 @@ export const searchImages = async (
     sortBy: 'time' | 'relevance' = 'time'
 ) => {
     const response = await axios.post(
-        `${BACKEND_URL}/search-images?device=${encodeURIComponent(deviceId)}&sort_by=${sortBy}`,
+        `${BACKEND_URL}/retrieval/search-images?device=${encodeURIComponent(deviceId)}&sort_by=${sortBy}`,
         {
             ...query,
         }
@@ -122,7 +108,7 @@ export const searchImages = async (
 
 export const similarImages = async (deviceId: string, imagePath: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/similar-images?image=${encodeURIComponent(imagePath)}&device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/retrieval/similar-images?image=${encodeURIComponent(imagePath)}&device=${encodeURIComponent(deviceId)}`
     );
     return response.data as ImageObject[];
 };
@@ -134,7 +120,7 @@ export const similarImagesPost = async (deviceId: string, blobUrl: string) => {
     formData.append('file', blob, 'query_image');
 
     const response = await axios.post(
-        `${BACKEND_URL}/similar-images?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/retrieval/similar-images?device=${encodeURIComponent(deviceId)}`,
         formData,
         {
             headers: {
@@ -147,7 +133,7 @@ export const similarImagesPost = async (deviceId: string, blobUrl: string) => {
 
 export const deleteImage = async (deviceId: string, imagePath: string) => {
     const response = await axios.delete(
-        `${BACKEND_URL}/delete-image?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/delete/delete-image?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePath },
         }
@@ -157,7 +143,7 @@ export const deleteImage = async (deviceId: string, imagePath: string) => {
 
 export const deleteImages = async (deviceId: string, imagePaths: string[]) => {
     const response = await axios.delete(
-        `${BACKEND_URL}/delete-images?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/delete/delete-images?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePaths },
         }
@@ -167,14 +153,14 @@ export const deleteImages = async (deviceId: string, imagePaths: string[]) => {
 
 export const getDeletedImages = async (deviceId: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-deleted-images?device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/delete/get-deleted-images?device=${encodeURIComponent(deviceId)}`
     );
     return response.data as ImageObject[];
 };
 
 export const restoreImage = async (deviceId: string, imagePath: string) => {
     const response = await axios.post(
-        `${BACKEND_URL}/restore-image?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/delete/restore-image?device=${encodeURIComponent(deviceId)}`,
         {
             imagePath,
         }
@@ -184,7 +170,7 @@ export const restoreImage = async (deviceId: string, imagePath: string) => {
 
 export const forceDeleteImage = async (deviceId: string, imagePath: string) => {
     const response = await axios.delete(
-        `${BACKEND_URL}/force-delete-image?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/delete/force-delete-image?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePath },
         }
@@ -197,7 +183,7 @@ export const forceDeleteImages = async (
     imagePaths: string[]
 ) => {
     const response = await axios.delete(
-        `${BACKEND_URL}/force-delete-images?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/delete/force-delete-images?device=${encodeURIComponent(deviceId)}`,
         {
             data: { imagePaths },
         }
@@ -239,7 +225,7 @@ export const getFaces = async (deviceId: string, blobUrls: string[]) => {
         formData.append('files', blob, `face_image_${i}`);
     }
     const response = await axios.post(
-        `${BACKEND_URL}/get-faces?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/face/get-faces?device=${encodeURIComponent(deviceId)}`,
         formData,
         {
             headers: {
@@ -262,7 +248,7 @@ export const addToWhiteList = async (
         formData.append('files', blob, `white_list_image_${i}`);
     }
     const response = await axios.put(
-        `${BACKEND_URL}/add-to-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`,
+        `${BACKEND_URL}/face/add-to-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`,
         formData,
         {
             headers: {
@@ -275,14 +261,14 @@ export const addToWhiteList = async (
 
 export const getWhiteList = async (deviceId: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-whitelist?device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/face/get-whitelist?device=${encodeURIComponent(deviceId)}`
     );
     return response.data as { name: string; images: string[] }[];
 };
 
 export const removeFromWhiteList = async (deviceId: string, name: string) => {
     const response = await axios.delete(
-        `${BACKEND_URL}/remove-from-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`
+        `${BACKEND_URL}/face/remove-from-whitelist?device=${encodeURIComponent(deviceId)}&name=${name}`
     );
     return response.data;
 };
@@ -296,7 +282,7 @@ export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
 
     try {
         const response = await axios.post(
-            `${BACKEND_URL}/segment-image`,
+            `${BACKEND_URL}/annotations/segment-image`,
             formData,
             {
                 headers: { 'Content-Type': 'multipart/form-data' },
@@ -325,7 +311,7 @@ export const addAnnotation = async (
     label?: string
 ) => {
     const response = await axios.post(
-        `${BACKEND_URL}/add-annotation?device=${encodeURIComponent(deviceId)}`,
+        `${BACKEND_URL}/annotations/add-annotation?device=${encodeURIComponent(deviceId)}`,
         {
             imagePath,
             points: points.map((p) => [Math.round(p.x), Math.round(p.y)]),

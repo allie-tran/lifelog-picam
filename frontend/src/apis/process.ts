@@ -28,16 +28,10 @@ export const getDaySummary = async (deviceId: string, dateString: string) => {
     return response.data as DaySummary;
 }
 
-export const getDayPlayback = async (deviceId: string, dateString: string) => {
-    const response = await axios.get(
-        `${BACKEND_URL}/get-day-playback?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
-    );
-    return response.data;
-}
 
 export const getGPSByDate = async (deviceId: string, dateString: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-gps-by-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/location/get-gps-by-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
     );
     return response.data as GPSData[];
 }

@@ -1,14 +1,23 @@
 
-from typing import Any, Literal
-from fastapi import Depends, FastAPI, Query
+from typing import Annotated, Any, List, Literal, Optional
+from fastapi import Depends, FastAPI, HTTPException, Query
+from joblib import os
+from sqlalchemy import update
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
 
+from app_types.general import LifelogImage, ResultSegment
+from auth import _require_owner
+from auth.auth_models import auth_dependency
+from auth.types import AccessLevel
+from constants import DIR
 from database import get_session
-from database.models import HeartRateData as HeartRateTable, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
+from database.models import HeartRateData as HeartRateTable, Image, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
+from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
+from scripts.segmentation import load_all_segments
 
 
 app = FastAPI()
@@ -33,6 +42,13 @@ class LogResponse(CamelCaseModel):
     keys: list[str]
     logs: dict[str, list[NestedMeasurementData]]
 
+class RangeRequest(CamelCaseModel):
+    date: str
+    start_time: int
+    end_time: int
+
+ITEMS_PER_PAGE = 20
+
 old_epoch_year = datetime.timestamp(datetime(1970, 1, 1))
 epoch_year = datetime.timestamp(datetime(2000, 1, 1))
 timedelta_seconds = epoch_year - old_epoch_year
@@ -49,6 +65,16 @@ def get_attr(obj, attr):
     else:
         return getattr(obj, attr)
 
+def _mark_images_not_new(session: Session, image_paths: list[str], device: str):
+    if not image_paths:
+        return
+    session.execute(
+        update(Image)
+        .where(Image.image_path.in_(image_paths))
+        .where(Image.device == device)
+        .values(new=False)
+    )
+    session.flush()
 
 
 @app.get("/logs/{sensor}")
@@ -150,4 +176,142 @@ def get_sensor_logs(
                 ))
 
     return LogResponse(keys=list(all_res.keys()), logs=all_res)
+
+@app.get("/get-images-by-hour", response_model=dict)
+async def get_images_by_hour(
+    device: str,
+    date: str = "",
+    hour: str = "",
+    page: int = 1,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    dir_path = f"{DIR}/{device}/{date}"
+    if not os.path.exists(dir_path):
+        return {"message": f"No images found for date {date}"}
+
+    load_all_segments(session, device, date, skip_annotations=True)
+
+    all_hours = list(
+        ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)
+    )
+    today = datetime.now().strftime("%Y-%m-%d")
+    all_hours = sorted([h for h in all_hours if h is not None], reverse=(today == date))
+
+    if not hour:
+        if not all_hours:
+            print(f"No hours found for date {date} and device {device}.")
+            return {"date": date, "hour": None, "images": []}
+        print(all_hours)
+        hour = all_hours[0]
+
+    results = ImageRecord.find_segments(
+        session,
+        date=date,
+        device=device,
+        deleted=False,
+        page=0,
+        page_size=10_000,
+        hour=hour,
+        today=today == date,
+    )
+
+    segments = results["segments"]
+    gps = results["gps"]
+    total_pages = results["total_pages"]
+
+    return {
+        "date": date,
+        "hour": hour,
+        "segments": segments,
+        "available_hours": all_hours,
+        "total_pages": total_pages,
+        "gps": gps,
+    }
+
+
+@app.post("/get-images-by-range", response_model=List[LifelogImage])
+def get_images_by_range(
+    request: RangeRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    start_dt = datetime.fromtimestamp(request.start_time / 1000, tz=timezone.utc)
+    end_dt = datetime.fromtimestamp(request.end_time / 1000, tz=timezone.utc)
+
+    rows = (
+        session.execute(
+            select(Image)
+            .where(Image.device == device)
+            .where(Image.deleted == False)
+            .where(Image.timestamp >= start_dt)
+            .where(Image.timestamp <= end_dt)
+            .order_by(Image.timestamp.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+    records = [_orm_to_lifelog(r) for r in rows]
+    _mark_images_not_new(session, [r.image_path for r in records], device)
+    return records
+
+@app.get("/get-context-images", response_model=List[ResultSegment])
+def get_context_images(
+    image: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    image_record = ImageRecord.find_one(
+        session, device=device, image_path=image, deleted=False
+    )
+    if image_record is None:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    # segment date first because segment_id can be None
+    load_all_segments(session, device, image_record.date, skip_annotations=True)
+
+    timestamp = image_record.timestamp
+    # get an hour before and after
+    start_dt = timestamp - timedelta(minutes=15)
+    end_dt = timestamp + timedelta(minutes=15)
+    rows = (
+        session.execute(
+            select(Image)
+            .where(Image.device == device)
+            .where(Image.deleted == False)
+            .where(Image.timestamp >= start_dt)
+            .where(Image.timestamp <= end_dt)
+            .order_by(Image.timestamp)
+        )
+        .scalars()
+        .all()
+    )
+    records = [_orm_to_lifelog(r) for r in rows]  # type: ignore
+    group_by_segment: dict[Optional[int], List[LifelogImage]] = {}
+    for r in records:
+        if r.segment_id in group_by_segment:
+            group_by_segment[r.segment_id].append(r)
+        else:
+            group_by_segment[r.segment_id] = [r]
+
+    results = []
+    for segment_id, images in group_by_segment.items():
+        results.append(
+            ResultSegment(
+                segment_id=segment_id,
+                images=images,
+            )
+        )
+    return results
 
