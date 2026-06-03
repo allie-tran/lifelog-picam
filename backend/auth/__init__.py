@@ -3,6 +3,12 @@ from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
 
+from sqlalchemy import select
+from database import get_session
+
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import session
+
 from auth.auth_models import (
     auth_dependency,
     get_user,
@@ -12,6 +18,8 @@ from auth.auth_models import (
     verify_user,
 )
 from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
+from database.models import Device, SensorDevice
+from dependencies import CamelCaseModel
 
 auth_app = FastAPI()
 
@@ -101,6 +109,9 @@ def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User,
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if not request.device_id:
+        raise HTTPException(status_code=400, detail="Device ID is required")
+
     old_access = {da.device_id: da.access_level for da in user.devices} if user.devices else {}
     updated_access = old_access.copy()
     updated_access[request.device_id] = request.access_level
@@ -117,3 +128,50 @@ def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User,
     )
     return True
 
+class SensorDeviceRequest(CamelCaseModel):
+    device_id: str
+    device_nickname: str | None
+    sensor_type: str
+    associated_username: str
+
+@auth_app.put("/add-sensor", dependencies=[Depends(get_user)])
+def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_user)], session: session.Session = Depends(get_session)):
+    """
+    Endpoint to add a new device to a user
+    """
+    device_id = request.device_id
+    device_nickname = request.device_nickname or device_id
+    sensor_type = request.sensor_type
+    secret = None
+    associated_username = request.associated_username
+
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    user_obj = session.execute(select(Device).where(Device.device_id == associated_username)).scalar_one_or_none()
+    stmt = insert(SensorDevice).values(
+        device_id=device_id,
+        device_nickname=device_nickname,
+        sensor_type=sensor_type,
+        secret=secret,
+        associated_user=user_obj.id if user_obj else None,
+    ).on_conflict_do_update(constraint="uq_sensor_device_id_type", set_={
+        "device_nickname":device_nickname,
+        "associated_user":user_obj.id if user_obj else None
+    })
+    session.execute(stmt)
+    session.commit()
+    print(f"Added/Updated device {device_id} for user {associated_username}")
+
+    # Remove all existing access for this device
+    User.update_many(
+        {},
+        {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}}
+    )
+
+    # Add owner access for the associated user
+    User.update_one(
+        {"username": associated_username},
+        {"$push": {"sensors": {"device_id": device_id, "device_nickname": device_nickname, "sensor_type": sensor_type}}}
+    )
+    return {"success": True, "message": f"Device {device_id} added/updated and access granted to user {associated_username}"}

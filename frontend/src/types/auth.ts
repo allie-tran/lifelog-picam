@@ -10,7 +10,14 @@ export type DeviceAccess = {
     accessLevel: AccessLevel;
 };
 
+export type SensorDevice = {
+    deviceId: string;
+    deviceNickname: string;
+    sensorType: string;
+}
+
 export type UserInfo = {
     username: string;
     devices: DeviceAccess[];
+    sensors: SensorDevice[];
 };

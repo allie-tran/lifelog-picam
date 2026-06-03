@@ -3,7 +3,8 @@ from datetime import timezone
 from typing import Optional
 import traceback
 
-from sqlalchemy import insert, update
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql import select
 from auth.ortho import apply_transformation, get_matrix
 from auth.types import Person
@@ -28,8 +29,7 @@ def index_to_postgres(
     local_timestamp = parse_date(file_name.split(".")[0])
     timestamp = local_timestamp.astimezone(timezone.utc)
 
-    session.execute(
-        insert(Image).values(
+    stmt = insert(Image).values(
             date=date,
             device=device_id,
             image_path=relative_path,
@@ -49,7 +49,10 @@ def index_to_postgres(
             proc_insightface=False,
             segment_id=None,
         )
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=["device", "image_path"]
     )
+    session.execute(stmt)
 
 
 def yolo_process_images(
@@ -140,6 +143,9 @@ def encode_image(
             insert(SQLTable).values(
                 image_id=image_id,
                 embedding=vector,
+            ).on_conflict_do_update(
+                index_elements=["image_id"],
+                set_={"embedding": vector},
             )
         )
         session.commit()

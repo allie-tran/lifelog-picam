@@ -5,11 +5,11 @@ import aiomqtt
 from datetime import datetime
 import os
 from rich import print as rprint
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from biometrics.types import data_type_mapping
-from database.models import db_type_mapping
+from database.models import Device, SensorDevice, db_type_mapping
 
 # 1. Paste the exact settings from your screenshot
 MQTT_TOPIC = "polar/#"
@@ -33,6 +33,26 @@ def parse_data(topic: str, payload_str: str):
         data_class = data_type_mapping.get(data_type)
         assert data_class is not None, f"Unknown data type: {data_type}"
 
+        # Get device id in DB
+        device_obj = session.execute(
+            select(SensorDevice).where(SensorDevice.device_id == device_id)
+        ).scalar_one_or_none()
+
+        if not device_obj:
+            print(f"Device {device_id} not registered in DB. Please register using:")
+            rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
+            return
+
+        user = device_obj.associated_user
+        user_id = session.execute(
+            select(Device.device_id).where(Device.id == user)
+        ).scalar_one_or_none()
+
+        if not user_id:
+            print(f"Device {device_id} is not associated with any user. Please associate using:")
+            rprint(f"""curl <URL>/auth/add-sensor?device_id={device_id}&device_nickname=<nickname>&sensor_type=biometrics&associated_username=username -X PUT""")
+            return
+
         try:
             phone_timestamp = payload["phoneTimestamp"] # in milliseconds, from 1970-01-01
             # change epoch to 2000-01-01
@@ -46,12 +66,12 @@ def parse_data(topic: str, payload_str: str):
 
             # add phone's timestamp if not present
             items = [
-                {**item, "timeStamp": item.get("timeStamp", phone_timestamp) - min_timestamp + phone_timestamp, "deviceId": device_id } for item in items # convert phone timestamp from ms to ns if timeStamp is not present
+                {**item, "timeStamp": item.get("timeStamp", phone_timestamp) - min_timestamp + phone_timestamp, "deviceId": user_id } for item in items # convert phone timestamp from ms to ns if timeStamp is not present
             ]
 
             items = [data_class(**item) for item in items]
             if data_type == "LOG":
-                print(f"Received LOG data for device {device_id} with {len(items)} entries.")
+                print(f"Received LOG data for device {device_id}, for user {user_id}, with {len(items)} entries.")
                 rprint(items)
             else:
                 db_class = db_type_mapping.get(data_type)
@@ -59,7 +79,6 @@ def parse_data(topic: str, payload_str: str):
 
                 stmt = insert(db_class).values([item.model_dump(by_alias=False) for item in items])
                 session.execute(stmt)
-                # print(f"Inserted {len(items)} records of type {data_type} for device {device_id} into the database.")
         except Exception as e:
             rprint(f"Error parsing message: {e}")
 

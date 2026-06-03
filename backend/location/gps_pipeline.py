@@ -9,7 +9,6 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import func, select
 from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image
-from datetime import datetime
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 # DBSCAN params (haversine expects radians)
@@ -197,9 +196,19 @@ def assign_stop_and_place_ids(df: pd.DataFrame) -> pd.DataFrame:
         .agg(lat=("latitude", "mean"), lon=("longitude", "mean"), alt=("elevation", "mean"))
         .reset_index()
     )
-    centroids["stop_id"] = centroids.apply(
-        lambda r: f"stop_{int(r['track_id'])}_{int(r['cluster'])}", axis=1
-    )
+    # centroids["stop_id"] = centroids.apply(
+    #     lambda r: f"stop_{int(r['track_id'])}_{int(r['cluster'])}", axis=1
+    # )
+    try:
+        centroids["stop_id"] = (
+            "stop_"
+            + centroids["track_id"].astype(int).astype(str)
+            + "_"
+            + centroids["cluster"].astype(int).astype(str)
+        )
+    except ValueError:
+        print(centroids["track_id"])
+        print(centroids["cluster"])
 
     df = df.merge(
         centroids[["track_id", "cluster", "stop_id"]],
@@ -501,12 +510,12 @@ def run_pipeline(session: Session, device: str, date: str):
     print(f"   {len(segments)} segments total")
 
     seg_df = pd.DataFrame(segments)
-
     print("7. Assigning GPS points to images…")
     all_points = df.to_dict(orient="records")
     point_timestamps = df["timestamp"].tolist()
     dates = df["date"].unique()
     image_data = []
+    session.rollback()
     for date in tqdm(dates):
         data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
         rows = []
@@ -518,6 +527,7 @@ def run_pipeline(session: Session, device: str, date: str):
                     "longitude": d["longitude"],
                     "elevation": d["elevation"],
                     "timestamp": d["timestamp"].replace(tzinfo=None).timestamp(),
+                    "local_timestamp": d["timestamp"].astimezone(d["timezone"]).strftime("%Y-%m-%d %H:%M:%S%z"),
                     "timezone": d["timezone"],
                     "formatted_time": d["formatted_time"],
                     "source": "interpolated" if d.get("interpolated") else "nearest",
@@ -526,11 +536,13 @@ def run_pipeline(session: Session, device: str, date: str):
             )
             if len(rows) >= 100:
                 stmt = insert(ImageGPS).values(rows)
+                stmt.on_conflict_do_update(index_elements=["image_id"], set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "local_timestamp": stmt.excluded.local_timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
                 stmt.on_conflict_do_nothing(constraint="image_gps_image_id_key")
                 session.execute(stmt)
                 rows = []
         if rows:
             stmt = insert(ImageGPS).values(rows)
+            stmt.on_conflict_do_nothing(index_elements=["image_id"])
             stmt.on_conflict_do_nothing(constraint="image_gps_image_id_key")
             session.execute(stmt)
         image_data.extend(data)

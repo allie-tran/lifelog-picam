@@ -53,7 +53,7 @@ def get_attr(obj, attr):
 
 @app.get("/logs/{sensor}")
 def get_sensor_logs(
-    sensor: Literal["all", "heartrate", "magnetometer", "accelerometer", "gyroscope"],
+    sensor: Literal["heartrate", "magnetometer", "accelerometer", "gyroscope", "ppg", "ppi"],
     date: str,
     device_id: str,
     sample_rate: int = Query(default=50, description="Return every N-th row. Higher = fewer points."),
@@ -78,14 +78,15 @@ def get_sensor_logs(
 
     # 1. Define the full registry of targets
     sensor_registry = {
-        # "heartrate": (HeartRateTable, ["hr"]),
+        "heartrate": (HeartRateTable, ["hr"]),
+        "ppi": (PPITable, ["hr", "ppi"]),
         "magnetometer": (MagnetometerTable, ["x", "y", "z", "magnitude"]),
         "accelerometer": (AccelerometerTable, ["x", "y", "z", "magnitude"]),
         "gyroscope": (GyroscopeTable, ["x", "y", "z", "magnitude"]),
         "ppg": (PPGTable, ["channel_samples.0", "channel_samples.1", "channel_samples.2", "channel_samples.3"]),
-        "heartrate": (PPITable, ["hr", "ppi"])
     }
 
+    sensor_registry = {sensor: sensor_registry[sensor]}
     targets = [(name, table, keys) for name, (table, keys) in sensor_registry.items()]
 
     all_res = {}
@@ -114,7 +115,7 @@ def get_sensor_logs(
         res = session.execute(sampled_stmt).all()
 
         # Define a strict 60-second interval (5,000,000,000 nanoseconds)
-        BUCKET_SIZE_NS = 30 * 1_000_000_000 if name not in ["heartrate", "ppi"] else 1_000_000_000
+        BUCKET_SIZE_NS = 5 * 1_000_000_000
 
         # 6. Group existing rows into their respective 5s buckets using integer division
         # This runs in O(M) time where M is just the small dataset returned by Postgres

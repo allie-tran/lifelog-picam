@@ -34,7 +34,6 @@ import GoalConfig from './GoalConfig';
 import ImageWithDate from './ImageWithDate';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import dayjs from 'dayjs';
-import SensorHistory from './Biometrics';
 
 const minutesToHM = (m: number): string => {
     const total = Math.round(m);
@@ -45,13 +44,13 @@ const minutesToHM = (m: number): string => {
     return `${h} h ${mm} min`;
 };
 
-const safePercent = (num: number, denom: number): number =>
-    denom > 0 ? (num / denom) * 100 : 0;
-
 const DaySummaryComponent = () => {
     const [searchParams] = useSearchParams();
     const date = searchParams.get('date');
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const deviceId =
+        useAppSelector((state) => state.auth.deviceId) ||
+        searchParams.get('device') ||
+        '';
     const [openModal, setOpenModal] = React.useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [periodIndex, setPeriodIndex] = useState(0);
@@ -61,23 +60,18 @@ const DaySummaryComponent = () => {
         isLoading: dayLoading,
         error: isError,
         mutate,
-    } = useSWR({ date, deviceId }, () => getDaySummary(deviceId, date || ''), {
-        revalidateOnFocus: false,
-        revalidateIfStale: false,
-        shouldRetryOnError: false,
-    });
-
-    // const {
-    //     data: dayPlayback,
-    //     isLoading: playbackLoading,
-    //     error: playbackError,
-    // } = useSWR(
-    //     { date, deviceId, type: 'playback' },
-    //     () => getDayPlayback(deviceId, date || ''),
-    //     {
-    //         revalidateOnFocus: false,
-    //     }
-    // );
+    } = useSWR(
+        { key: "day-summary", date, deviceId },
+        () => {
+            if (!date || !deviceId) return null;
+            return getDaySummary(deviceId, date);
+        },
+        {
+            revalidateOnFocus: false,
+            revalidateIfStale: false,
+            shouldRetryOnError: false,
+        }
+    );
 
     const handleProcess = async (
         resegment: boolean = false,
@@ -137,7 +131,7 @@ const DaySummaryComponent = () => {
             </Card>
         );
 
-    const allPeriodNames = Object.keys(daySummary.periodMetrics);
+    const allPeriodNames = Object.keys(daySummary.periodMetrics || {});
     const currentChosenPeriodName =
         allPeriodNames[periodIndex] || allPeriodNames[0] || '';
 
@@ -200,7 +194,7 @@ const DaySummaryComponent = () => {
                         <BurstMetricsCard bursts={daySummary.burstMetrics} />
                         <ActivitySummary
                             categoryEntries={Object.entries(
-                                daySummary.categoryMinutes
+                                daySummary.categoryMinutes || {}
                             ).sort((a, b) => b[1] - a[1])}
                             categoryMinutes={daySummary.categoryMinutes}
                             totalMinutes={daySummary.totalMinutes}
@@ -224,32 +218,31 @@ const DaySummaryComponent = () => {
                                     },
                                 }}
                             >
-                                {Object.keys(daySummary.periodMetrics).map(
-                                    (name, index) => (
-                                        <Tab
-                                            key={index}
-                                            label={name}
-                                            value={index}
-                                            sx={{
-                                                borderRadius: '8px 8px 0 0',
-                                                marginRight: '4px',
-                                                fontSize: '12px',
-                                                minHeight: '32px',
-                                                padding: '4px 12px',
-                                                backgroundColor:
-                                                    CATEGORIES[name] + '30',
+                                {Object.keys(
+                                    daySummary.periodMetrics || {}
+                                ).map((name, index) => (
+                                    <Tab
+                                        key={index}
+                                        label={name}
+                                        value={index}
+                                        sx={{
+                                            borderRadius: '8px 8px 0 0',
+                                            marginRight: '4px',
+                                            fontSize: '12px',
+                                            minHeight: '32px',
+                                            padding: '4px 12px',
+                                            backgroundColor:
+                                                CATEGORIES[name] + '30',
+                                            color: '#fff',
+                                            '&.Mui-selected': {
                                                 color: '#fff',
-                                                '&.Mui-selected': {
-                                                    color: '#fff',
-                                                    backgroundColor:
-                                                        CATEGORIES[name],
-                                                    borderColor:
-                                                        CATEGORIES[name],
-                                                },
-                                            }}
-                                        />
-                                    )
-                                )}
+                                                backgroundColor:
+                                                    CATEGORIES[name],
+                                                borderColor: CATEGORIES[name],
+                                            },
+                                        }}
+                                    />
+                                ))}
                             </Tabs>
                             <Card variant="outlined">
                                 <PeriodCard

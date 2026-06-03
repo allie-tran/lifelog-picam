@@ -1,12 +1,12 @@
 import {
     AddRounded,
     CameraAltRounded,
+    MonitorHeartRounded,
     PersonRounded,
     VerifiedUserRounded,
 } from '@mui/icons-material';
 import {
     Button,
-    Container,
     Divider,
     FormControl,
     InputLabel,
@@ -16,18 +16,21 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import { changeUserAccess, getUsers } from 'apis/auth';
+import { addSensorToUser, changeUserAccess, getUsers } from 'apis/auth';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
-import { AccessLevel, DeviceAccess, UserInfo } from 'types/auth';
+import { AccessLevel, DeviceAccess, SensorDevice, UserInfo } from 'types/auth';
 
 const Admin = () => {
+    const navigate = useNavigate();
     const { isAuthenticated } = useAppSelector((state) => state.auth);
     const [cookies] = useCookies(['token']);
+
+    // Content Access Modal States
     const [open, setOpen] = React.useState(false);
     const [userForAccess, setUserForAccess] = React.useState<string | null>(
         null
@@ -36,7 +39,16 @@ const Admin = () => {
     const [accessLevel, setAccessLevel] = React.useState<AccessLevel>(
         AccessLevel.NONE
     );
-    const navigate = useNavigate();
+
+    // Sensor Access
+    const [openSensor, setOpenSensor] = React.useState(false);
+    const [userForSensorAccess, setUserForSensorAccess] = React.useState<
+        string | null
+    >(null);
+    const [sensorDeviceId, setSensorDeviceId] = React.useState<string>('');
+    const [sensorType, setSensorType] = React.useState<string>('');
+    const [deviceNickname, setDeviceNickname] = React.useState<string>('');
+
     if (!isAuthenticated) {
         navigate('/login');
     }
@@ -49,12 +61,27 @@ const Admin = () => {
         shouldRetryOnError: false,
     });
 
-    const addDeviceAccessToUser = (
+    const addContentAccessToUser = (
         username: string,
         deviceId: string,
         accessLevel: AccessLevel
     ) => {
         changeUserAccess(cookies.token, username, deviceId, accessLevel);
+        mutate();
+    };
+
+    const addSensorAccessToUser = (
+        deviceId: string,
+        sensorType: string,
+        deviceNickname: string,
+        associatedUsername: string
+    ) => {
+        addSensorToUser(
+            deviceId,
+            sensorType,
+            deviceNickname,
+            associatedUsername
+        );
         mutate();
     };
 
@@ -96,24 +123,42 @@ const Admin = () => {
                             />
                             {user.username}
                         </Typography>
-                        <Button
-                            variant="outlined"
-                            sx={{ mt: 2, textTransform: 'none' }}
-                            onClick={() => {
-                                setUserForAccess(user.username);
-                                setDeviceId('');
-                                setAccessLevel(AccessLevel.NONE);
-                                setOpen(true);
-                            }}
-                        >
-                            Add Device Access <AddRounded sx={{ ml: 1 }} />
-                        </Button>
+                        <Stack direction="row" spacing={1}>
+                            <Button
+                                variant="outlined"
+                                sx={{ mt: 2, textTransform: 'none' }}
+                                onClick={() => {
+                                    setUserForAccess(user.username);
+                                    setDeviceId('');
+                                    setAccessLevel(AccessLevel.NONE);
+                                    setOpen(true);
+                                }}
+                            >
+                                Add Device Access <AddRounded sx={{ ml: 1 }} />
+                            </Button>
+                            <Button
+                                variant="outlined"
+                                sx={{ mt: 2, textTransform: 'none' }}
+                                onClick={() => {
+                                    setUserForSensorAccess(user.username);
+                                    setSensorDeviceId('');
+                                    setSensorType('');
+                                    setDeviceNickname('');
+                                    setOpenSensor(true);
+                                }}
+                            >
+                                Add Sensor Access <AddRounded sx={{ ml: 1 }} />
+                            </Button>
+                        </Stack>
                     </Stack>
                     <Stack
                         alignItems="flex-start"
                         spacing={1}
                         sx={{ width: '100%', mt: 1 }}
                     >
+                        <Typography variant="subtitle1" color="text.secondary">
+                            Content Access:
+                        </Typography>
                         {user.devices ? (
                             user.devices.map((device: DeviceAccess) => (
                                 <Stack
@@ -171,11 +216,78 @@ const Admin = () => {
                                 No device access assigned.
                             </Typography>
                         )}
+                        <Divider flexItem sx={{ my: 2 }} />
+                        {user.sensors ? (
+                            user.sensors.map((sensor: SensorDevice) => (
+                                <Stack
+                                    direction="row"
+                                    key={sensor.deviceNickname} // Using nickname as key, or any unique identifier
+                                    alignItems="center"
+                                    justifyContent="space-between"
+                                    sx={{
+                                        width: '100%',
+                                        backgroundColor: 'background.default',
+                                        borderRadius: 1,
+                                        border: '1px solid #424352',
+                                        p: 1,
+                                        px: 2,
+                                    }}
+                                >
+                                    <Stack direction="row" alignItems="center">
+                                        <MonitorHeartRounded
+                                            sx={{
+                                                mr: 1,
+                                                verticalAlign: 'middle',
+                                            }}
+                                        />
+                                        <Typography
+                                            variant="body2"
+                                            align="center"
+                                        >
+                                            {sensor.deviceNickname} -{' '}
+                                            <strong>
+                                                {sensor.sensorType.toUpperCase()}
+                                            </strong>
+                                        </Typography>
+                                    </Stack>
+                                    <Button
+                                        variant="text"
+                                        color="error"
+                                        sx={{ ml: 1, textTransform: 'none' }}
+                                        onClick={() => {
+                                            setUserForSensorAccess(
+                                                user.username
+                                            );
+                                            setSensorDeviceId(sensor.deviceId);
+                                            setSensorType(sensor.sensorType);
+                                            setDeviceNickname(
+                                                sensor.deviceNickname
+                                            );
+                                            setOpenSensor(true);
+                                        }}
+                                    >
+                                        Modify
+                                    </Button>
+                                </Stack>
+                            ))
+                        ) : (
+                            <Typography
+                                variant="body2"
+                                align="center"
+                                marginTop={1}
+                            >
+                                No sensor access assigned.
+                            </Typography>
+                        )}
                     </Stack>
                 </React.Fragment>
             ))}
 
-            <ModalWithCloseButton open={open} onClose={() => setOpen(false)} fitContent>
+            <ModalWithCloseButton
+                open={open}
+                onClose={() => setOpen(false)}
+                fitContent
+            >
                 <Stack spacing={2} sx={{ width: 400, p: 3 }}>
                     <Typography variant="h6" align="center" marginY={2}>
                         <VerifiedUserRounded
@@ -225,7 +337,9 @@ const Admin = () => {
                             }
                         >
                             <MenuItem value={AccessLevel.OWNER}>OWNER</MenuItem>
-                            <MenuItem value={AccessLevel.VIEWER}>VIEWER</MenuItem>
+                            <MenuItem value={AccessLevel.VIEWER}>
+                                VIEWER
+                            </MenuItem>
                             <MenuItem value={AccessLevel.ADMIN}>ADMIN</MenuItem>
                             <MenuItem value={AccessLevel.NONE}>NONE</MenuItem>
                         </Select>
@@ -235,7 +349,7 @@ const Admin = () => {
                         sx={{ mt: 3 }}
                         onClick={() => {
                             if (userForAccess) {
-                                addDeviceAccessToUser(
+                                addContentAccessToUser(
                                     userForAccess,
                                     deviceId,
                                     accessLevel
@@ -248,7 +362,78 @@ const Admin = () => {
                     </Button>
                 </Stack>
             </ModalWithCloseButton>
+
+            <ModalWithCloseButton
+                open={openSensor}
+                onClose={() => setOpenSensor(false)}
+                fitContent
+            >
+                <Stack spacing={2} sx={{ width: 400, p: 3 }}>
+                    <Typography variant="h6" align="center" marginY={2}>
+                        <VerifiedUserRounded
+                            sx={{ mr: 1, verticalAlign: 'middle' }}
+                        />
+                        Add Sensor Access
+                    </Typography>
+
+                    {/* Select user and device access form goes here */}
+                    <FormControl sx={{ mt: 2 }}>
+                        <InputLabel id="select-user-label">
+                            Select User
+                        </InputLabel>
+                        <Select
+                            labelId="select-user-label"
+                            value={userForAccess || ''}
+                            label="Select User"
+                            onChange={(e) => setUserForAccess(e.target.value)}
+                        >
+                            {users?.map((user: UserInfo) => (
+                                <MenuItem
+                                    key={user.username}
+                                    value={user.username}
+                                >
+                                    {user.username}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                    <TextField
+                        label="Device ID"
+                        onChange={(e) => setSensorDeviceId(e.target.value)}
+                        value={sensorDeviceId}
+                    />
+                    <TextField
+                        label="Device Nickname"
+                        onChange={(e) => setDeviceNickname(e.target.value)}
+                        value={deviceNickname}
+                    />
+                    <TextField
+                        label="Sensor Type"
+                        defaultValue="biometrics"
+                        onChange={(e) => setSensorType(e.target.value)}
+                        value={sensorType}
+                    />
+                    <Button
+                        variant="contained"
+                        sx={{ mt: 3 }}
+                        onClick={() => {
+                            if (userForAccess) {
+                                addSensorAccessToUser(
+                                    sensorDeviceId,
+                                    sensorType,
+                                    deviceNickname,
+                                    userForAccess
+                                );
+                                setOpenSensor(false);
+                            }
+                        }}
+                    >
+                        Save Changes
+                    </Button>
+                </Stack>
+            </ModalWithCloseButton>
         </Stack>
     );
 };
+
 export default Admin;

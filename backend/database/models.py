@@ -71,6 +71,7 @@ class Location(Base):
 # ---------------------------------------------------------------------------
 
 
+# These are Camera Device
 class Device(Base):
     __tablename__ = "devices"
     __table_args__ = (Index("ix_devices_device_id", "device_id"),)
@@ -150,6 +151,21 @@ class DeviceWhitelistEmbedding(Base):
 
     entry = relationship("DeviceWhitelistEntry", back_populates="embeddings")
 
+# ---------------------------------------------------------------------------
+# Sensors
+# ---------------------------------------------------------------------------
+class SensorDevice(Base):
+    __tablename__ = "sensor_devices"
+    __table_args__ = (Index("ix_sensor_devices_device_id", "device_id"),
+                      Index("ix_sensor_devices_associated_user", "associated_user"),
+                      UniqueConstraint("device_id", "sensor_type", name="uq_sensor_device_id_type"))
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(Text, unique=True, nullable=False)
+    device_nickname = Column(Text, nullable=True)
+    secret = Column(Text, nullable=True)
+    sensor_type = Column(Text, nullable=False)
+    associated_user = Column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="SET NULL"), nullable=True)
 
 # ---------------------------------------------------------------------------
 # Image

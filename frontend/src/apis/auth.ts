@@ -45,3 +45,13 @@ export const changeUserAccess = async (token: string, username: string, deviceId
     return response.data;
 }
 
+export const addSensorToUser = async (deviceId: string, sensorType: string, deviceNickname: string, associatedUsername: string) => {
+    const response = await axios.put(`${BACKEND_URL}/auth/add-sensor`, {
+        deviceId,
+        sensorType,
+        deviceNickname,
+        associatedUsername
+    });
+    return response.data;
+}
+

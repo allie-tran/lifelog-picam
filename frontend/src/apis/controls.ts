@@ -26,7 +26,7 @@ export const sendGPS = async (
     latitude: number,
     longitude: number,
     elevation: number,
-    deviceSecureId: string,
+    deviceId: string,
     time: string
 ) => {
     const response = await axios.put(
@@ -36,12 +36,8 @@ export const sendGPS = async (
             longitude,
             elevation,
             timestamp: time,
+            deviceId,
         },
-        {
-            headers: {
-                'X-Device-ID': deviceSecureId,
-            },
-        }
     );
 
     return response.data;
