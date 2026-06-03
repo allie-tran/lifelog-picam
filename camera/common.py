@@ -3,15 +3,19 @@ from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
-import nacl.utils
-from nacl.public import PrivateKey, Box, PublicKey
+from nacl.public import Box, PrivateKey, PublicKey
 
 load_dotenv()
 device_id = os.getenv("DEVICE_ID", "selfhealth")
 DEVICE_SECRET_KEY = os.getenv("DEVICE_SECRET_KEY", "")
 SERVER_PUBLIC_KEY = os.getenv("SERVER_PUBLIC_KEY", "")
-assert DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY, "Both DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY environment variables must be set."
-box = Box(PrivateKey(bytes.fromhex(DEVICE_SECRET_KEY)), PublicKey(bytes.fromhex(SERVER_PUBLIC_KEY)))
+assert (
+    DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY
+), "Both DEVICE_SECRET_KEY and SERVER_PUBLIC_KEY environment variables must be set."
+box = Box(
+    PrivateKey(bytes.fromhex(DEVICE_SECRET_KEY)),
+    PublicKey(bytes.fromhex(SERVER_PUBLIC_KEY)),
+)
 
 BACKEND_URL = "https://dcu.allietran.com/selfhealth/be"
 UPLOAD_URL = f"{BACKEND_URL}/upload-image"
@@ -23,6 +27,7 @@ UPLOAD_GPS_URL = f"{BACKEND_URL}/location/upload-gps"
 OUTPUT = "Camera/timelapse"
 
 IMAGE_EXTENSION = ".jpg"
+
 
 def send_image(image_path, uploaded_files, LOG_FILE):
     if image_path in uploaded_files:
@@ -37,11 +42,13 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         # the file is encrypted, so we don't need to encrypt it again. Just send it as is.
         files = {
             "file": (os.path.basename(image_path), img_file, f"image/jpeg"),
-            "timestamp": (None, str(timestamp)),
-            # rotate 90 clockwise
-            "rotation": (None, "90"),
         }
-        response = requests.put(UPLOAD_URL, files=files, headers={"X-Device-ID": device_id})
+        response = requests.put(
+            UPLOAD_URL,
+            files=files,
+            data={"rotation": -90},
+            headers={"X-Device-ID": device_id},
+        )
 
     if response.status_code == 200:
         print(f"Uploaded: {image_path}")
@@ -52,12 +59,13 @@ def send_image(image_path, uploaded_files, LOG_FILE):
 
     return "photo"
 
+
 def send_video(video_path, uploaded_files, LOG_FILE):
     if video_path in uploaded_files:
         return "video"
 
     timestamp = datetime.strptime(
-            os.path.basename(video_path).replace(".h264", ""), "%Y%m%d_%H%M%S%z"
+        os.path.basename(video_path).replace(".h264", ""), "%Y%m%d_%H%M%S%z"
     )
     timestamp = int(timestamp.timestamp() * 1000)
 
@@ -67,7 +75,9 @@ def send_video(video_path, uploaded_files, LOG_FILE):
             "file": (os.path.basename(video_path), vid_file, "video/h264"),
             # "timestamp": (None, str(timestamp)),
         }
-        response = requests.put(UPLOAD_VIDEO_URL, files=files, headers={"X-Device-ID": device_id})
+        response = requests.put(
+            UPLOAD_VIDEO_URL, files=files, headers={"X-Device-ID": device_id}
+        )
 
     if response.status_code == 200:
         print(f"Uploaded: {video_path}")
@@ -77,6 +87,7 @@ def send_video(video_path, uploaded_files, LOG_FILE):
         return response.json()
 
     return "video"
+
 
 def send_gps(gps_path):
     if not os.path.exists(gps_path):
@@ -91,7 +102,7 @@ def send_gps(gps_path):
             "latitude": float(latitude),
             "longitude": float(longitude),
             "device_id": device_id,
-            "elevation": float(elevation) if elevation != "None" else None
+            "elevation": float(elevation) if elevation != "None" else None,
         }
         response = requests.put(UPLOAD_GPS_URL, json=payload)
 
@@ -99,8 +110,11 @@ def send_gps(gps_path):
             print(f"Uploaded GPS data: {payload}")
             return response.json()
         else:
-            print(f"Failed to upload GPS data: {response.status_code} - {response.text}")
+            print(
+                f"Failed to upload GPS data: {response.status_code} - {response.text}"
+            )
             return None
+
 
 def get_latest_gps():
     response = requests.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}")
@@ -108,8 +122,11 @@ def get_latest_gps():
         gps_data = response.json()
         return gps_data
     else:
-        print(f"Failed to fetch latest GPS data: {response.status_code} - {response.text}")
+        print(
+            f"Failed to fetch latest GPS data: {response.status_code} - {response.text}"
+        )
         return None
+
 
 def check_if_connected():
     try:
