@@ -85,7 +85,7 @@ def send_gps(gps_path):
     timestamp, latitude, longitude, elevation = data.strip().split(",")
     if latitude:
         payload = {
-            "timestamp": datetime.fromisoformat(timestamp),
+            "timestamp": timestamp,
             "latitude": float(latitude),
             "longitude": float(longitude),
             "device_id": device_id,
