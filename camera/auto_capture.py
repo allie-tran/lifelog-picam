@@ -148,14 +148,16 @@ async def main():
 
     # Check latest GPS
     gps_data = get_latest_gps()
-    if gps_data not is None:
-        print(
-            f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}"
-        )
-        os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
-        time.tzset()  # Apply the timezone change
-        print(f"System timezone set to: {time.tzname}")
-        LATEST_GPS.update(gps_data)  # Update the global state with the initial GPS data
+    while gps_data is None:
+        gps_data = get_latest_gps()
+
+    print(
+        f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}"
+    )
+    os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
+    time.tzset()  # Apply the timezone change
+    print(f"System timezone set to: {time.tzname}")
+    LATEST_GPS.update(gps_data)  # Update the global state with the initial GPS data
 
     # Run both workers simultaneously
     await asyncio.gather(
