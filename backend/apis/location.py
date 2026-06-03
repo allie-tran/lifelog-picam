@@ -56,7 +56,7 @@ async def upload_gps(
             "latitude": request.latitude,
             "longitude": request.longitude,
             "elevation": request.elevation,
-            "elevation": request.elevation,
+            "timezone": timezone
         }
     )
 

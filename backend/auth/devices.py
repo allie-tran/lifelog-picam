@@ -46,4 +46,4 @@ def verify_device_and_user(session, device_id: str, sensor_type: str):
     user_obj = session.execute(select(Device).where(Device.id == user_id)).scalar_one_or_none()
     if not user_obj:
         raise HTTPException(status_code=404, detail="Associated user not found for device. Please register the device first. (device_id: {})".format(device_id))
-    return user_obj.id
+    return user_obj

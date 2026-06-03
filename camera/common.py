@@ -20,11 +20,11 @@ box = Box(
 BACKEND_URL = "https://dcu.allietran.com/selfhealth/be"
 # New
 UPLOAD_URL = f"{BACKEND_URL}/images/upload-image"
+CHECK_ALL_URL = f"{BACKEND_URL}/images/check-all-images-uploaded"
 UPLOAD_GPS_URL = f"{BACKEND_URL}/location/upload-gps"
+
 # Old
 UPLOAD_VIDEO_URL = f"{BACKEND_URL}/upload-video"
-CHECK_URL = f"{BACKEND_URL}/check-image-uploaded"
-CHECK_ALL_URL = f"{BACKEND_URL}/check-all-images-uploaded"
 
 OUTPUT = "Camera/timelapse"
 

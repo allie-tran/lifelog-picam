@@ -258,7 +258,7 @@ async def check_image(date: str, timestamp: str):
     }
 
 
-@app.put("/upload-image")
+@app.put("/upload-image", deprecated=True)
 async def upload_image(
     file: UploadFile,
     background_tasks: BackgroundTasks,
@@ -374,7 +374,7 @@ async def update_app_endpoint(
     return {"message": "App update scheduled."}
 
 
-@app.post("/check-all-images-uploaded")
+@app.post("/check-all-images-uploaded", deprecated=True)
 def check_all_files_exist(
     request: CheckFilesRequest = Body(...),
     device: str = Depends(get_device_from_headers),

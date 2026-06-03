@@ -90,7 +90,7 @@ def check_if_folder_is_synced(date: str):
 
     # Only get filenames
     basenames = set(os.path.basename(f) for f in files)
-    payload = {"date": date, "all_files": list(basenames)}
+    payload = {"date": date, "all_files": list(basenames), "device_id": device_id}
 
     try:
         now = datetime.now()
@@ -98,7 +98,7 @@ def check_if_folder_is_synced(date: str):
             f"Checking sync status for folder {date} at {now.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         response = requests.post(
-            CHECK_ALL_URL, json=payload, timeout=10, headers={"X-Device-ID": device_id}
+            CHECK_ALL_URL, json=payload, timeout=10
         )
         if response.status_code == 200:
             missing, deleted = response.json()
