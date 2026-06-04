@@ -78,7 +78,13 @@ async def process_gps(
     date: str,
     session: Session = Depends(get_session)
 ):
-    run_pipeline(session, device, date)
+    if date == "all":
+        # run all
+        dates = session.execute(select(Image.date).where(Image.device == device, Image.timezone == None).distinct()).scalars().all()
+        for date in dates:
+            run_pipeline(session, device, date)
+    else:
+        run_pipeline(session, device, date)
 
 
 @app.get("/latest-gps")

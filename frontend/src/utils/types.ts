@@ -34,6 +34,7 @@ type ImageObject = {
     imagePath: string;
     thumbnail: string;
     timestamp: string;
+    timezone: string;
     isVideo: boolean;
     activity?: string;
     activityConfidence?: number;

@@ -26,6 +26,7 @@ const SimilarImages = () => {
         imagePath: searchParams.get('image') || '',
         thumbnail: (searchParams.get('image') || '').split('.')[0] + '.webp',
         timestamp: toTimestamp(searchParams.get('image') || ''),
+        timezone: 'UTC',
         isVideo: searchParams.get('image')?.endsWith('.mp4') || false,
     };
 

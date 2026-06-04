@@ -65,6 +65,7 @@ def decrypt_image(box: Box, file: UploadFile):
 async def upload_image(
     file: UploadFile,
     device: Annotated[str, Form(...)],
+    tz: Annotated[Optional[str], Form(...)],
     rotation: Annotated[Optional[int], Form(...)],
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
@@ -121,6 +122,7 @@ async def upload_image(
             username,
             date,
             file_name,
+            tz
         )
     now = datetime.now()
 

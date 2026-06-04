@@ -21,7 +21,8 @@ from visual.siglip import SIGLIP
 
 
 def index_to_postgres(
-    session, device_id: str, relative_path: str, skip_segmentation: bool = False
+    session, device_id: str, relative_path: str, tz: str,
+    skip_segmentation: bool = False,
 ):
     date, file_name = relative_path.split("/")
     if "-" in file_name:
@@ -35,6 +36,7 @@ def index_to_postgres(
             image_path=relative_path,
             thumbnail=relative_path.replace(".jpg", ".webp"),
             timestamp=timestamp.replace(tzinfo=timezone.utc),
+            timezone=tz,
             local_timestamp=local_timestamp,
             year=local_timestamp.year,
             month=local_timestamp.month,
@@ -165,10 +167,11 @@ def process_image(
     device_id: str,
     date: str,
     file_name: str,
+    tz: str,
 ):
     relative_path = f"{date}/{file_name}"
     try:
-        index_to_postgres(session, device_id, relative_path)
+        index_to_postgres(session, device_id, relative_path, tz)
         # white_list = []
         # if device:
         #     white_list = device.whitelist

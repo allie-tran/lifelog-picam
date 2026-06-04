@@ -126,6 +126,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                         image={{
                             imagePath: imagePath,
                             timestamp: new Date().toISOString(),
+                            timezone: imageData?.timezone || 'UTC',
                             thumbnail: imagePath,
                             isVideo: isVideo,
                         }}

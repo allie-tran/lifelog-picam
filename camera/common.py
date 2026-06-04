@@ -31,6 +31,16 @@ OUTPUT = "Camera/timelapse"
 IMAGE_EXTENSION = ".jpg"
 
 
+from datetime import timedelta, timezone
+import time
+
+def currenttz():
+    if time.daylight:
+        return timezone(timedelta(seconds=-time.altzone),time.tzname[1])
+    else:
+        return timezone(timedelta(seconds=-time.timezone),time.tzname[0])
+
+
 def send_image(image_path, uploaded_files, LOG_FILE):
     if image_path in uploaded_files:
         return "photo"
@@ -44,7 +54,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         response = requests.put(
             UPLOAD_URL,
             files=files,
-            data={"rotation": -90, "device": device_id},
+            data={"rotation": -90, "device": device_id, "tz": currenttz().tzname(None)}
         )
 
     if response.status_code == 200:

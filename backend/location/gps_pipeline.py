@@ -8,7 +8,7 @@ from datetime import timedelta
 from sklearn.cluster import DBSCAN
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm.session import Session
-from sqlalchemy import func, select
+from sqlalchemy import bindparam, func, select, update
 from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image
 from location.utils import find_timezone
@@ -517,46 +517,64 @@ def run_pipeline(session: Session, device: str, date: str):
     print("7. Assigning GPS points to images…")
     all_points = df.to_dict(orient="records")
     point_timestamps = df["timestamp"].tolist()
-    dates = df["date"].unique()
     image_data = []
     session.rollback()
-    for date in tqdm(dates):
-        data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
-        rows = []
-        for d in data:
-            if str(d["timezone"]) in ("None", "nan", ""):
-                d["timezone"] = find_timezone(d["latitude"], d["longitude"])
 
-            rows.append(
-                {
-                    "image_id": d["image_id"],
-                    "latitude": d["latitude"],
-                    "longitude": d["longitude"],
-                    "elevation": d["elevation"],
-                    "timestamp": d["timestamp"].replace(tzinfo=None).timestamp(),
-                    "timezone": d["timezone"],
-                    "formatted_time": d["formatted_time"],
-                    "source": "interpolated" if d.get("interpolated") else "nearest",
-                    "gap_s": d.get("gaps_s", None),
-                }
-            )
+    # Insert assigned GPS data for images in batches
+    data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
 
-            if len(rows) >= 100:
-                stmt = insert(ImageGPS).values(rows)
+    rows = []
+    for d in data:
+        if str(d["timezone"]) in ("None", "nan", ""):
+            d["timezone"] = find_timezone(d["latitude"], d["longitude"])
 
-                stmt.on_conflict_do_update(index_elements=["image_id"], set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
+        rows.append(
+            {
+                "image_id": d["image_id"],
+                "latitude": d["latitude"],
+                "longitude": d["longitude"],
+                "elevation": d["elevation"],
+                "timestamp": d["timestamp"].replace(tzinfo=None).timestamp(),
+                "timezone": d["timezone"],
+                "formatted_time": d["formatted_time"],
+                "source": "interpolated" if d.get("interpolated") else "nearest",
+                "gap_s": d.get("gaps_s", None),
+            }
+        )
 
-                stmt.on_conflict_do_nothing(constraint="image_gps_image_id_key")
-                session.execute(stmt)
-                rows = []
-        if rows:
+        if len(rows) >= 100:
             stmt = insert(ImageGPS).values(rows)
-            stmt.on_conflict_do_update(index_elements=["image_id"], set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
-            stmt.on_conflict_do_nothing(constraint="image_gps_image_id_key")
+            stmt = stmt.on_conflict_do_update(constraint="image_gps_image_id_key", set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
             session.execute(stmt)
-        image_data.extend(data)
+            rows = []
+
+    if rows:
+        stmt = insert(ImageGPS).values(rows)
+        stmt = stmt.on_conflict_do_update(constraint="image_gps_image_id_key", set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
+        session.execute(stmt)
+
+
+    # Update timezone to image
+    rows = []
+    for d in data:
+        if str(d["timezone"]) in ("None", "nan", ""):
+            tz = find_timezone(d["latitude"], d["longitude"])
+            rows.append({"id": d["image_id"], "timezone": tz})
+
+        if len(rows) >= 100:
+            stmt = update(Image).where(Image.id == bindparam("id")).values(timezone=bindparam("timezone"))
+            session.execute(stmt, rows)
+            rows = []
+
+    if rows:
+        stmt = update(Image).where(Image.id == bindparam("id")).values(timezone=bindparam("timezone"))
+        session.execute(stmt, rows)
+
+    image_data.extend(data)
+
     session.commit()
     print(f"   GPS assignment to images complete with {len(image_data)} matches")
+
 
     print("8. Enrich stops.")
     print("Not Implemented: would involve sending API requests to a geocoding service with stop centroids to get place names, categories, etc.")
