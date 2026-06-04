@@ -45,7 +45,8 @@ async def upload_gps(
     # find device
     device_id = request.device_id
     user = verify_device_and_user(session, device_id, "location")
-    timezone = find_timezone(request.latitude, request.longitude)
+    timezone = find_timezone(request.longitude, request.latitude)
+
     stmt = insert(RawGPS).values(
         device_id=user.id,
         latitude=request.latitude,
@@ -54,6 +55,9 @@ async def upload_gps(
         timestamp=datetime.fromisoformat(request.timestamp).astimezone(),
         timezone=timezone
     )
+    print("Inserting/updating GPS data for device {}: lat={}, lon={}, elev={}, time={}, tz={}".format(
+        device_id, request.latitude, request.longitude, request.elevation, request.timestamp, timezone
+    ))
 
     stmt = stmt.on_conflict_do_update(
         constraint="uq_raw_gps_device_time",

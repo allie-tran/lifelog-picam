@@ -16,7 +16,6 @@ from tasks import anonymise_image_task, yolo_process_images_task
 from visual import clip_model, SIGLIP
 from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 from sqlalchemy.exc import SQLAlchemyError
-
 from visual.siglip import SIGLIP
 
 
@@ -27,15 +26,16 @@ def index_to_postgres(
     date, file_name = relative_path.split("/")
     if "-" in file_name:
         return  # skip already processed files that have been renamed with a dash
+
     local_timestamp = parse_date(file_name.split(".")[0])
-    timestamp = local_timestamp.astimezone(timezone.utc)
+    utc_time = local_timestamp.astimezone(timezone.utc)
 
     stmt = insert(Image).values(
             date=date,
             device=device_id,
             image_path=relative_path,
             thumbnail=relative_path.replace(".jpg", ".webp"),
-            timestamp=timestamp.replace(tzinfo=timezone.utc),
+            timestamp=utc_time.replace(tzinfo=None),
             timezone=tz,
             local_timestamp=local_timestamp,
             year=local_timestamp.year,

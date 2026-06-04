@@ -38,9 +38,6 @@ def mark_error( session, device_id: str, date: str, image_path: str, timestamp: 
     """
     This function adds a MongoDB placeholder entry just to tell the device to not keep sending the same image over and over again. It doesn't do any cleanup.
     """
-    print(
-        f"Marking {image_path} for device {device_id} as deleted to prevent reprocessing."
-    )
     # check if already exists
     existing = session.execute(
         select(Image).where(Image.device == device_id, Image.image_path == image_path)

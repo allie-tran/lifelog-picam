@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 from fastapi import UploadFile
 from sqlalchemy import insert, select
@@ -45,6 +45,7 @@ def search_face_embedding(session, device: str, emb: list[float], top_k: int = 5
         .where(Image.deleted == False)
         .where(Image.device == device)
         .where(ImagePerson.embedding.isnot(None))
+        .where(Image.timestamp >= datetime.now() - timedelta(hours=1))
         .order_by(ImagePerson.embedding.cosine_distance(emb))
         .limit(top_k)
     ).fetchall()
