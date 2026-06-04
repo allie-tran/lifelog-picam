@@ -258,6 +258,8 @@ class ImageRecord:
                 location = next((loc for loc in locations if str(loc.id) == most_common_id), None)
 
             images = [ _orm_to_lifelog(img) for img in images]
+            if today:
+                images = images[::-1]  # reverse images within segment for "today" mode
             all_images.update(image_paths)
 
             try:

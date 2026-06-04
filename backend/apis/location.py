@@ -5,7 +5,6 @@ from sqlalchemy import  select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-
 from typing import  Annotated, Optional
 
 from app_types.general import GPSInfo
@@ -18,7 +17,7 @@ from app_types import CamelCaseModel
 
 from location.gps_pipeline import run_pipeline
 from database.models import Image, RawGPS, ImageGPS, SensorDevice
-from datetime import datetime
+from datetime import datetime, timezone as py_timezone
 from timezonefinder import TimezoneFinder
 
 from location.utils import find_timezone
@@ -45,15 +44,21 @@ async def upload_gps(
     # find device
     device_id = request.device_id
     user = verify_device_and_user(session, device_id, "location")
-    timezone = find_timezone(request.latitude, request.longitude)
+    timezone = find_timezone(request.longitude, request.latitude)
+    timestamp = datetime.fromisoformat(request.timestamp).astimezone(py_timezone.utc).replace(tzinfo=None)
+
     stmt = insert(RawGPS).values(
         device_id=user.id,
         latitude=request.latitude,
         longitude=request.longitude,
         elevation=request.elevation,
-        timestamp=datetime.fromisoformat(request.timestamp).astimezone(),
+        timestamp=timestamp,
         timezone=timezone
     )
+
+    print("Inserting/updating GPS data for device {}: lat={}, lon={}, elev={}, time={}, tz={}".format(
+        device_id, request.latitude, request.longitude, request.elevation, timestamp, timezone
+    ))
 
     stmt = stmt.on_conflict_do_update(
         constraint="uq_raw_gps_device_time",

@@ -122,7 +122,7 @@ async def upload_image(
             username,
             date,
             file_name,
-            tz
+            tz or "UTC"
         )
     now = datetime.now()
 

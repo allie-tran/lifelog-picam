@@ -24,6 +24,7 @@ def cache_results(func):
 
     def wrapper(*args):
         if args in cache:
+            logging.debug(f"Cache hit for coordinates: {args}")
             return cache[args]
         result = func(*args)
         cache[args] = result
@@ -36,15 +37,16 @@ tf = TimezoneFinder()
 
 @cache_results
 def find_timezone_coarse(longitude: float, latitude: float) -> str:
+    logging.debug(f"Finding timezone for coordinates: ({latitude}, {longitude})")
     timezone = tf.timezone_at(lng=longitude, lat=latitude)
     if timezone is None:
         logging.warning(f"Could not find timezone for coordinates: ({latitude}, {longitude}). Returning UTC as default.")
         return "UTC"  # Default to UTC if timezone cannot be determined
+    logging.debug(f"Found timezone: {timezone} for coordinates: ({latitude}, {longitude})")
     return timezone
 
 
-
 def find_timezone(longitude: float, latitude: float) -> str:
-    return find_timezone_coarse(round(longitude, 3), round(latitude, 3))
+    return find_timezone_coarse(round(longitude, 4), round(latitude, 4))
 
 

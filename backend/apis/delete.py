@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 from sqlalchemy.orm import Session
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
@@ -48,12 +48,11 @@ def delete_image(
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
-    print(stmt)
-    res = session.execute(stmt)
-    session.commit()
+    res: CursorResult = session.execute(stmt)
     print(
         f"Marked {res.rowcount} record(s) as deleted for image {request.image_path} on device {device}."
     )
+    session.commit()
 
 
 @app.delete("/delete-images")

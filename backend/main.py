@@ -51,6 +51,12 @@ from apis.delete import app as delete_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
+    force=True
+)
 
 
 # ---------------------------------------------------------------------------

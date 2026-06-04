@@ -33,6 +33,7 @@ def load_all_points(session: Session, device: str, date: str) -> pd.DataFrame:
     all_points = [p.__dict__ for p in all_points]  # Convert ORM objects to dicts
     if not all_points:
         return pd.DataFrame(columns=["latitude", "longitude", "elevation", "timestamp"])
+
     df = pd.DataFrame(all_points)
     df.sort_values("timestamp", inplace=True)
     # add date column as "YYYY-MM-DD" string for easier merging later
@@ -402,6 +403,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
         closest = closest.copy()  # avoid mutating original point
         gap_s = abs(closest["timestamp"] - img_ts)
         gaps.append(gap_s)
+        print(f"Image {image.image_path} at {img_ts} assigned to GPS point at {closest['timestamp']} with gap {gap_s}")
 
         if gap_s <= timedelta(seconds=30):
             stats["within_30s"] += 1
@@ -521,6 +523,7 @@ def run_pipeline(session: Session, device: str, date: str):
     session.rollback()
 
     # Insert assigned GPS data for images in batches
+    print(point_timestamps[-10:])
     data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
 
     rows = []

@@ -47,7 +47,7 @@ const ImageWithDate = ({
         : '';
     const formattedDate = timeOnly
         ? dayjs.utc(image.timestamp).tz(image.timezone).format('HH:mm z')
-        : dayjs(image.timestamp, image.timezone).format('dd DD MMM YYYY HH:mm z');
+        : dayjs.utc(image.timestamp).tz(image.timezone).format('dd DD MMM YYYY HH:mm z');
 
     const handleDelete = async () => {
         setDeleted(true);

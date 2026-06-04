@@ -10,13 +10,9 @@ from pymongo import MongoClient
 import logging
 
 from scripts.object_detection import ModelWrapper, extract_object_from_images
-
 import os
 
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logging.info("Starting Celery worker for describe_segment_task...")
 PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
 engine = create_engine(PG_URI)
