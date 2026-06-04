@@ -28,6 +28,9 @@ LOG_FILE = "synced.txt"
 
 device_id = os.getenv("DEVICE_ID", "omi")
 
+# STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
+starttime = open("start_time.txt", "r").read().strip()
+
 class NewFileHandler(FileSystemEventHandler):
     def on_created(self, event):
         if event.is_directory:

@@ -154,6 +154,7 @@ async def main():
     print(
         f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}"
     )
+
     os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
     time.tzset()  # Apply the timezone change
     print(f"System timezone set to: {time.tzname}")
