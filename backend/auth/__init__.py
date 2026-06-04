@@ -81,7 +81,7 @@ def verify(token: str):
     user = find_user_by_username(data["username"])
     if not user:
         raise HTTPException(status_code=401, detail="User does not exist")
-    return { "success": True, "username": user.username, "devices": user.devices }
+    return { "success": True, "username": user.username, "devices": user.devices, "sensors": user.sensors }
 
 
 # -----------------------------------------------------------------------

@@ -30,17 +30,6 @@ class LoginRequest(CamelCaseModel):
     username: str
     password: str
 
-class LoginResponse(CamelCaseModel):
-    token: str
-    token_type: str = "bearer"
-    username: str | None = None
-    devices: list[DeviceAccess] | None = None
-
-class AccessChangeRequest(CamelCaseModel):
-    username: str
-    device_id: str
-    access_level: AccessLevel
-
 class SensorType(StrEnum):
     CAMERA = "camera"
     BIOMETRICS = "biometrics"
@@ -50,6 +39,17 @@ class SensorDeviceWithDate(CamelCaseModel):
     device_id: str
     device_nickname: str | None = None
     sensor_type: SensorType
+class LoginResponse(CamelCaseModel):
+    token: str
+    token_type: str = "bearer"
+    username: str | None = None
+    devices: list[DeviceAccess] | None = None
+    sensors: list[SensorDeviceWithDate] | None = None
+
+class AccessChangeRequest(CamelCaseModel):
+    username: str
+    device_id: str
+    access_level: AccessLevel
 
 class User(Document):
     username: str

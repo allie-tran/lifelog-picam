@@ -36,6 +36,7 @@ const Login = () => {
                     login({
                         username: response.data.username,
                         devices: response.data.devices,
+                        sensors: response.data.sensors,
                     })
                 );
             })

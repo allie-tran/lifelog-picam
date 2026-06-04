@@ -2,7 +2,7 @@ import { processGPS, sendGPS } from '@apis/controls';
 import {
     EditRounded,
     GpsFixedRounded,
-    GpsOffRounded
+    GpsOffRounded,
 } from '@mui/icons-material';
 import {
     Button,
@@ -19,11 +19,10 @@ import { useAppSelector } from 'reducers/hooks';
 
 const GpsTrackerHook = () => {
     const device = useAppSelector((state) => state.auth.deviceId);
+    const sensors = useAppSelector((state) => state.auth.sensors);
     const [disableGps, setDisableGps] = React.useState(true);
-    const [changeDeviceId, setChangeDeviceId] = React.useState<boolean>(false);
-    const [secretDeviceId, setDeviceId] = React.useState<string | null>(
-        localStorage.getItem('deviceId') || null
-    );
+    const [secretDeviceId, setDeviceId] = React.useState<string | null>();
+    const [isRegisteredDevice, setIsRegisteredDevice] = React.useState(false);
     const [currentPosition, setCurrentPosition] =
         React.useState<GeolocationPosition | null>(null);
 
@@ -38,7 +37,10 @@ const GpsTrackerHook = () => {
 
     useEffect(() => {
         setDeviceId(navigator.userAgent);
-    }, [])
+        setIsRegisteredDevice(
+            sensors.some((sensor) => sensor.deviceId === navigator.userAgent)
+        );
+    }, [sensors]);
 
     useEffect(() => {
         if (disableGps) {
@@ -73,17 +75,10 @@ const GpsTrackerHook = () => {
                         }),
                     10000
                 )();
-                // throttle(() => onProcessGps(), 60000)();
+                throttle(() => onProcessGps(), 60000)();
             }
         }
     }, [coords, secretDeviceId, disableGps]);
-
-    // useEffect(() => {
-    //     // save deviceId to local storage
-    //     if (secretDeviceId) {
-    //         localStorage.setItem('deviceId', secretDeviceId);
-    //     }
-    // }, [secretDeviceId]);
 
     const onProcessGps = () => {
         processGPS(
@@ -133,30 +128,6 @@ const GpsTrackerHook = () => {
         } else if (currentPosition) {
             return (
                 <Stack>
-                    {/* {changeDeviceId ? ( */}
-                    {/*     <TextField */}
-                    {/*         label="Device ID" */}
-                    {/*         value={secretDeviceId || ''} */}
-                    {/*         onChange={(e) => setDeviceId(e.target.value)} */}
-                    {/*     /> */}
-                    {/* ) : ( */}
-                    {/*     <Stack direction="row" alignItems="center" spacing={1}> */}
-                    {/*         <Typography variant="body1"> */}
-                    {/*             Device ID:{' '} */}
-                    {/*             <strong> */}
-                    {/*                 {secretDeviceId */}
-                    {/*                     ? secretDeviceId.substring(0, 4) + '...' */}
-                    {/*                     : 'Not Set'} */}
-                    {/*             </strong> */}
-                    {/*         </Typography> */}
-                    {/*         <IconButton */}
-                    {/*             onClick={() => setChangeDeviceId(true)} */}
-                    {/*             color="primary" */}
-                    {/*         > */}
-                    {/*             <EditRounded /> */}
-                    {/*         </IconButton> */}
-                    {/*     </Stack> */}
-                    {/* )} */}
                     <Typography variant="body1">
                         Current Location:{' '}
                         {currentPosition.coords.latitude.toFixed(6)},{' '}
@@ -173,12 +144,13 @@ const GpsTrackerHook = () => {
         }
     };
 
-    const GpsComponent = () => (
-        <Stack spacing={2} alignItems="center" sx={{ padding: 2 }}>
-            <DisableGpsButton />
-            <GpsInfo />
-        </Stack>
-    );
+    const GpsComponent = () =>
+        isRegisteredDevice ? (
+            <Stack spacing={2} alignItems="center" sx={{ padding: 2 }}>
+                <DisableGpsButton />
+                <GpsInfo />
+            </Stack>
+        ) : null;
 
     return {
         currentPosition,

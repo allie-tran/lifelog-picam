@@ -42,6 +42,23 @@ type ImageObject = {
     new?: boolean;
 };
 
+export type ObjectDetection = {
+    label: string;
+    confidence: number;
+    bbox: [number, number, number, number]; // [x_min, y_min, x_max, y_max]
+};
+
+export type ImageWithMetadata = {
+    imagePath: string;
+    timestamp: string;
+    timezone: string;
+    gps: GPSData;
+    location: LocationData;
+    objects: ObjectDetection[];
+    people: ObjectDetection[];
+};
+
+
 export type ResultSegment = {
     images: ImageObject[];
     location: LocationData;

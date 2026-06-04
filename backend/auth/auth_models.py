@@ -84,6 +84,7 @@ def verify_user(request: LoginRequest) -> LoginResponse:
             token_type="bearer",
             username=request.username,
             devices=user.devices or [],
+            sensors=user.sensors or [],
         )
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")

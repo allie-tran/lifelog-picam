@@ -1,15 +1,17 @@
-
+import base64
+import io
 from typing import Annotated, Any, List, Literal, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from joblib import os
 from sqlalchemy import update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
+from sqlalchemy.sql.coercions import ColumnArgumentImpl
 
 from app_types.general import LifelogImage, ResultSegment
-from auth import _require_owner
+from auth import _require_owner, _require_any_access
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from constants import DIR
@@ -18,6 +20,8 @@ from database.models import HeartRateData as HeartRateTable, Image, Magnetometer
 from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
 from scripts.segmentation import load_all_segments
+from scripts.utils import get_thumbnail_path
+from PIL import Image as PILImage
 
 
 app = FastAPI()
@@ -315,3 +319,91 @@ def get_context_images(
         )
     return results
 
+class GPSData(CamelCaseModel):
+    latitude: float
+    longitude: float
+
+class ObjectData(CamelCaseModel):
+    label: str
+    confidence: float
+    bbox: list[float]  # [x_min, y_min, x_max, y_max]
+
+class LocationData(CamelCaseModel):
+    address: str
+    name: Optional[str]
+
+class ImageInfoResponse(CamelCaseModel):
+    image_path: str
+    timestamp: datetime
+    timezone: str
+    gps: Optional[GPSData]
+    objects: List[ObjectData]
+    people: List[ObjectData]
+    location: Optional[LocationData]
+
+@app.get("/get-image")
+def get_image(
+    device: str,
+    filename: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_any_access(access_level)
+
+    image = ImageRecord.find_one(session, device=device, image_path=filename)
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    image_path = os.path.join(DIR, device, filename)
+    thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
+    if not thumbnail_exists:
+        raise HTTPException(status_code=404, detail="Thumbnail not found.")
+
+    img = PILImage.open(thumbnail_path)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+
+    # fetch metadata
+    stmt = (select(Image)
+            .options(
+                selectinload(Image.gps),
+                selectinload(Image.objects),
+                selectinload(Image.people),
+                selectinload(Image.clip_embedding),
+                selectinload(Image.location),
+                selectinload(Image.annotations),
+            )
+            .where(Image.image_path == filename)
+            .where(Image.device == device)
+    )
+    image_metadata = session.execute(stmt).scalar_one_or_none()
+
+    return ImageInfoResponse(
+        image_path=f"data:image/jpeg;base64, {base64.b64encode(buf.getvalue()).decode('utf-8')}",
+        timestamp=image.timestamp,
+        timezone=image_metadata.gps.timezone if image_metadata and image_metadata.gps else "UTC",
+        gps=GPSData(
+            latitude=image_metadata.gps.latitude,
+            longitude=image_metadata.gps.longitude,
+        ) if image_metadata and image_metadata.gps else None,
+        objects=[
+            ObjectData(
+                label=obj.label,
+                confidence=obj.confidence,
+                bbox=obj.rel_bbox
+            )
+            for obj in image_metadata.objects
+        ] if image_metadata and image_metadata.objects else [],
+        people=[
+            ObjectData(
+                label=person.label,
+                confidence=person.confidence,
+                bbox=person.rel_bbox
+            )
+            for person in image_metadata.people
+        ] if image_metadata and image_metadata.people else [],
+        location=LocationData(
+            address=image_metadata.location.address,
+            name=image_metadata.location.name,
+        ) if image_metadata and image_metadata.location else None,
+    )

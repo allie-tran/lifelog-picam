@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { AccessLevel, DeviceAccess } from 'types/auth';
+import { AccessLevel, DeviceAccess, SensorDevice } from 'types/auth';
 
 
 interface AuthState {
@@ -8,6 +8,7 @@ interface AuthState {
     devices: DeviceAccess[];
     deviceId: string;
     deviceAccess: AccessLevel;
+    sensors: SensorDevice[];
 }
 
 const initialState: AuthState = {
@@ -16,17 +17,19 @@ const initialState: AuthState = {
     devices: [],
     deviceId: "",
     deviceAccess: AccessLevel.NONE,
+    sensors: [],
 };
 
 const authSlice = createSlice({
     name: 'auth',
     initialState,
     reducers: {
-        login(state, action: PayloadAction<{ username: string; devices: DeviceAccess[] }>) {
+        login(state, action: PayloadAction<{ username: string; devices: DeviceAccess[], sensors: SensorDevice[] }>) {
             state.isAuthenticated = true;
             state.username = action.payload.username;
             state.devices = action.payload.devices;
             state.deviceAccess = action.payload.devices?.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE
+            state.sensors = action.payload.sensors;
         },
         logout(state) {
             state.isAuthenticated = false;

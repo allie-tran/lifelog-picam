@@ -139,6 +139,11 @@ const theme = responsiveFontSizes(activityTrackerTheme);
 dayjs.extend(localizedFormat);
 var weekOfYear = require("dayjs/plugin/weekOfYear");
 dayjs.extend(weekOfYear);
+var utc = require('dayjs/plugin/utc');
+var timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc)
+dayjs.extend(timezone)
+
 
 const App = () => {
     return (

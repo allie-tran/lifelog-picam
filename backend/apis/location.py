@@ -21,6 +21,8 @@ from database.models import Image, RawGPS, ImageGPS, SensorDevice
 from datetime import datetime
 from timezonefinder import TimezoneFinder
 
+from location.utils import find_timezone
+
 app = FastAPI()
 
 @app.get("/health")
@@ -43,7 +45,7 @@ async def upload_gps(
     # find device
     device_id = request.device_id
     user = verify_device_and_user(session, device_id, "location")
-    timezone = tf.timezone_at(lng=request.longitude, lat=request.latitude)
+    timezone = find_timezone(request.latitude, request.longitude)
     stmt = insert(RawGPS).values(
         device_id=user.id,
         latitude=request.latitude,

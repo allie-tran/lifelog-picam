@@ -61,6 +61,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             login({
                                 username: response.data.username,
                                 devices: response.data.devices,
+                                sensors: response.data.sensors,
                             })
                         );
                         axios.defaults.headers.common['Authorization'] =

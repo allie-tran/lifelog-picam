@@ -5,6 +5,7 @@ import {
     CustomGoal,
     GPSData,
     ImageObject,
+    ImageWithMetadata,
     Point,
     ResultSegment,
     SearchQuery,
@@ -79,10 +80,9 @@ export const getContextImages = async (device: string, imagePath: string) => {
 
 export const getImage = async (deviceId: string, filename: string) => {
     const response = await axios.get(
-        `${BACKEND_URL}/get-image?filename=${encodeURIComponent(filename)}&device=${encodeURIComponent(deviceId)}`
+        `${BACKEND_URL}/browse/get-image?filename=${encodeURIComponent(filename)}&device=${encodeURIComponent(deviceId)}`
     );
-    const imageBase64 = response.data;
-    return imageBase64 as string;
+    return response.data as ImageWithMetadata;
 };
 
 export const getAllDates = async (deviceId: string) => {
