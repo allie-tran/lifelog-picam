@@ -7,6 +7,8 @@ import {
 import { Box, Button, Stack, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
 import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppSelector } from 'reducers/hooks';
@@ -14,6 +16,9 @@ import { useEffect, useState } from 'react';
 import Annotator from './Annotator';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import LifelogEvent from './LifelogEvent';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const ImageWithDate = ({
     image,
@@ -41,8 +46,8 @@ const ImageWithDate = ({
         ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
         : '';
     const formattedDate = timeOnly
-        ? dayjs(image.timestamp).format('HH:mm')
-        : dayjs(image.timestamp).format('dd DD MMM YYYY HH:mm');
+        ? dayjs.utc(image.timestamp).tz(image.timezone).format('HH:mm z')
+        : dayjs(image.timestamp, image.timezone).format('dd DD MMM YYYY HH:mm z');
 
     const handleDelete = async () => {
         setDeleted(true);
