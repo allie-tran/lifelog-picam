@@ -3,6 +3,9 @@ FILE_DIR=$( dirname -- "${BASH_SOURCE[0]}" )
 LOGFILE="$FILE_DIR/auto_capture.log"
 TIMEOUT=60  # Seconds to wait before deciding it's "stuck"
 
+STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
+echo "$STARTTIME" > start_time.txt
+
 while true; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting auto_capture.py" >> "$LOGFILE"
 
