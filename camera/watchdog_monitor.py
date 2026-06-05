@@ -46,10 +46,6 @@ def process_stack():
     if len(retry_stack) == 0:
         return
 
-    if not check_if_connected():  # From your common.py
-        print("Still no internet. Skipping retry cycle.")
-        return
-
     print(f"Attempting to upload {len(retry_stack)} items in the queue...")
 
     # Create a temporary list to hold items that fail again
@@ -64,7 +60,6 @@ def process_stack():
                 success = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
                 print(f"Attempting to upload image and GPS for {file_path}")
-                send_gps(file_path.replace(IMAGE_EXTENSION, ".txt"))
                 print(f"Uploading image {file_path}...")
                 success = send_image(file_path, uploaded_files, LOG_FILE)
             else:
