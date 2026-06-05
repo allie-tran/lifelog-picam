@@ -6,8 +6,10 @@ import subprocess
 import os
 import uuid
 
+
+NIL = uuid.UUID(int=0)
 def get_id():
-    return str(uuid.uuid5(uuid.NIL, os.uname().nodename))
+    return str(uuid.uuid5(NIL, os.uname().nodename))
 
 local_sk = PrivateKey.generate()
 local_pk = local_sk.public_key
