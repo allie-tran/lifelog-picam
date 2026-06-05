@@ -49,7 +49,7 @@ def health_check():
     response_model=UserResponse,
     dependencies=[Depends(RateLimiter(limiter=Limiter(Rate(3, 5 * Duration.MINUTE))))],
 )
-def register(request: CreateUserRequest):
+def register(request: CreateUserRequest, session: Annotated[session.Session, Depends(get_session)]):
     """
     Endpoint to create a new user
     """
@@ -57,7 +57,7 @@ def register(request: CreateUserRequest):
     with open("auth.log", "a") as f:
         f.write(f"Register attempt: email={request.email}, username={request.username}")
         try:
-            res = create_user(request)
+            res = create_user(session, request)
             f.write(f" - success\n")
             return res
         except Exception as e:
@@ -132,6 +132,7 @@ class SensorDeviceRequest(CamelCaseModel):
     device_id: str
     device_nickname: str | None
     sensor_type: str
+    secret: str | None = None
     associated_username: str
 
 @auth_app.put("/add-sensor", dependencies=[Depends(get_user)])
@@ -142,7 +143,7 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
     device_id = request.device_id
     device_nickname = request.device_nickname or device_id
     sensor_type = request.sensor_type
-    secret = None
+    secret = request.secret
     associated_username = request.associated_username
 
     if not user.is_admin:
@@ -156,13 +157,15 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
         secret=secret,
         associated_user=user_obj.id if user_obj else None,
     ).on_conflict_do_update(constraint="uq_sensor_device_id_type", set_={
-        "device_nickname":device_nickname,
-        "associated_user":user_obj.id if user_obj else None
+        "device_nickname": device_nickname,
+        "secret": secret,
+        "associated_user": user_obj.id if user_obj else None,
     })
     session.execute(stmt)
     session.commit()
     print(f"Added/Updated device {device_id} for user {associated_username}")
 
+    # MongoDB
     # Remove all existing access for this device
     User.update_many(
         {},

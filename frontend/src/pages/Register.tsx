@@ -14,10 +14,10 @@ const Register = () => {
     const handleRegister = () => {
         createUserRequest(username, password, email, adminCode)
             .then((response: any) => {
-                if (response.data.success) {
+                if (response.data) {
                     alert('User registered successfully');
                 } else {
-                    alert('Registration failed: ' + response.data.message);
+                    alert('Registration failed: ' + parseErrorResponse(response));
                 }
                 // redirect to login page after successful registration
                 navigate('/login');

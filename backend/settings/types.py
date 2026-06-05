@@ -9,13 +9,13 @@ class VideoSettings(CamelCaseModel):
 class TimelapseSettings(CamelCaseModel):
     interval: int = 60  # in seconds
 
-class PiCamControl(Document, CamelCaseModel):
-    username: str
+# class PiCamControl(Document, CamelCaseModel):
+#     username: str
 
-    capture_mode: Literal["photo", "video"] = "photo"
-    video_settings: VideoSettings = VideoSettings()
-    timelapse_settings: TimelapseSettings = TimelapseSettings()
+#     capture_mode: Literal["photo", "video"] = "photo"
+#     video_settings: VideoSettings = VideoSettings()
+#     timelapse_settings: TimelapseSettings = TimelapseSettings()
 
-    class ODMConfig(Document.ODMConfig):
-        collection_name = "controls"
+#     class ODMConfig(Document.ODMConfig):
+#         collection_name = "controls"
 

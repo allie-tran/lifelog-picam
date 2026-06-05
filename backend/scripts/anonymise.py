@@ -55,7 +55,7 @@ def blur_image_mosaic(image, mask, scale_ratio=0.025):
 
     # Determine hexagon size based on the mask ratio
     size = max(5, int(mask_area * scale_ratio))  # Minimum size of 5 to ensure visibility
-    size = min(size, min(h, w) // 20)  # Maximum size to prevent excessive blurring
+    size = min(size, min(h, w) // 30)  # Maximum size to prevent excessive blurring
 
     # Constants for hexagonal geometry
     v_step = int(size * 1.5)

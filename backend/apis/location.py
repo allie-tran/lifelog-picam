@@ -97,8 +97,9 @@ async def last_gps(
     device: str,
     session: Session = Depends(get_session)
 ):
-    associated_user = session.execute(select(SensorDevice.associated_user).where(SensorDevice.device_id == device, SensorDevice.sensor_type == "location")).scalar_one_or_none()
+    associated_user = session.execute(select(SensorDevice.associated_user).where(SensorDevice.device_id == device)).scalar_one_or_none()
     if not associated_user:
+        print(f"No associated user found for device {device}")
         raise HTTPException(status_code=404, detail="Device not found or not associated with a user")
 
     last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == associated_user).order_by(RawGPS.timestamp.desc())).scalars().first()

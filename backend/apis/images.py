@@ -55,10 +55,26 @@ SERVER_SECRET_KEY = os.getenv("SERVER_SECRET_KEY", "")
 assert SERVER_SECRET_KEY, "SERVER_SECRET_KEY is not set in environment variables"
 server_sk = PrivateKey(bytes.fromhex(SERVER_SECRET_KEY))
 
+
+def find_public_key(session: Session, device_id: str) -> Optional[str]:
+    key = session.execute(
+        select(SensorDevice.secret).where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == "camera")
+    ).scalar_one_or_none()
+
+    if key: return key
+    raise HTTPException(
+        status_code=403, detail="Device secret not found"
+    )
+
+
 def decrypt_image(box: Box, file: UploadFile):
     file.file.seek(0)
     file_bytes = file.file.read()
-    decrypted = box.decrypt(file_bytes)
+    try:
+        decrypted = box.decrypt(file_bytes)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail="Decryption failed.")
     return PILImage.open(io.BytesIO(decrypted))
 
 @app.put("/upload-image")
@@ -88,14 +104,7 @@ async def upload_image(
             image = PILImage.open(file.file)
         except UnidentifiedImageError:
             try:
-                device_doc = session.execute(
-                    select(Device).where(Device.device_id == username)
-                ).scalar_one_or_none()
-                public_key = device_doc.public_key if device_doc else None
-                if public_key is None:
-                    raise HTTPException(
-                        status_code=403, detail="Device public key not found."
-                    )
+                public_key = find_public_key(session, device)
                 box = Box(server_sk, PublicKey(bytes.fromhex(str(public_key))))
                 image = decrypt_image(box, file)
             except Exception:

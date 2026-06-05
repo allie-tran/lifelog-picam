@@ -47,6 +47,7 @@ const Admin = () => {
     >(null);
     const [sensorDeviceId, setSensorDeviceId] = React.useState<string>('');
     const [sensorType, setSensorType] = React.useState<string>('');
+    const [sensorSecret, setSensorSecret] = React.useState<string>('');
     const [deviceNickname, setDeviceNickname] = React.useState<string>('');
 
     if (!isAuthenticated) {
@@ -73,12 +74,14 @@ const Admin = () => {
     const addSensorAccessToUser = async (
         deviceId: string,
         sensorType: string,
+        sensorSecret: string,
         deviceNickname: string,
         associatedUsername: string
     ) => {
         await addSensorToUser(
             deviceId,
             sensorType,
+            sensorSecret,
             deviceNickname,
             associatedUsername
         );
@@ -143,6 +146,7 @@ const Admin = () => {
                                     setUserForSensorAccess(user.username);
                                     setSensorDeviceId('');
                                     setSensorType('');
+                                    setSensorSecret('');
                                     setDeviceNickname('');
                                     setOpenSensor(true);
                                 }}
@@ -263,6 +267,7 @@ const Admin = () => {
                                             setDeviceNickname(
                                                 sensor.deviceNickname
                                             );
+                                            setSensorSecret(sensor.secret);
                                             setOpenSensor(true);
                                         }}
                                     >
@@ -413,6 +418,13 @@ const Admin = () => {
                         onChange={(e) => setSensorType(e.target.value)}
                         value={sensorType}
                     />
+                    <TextField
+                        helperText="For camera only, leave blank for biometrics"
+                        label="Sensor Secret"
+                        defaultValue=""
+                        onChange={(e) => setSensorSecret(e.target.value)}
+                        value={sensorSecret}
+                    />
                     <Button
                         variant="contained"
                         sx={{ mt: 3 }}
@@ -421,6 +433,7 @@ const Admin = () => {
                                 addSensorAccessToUser(
                                     sensorDeviceId,
                                     sensorType,
+                                    sensorSecret,
                                     deviceNickname,
                                     userForAccess
                                 );

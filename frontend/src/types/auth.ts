@@ -14,6 +14,7 @@ export type SensorDevice = {
     deviceId: string;
     deviceNickname: string;
     sensorType: string;
+    secret: string;
 }
 
 export type UserInfo = {

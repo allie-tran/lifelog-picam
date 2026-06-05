@@ -1,15 +1,12 @@
 import { processGPS, sendGPS } from '@apis/controls';
 import {
-    EditRounded,
     GpsFixedRounded,
-    GpsOffRounded,
+    GpsOffRounded
 } from '@mui/icons-material';
 import {
     Button,
-    IconButton,
     Stack,
-    TextField,
-    Typography,
+    Typography
 } from '@mui/material';
 import { parseErrorResponse } from '@utils/misc';
 import { throttle } from 'lodash';
@@ -38,7 +35,7 @@ const GpsTrackerHook = () => {
     useEffect(() => {
         setDeviceId(navigator.userAgent);
         setIsRegisteredDevice(
-            sensors.some((sensor) => sensor.deviceId === navigator.userAgent)
+            sensors?.some((sensor) => sensor.deviceId === navigator.userAgent) || false
         );
     }, [sensors]);
 

@@ -29,7 +29,10 @@ LOG_FILE = "synced.txt"
 device_id = os.getenv("DEVICE_ID", "omi")
 
 # STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
-starttime = open("start_time.txt", "r").read().strip()
+if os.path.exists("start_time.txt"):
+    starttime = open("start_time.txt", "r").read().strip()
+else:
+    starttime = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 class NewFileHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -62,15 +65,18 @@ def process_queue():
     while not retry_queue.empty():
         file_path = retry_queue.get()
         success = False
-
         try:
             if file_path.endswith(".mp4"):
                 # Your existing send_video returns True/False based on success
                 success = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
+                print(f"Attempting to upload image and GPS for {file_path}")
                 send_gps(file_path.replace(IMAGE_EXTENSION, ".txt"))
+                print(f"Uploading image {file_path}...")
                 success = send_image(file_path, uploaded_files, LOG_FILE)
-
+            else:
+                print(f"Unsupported file type for {file_path}")
+                continue
             if not success:
                 failed_again.append(file_path)
         except Exception as e:

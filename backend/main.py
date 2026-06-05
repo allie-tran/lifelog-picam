@@ -37,7 +37,7 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_device_from_headers, get_thumbnail_path
+from scripts.utils import get_thumbnail_path
 from settings import control_app
 from settings.utils import create_device
 from apis.explore import app as explore_app
@@ -184,7 +184,8 @@ async def root():
 async def upload_video(
     file: UploadFile,
     background_tasks: BackgroundTasks,
-    device: str = Depends(get_device_from_headers),
+    # device: str = Depends(get_device_from_headers),
+    device: str
 ):
     file_name = file.filename
     if not file_name:
@@ -261,9 +262,10 @@ def get_all_dates(
 def create_device_endpoint(
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session)
 ):
     _require_admin(access_level)
-    create_device(device)
+    create_device(session, device)
     return {"message": f"Device {device} created successfully."}
 
 
