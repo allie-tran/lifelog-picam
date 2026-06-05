@@ -1,0 +1,4 @@
+pynacl
+tzlocal
+aioserial
+watchdog
