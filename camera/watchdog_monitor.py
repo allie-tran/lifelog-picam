@@ -37,7 +37,7 @@ class NewFileHandler(FileSystemEventHandler):
 
     def add_file_to_stack(self, file_path):
         if file_path.endswith(".mp4") or file_path.endswith(IMAGE_EXTENSION):
-            print(f"Adding to queue: {file_path}")
+            print(f"Adding to upload stack: {file_path}")
             retry_stack.append(file_path)
 
 
@@ -55,7 +55,7 @@ def process_stack():
     # Create a temporary list to hold items that fail again
     failed_again = []
 
-    while not retry_stack.empty():
+    while len(retry_stack) > 0:
         file_path = retry_stack.pop() # Get the last item (LIFO)
         success = False
         try:
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     # 3. Responsive Main Loop
     try:
         while True:
-            if not retry_stack.empty():
+            if len(retry_stack) > 0:
                 if check_if_connected():
                     # Process the queue immediately if we have internet
                     process_stack()
