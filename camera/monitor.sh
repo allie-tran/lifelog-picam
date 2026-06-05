@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ILE_DIR=$( dirname -- "${BASH_SOURCE[0]}" )
+FILE_DIR=$( dirname -- "${BASH_SOURCE[0]}" )
 LOGFILE="$FILE_DIR/monitor.log"
 
 STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
