@@ -1,15 +1,9 @@
-from settings.types import PiCamControl
-from fastapi import HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert
+from database.models import Device
 
-def create_device(device: str):
-    if PiCamControl.find_one({"username": device}):
-        raise HTTPException(status_code=400, detail="Device already exists.")
-
-    PiCamControl.update_one(
-        {"username": device},
-        {
-            "$setOnInsert": PiCamControl(username=device).model_dump(),
-        },
-        upsert=True,
-    )
+def create_device(session: Session, device: str):
+    stmt = insert(Device).values(device_id=device).on_conflict_do_nothing(index_elements=["device_id"])
+    session.execute(stmt)
+    session.commit()
     return {"message": f"Device {device} created successfully."}

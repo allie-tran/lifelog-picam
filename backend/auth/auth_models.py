@@ -7,6 +7,7 @@ import redis
 from fastapi import HTTPException, Request
 from rich import print
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 from auth.types import CreateUserRequest, LoginRequest, LoginResponse, User, AccessLevel
 from configs import REDIS_HOST, REDIS_PORT
@@ -23,17 +24,17 @@ def flush_redis() -> None:
     print("Redis flushed")
 
 # flush_redis()
-def create_user(request: CreateUserRequest, overwrite=False) -> User:
+def create_user(session: Session, request: CreateUserRequest, overwrite=False) -> User:
     """
     Create a new user
     """
     if not request.admin_code or request.admin_code not in os.getenv("ADMIN_PASSWORD", "").split(","):
         raise HTTPException(status_code=403, detail="You are not authorized to create a user")
 
+    create_device(session, request.username)
     if User.find_one({"username": request.username}) and not overwrite:
         raise HTTPException(status_code=400, detail="User already exists")
 
-    create_device(request.username)
     User.update_one(
         {"username": request.username},
         {

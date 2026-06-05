@@ -3,13 +3,16 @@ import os
 from typing import List
 
 from fastapi import HTTPException, Request, UploadFile
+from sqlalchemy import select
 
 from app_types import ObjectDetection
 from auth.devices import verify_device_token
 from constants import DIR, THUMBNAIL_DIR
 from PIL import Image, ImageDraw, ImageFilter
 
-from settings.types import PiCamControl
+from database import get_session
+from database.models import Device
+# from settings.types import PiCamControl
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
@@ -122,12 +125,3 @@ def to_absolute_bbox(bbox, image_width, image_height):
     return abs_x1, abs_y1, abs_x2, abs_y2
 
 
-def get_device_from_headers(request: Request):
-    device_token = request.headers.get("X-Device-ID")
-    if not device_token:
-        raise HTTPException(status_code=400, detail="Missing X-Device-ID header.")
-    device = verify_device_token(device_token)["device"]
-    device = PiCamControl.find_one({"username": device})
-    if not device:
-        raise HTTPException(status_code=403, detail="Device not registered.")
-    return device.username
