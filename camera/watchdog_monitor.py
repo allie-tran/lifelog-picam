@@ -159,7 +159,7 @@ if __name__ == "__main__":
             continue
         missing = check_if_folder_is_synced(folder)
         for f in missing:
-            retry_stack.put(f)
+            retry_stack.append(f)
 
     # 2. Start Watchdog
     event_handler = NewFileHandler()
