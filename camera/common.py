@@ -149,3 +149,4 @@ def check_if_connected():
     os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
     time.tzset()
     print(f"System timezone set to: {time.tzname}")
+    return True
