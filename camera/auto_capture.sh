@@ -7,7 +7,7 @@ while true; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting auto_capture.py" >> "$LOGFILE"
 
     # Start the python script in the background
-    python3 -u /home/allie/Camera/camera/auto_capture.py >> "$LOGFILE" 2>&1 &
+    python3 -u "$FILE_DIR/auto_capture.py" >> "$LOGFILE" 2>&1 &
     PYTHON_PID=$!
 
     while kill -0 $PYTHON_PID 2>/dev/null; do
