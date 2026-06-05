@@ -7,7 +7,7 @@ import aioserial
 import cv2
 from picamzero import Camera
 
-from common import OUTPUT, box, get_latest_gps
+from common import OUTPUT, box, get_latest_gps, save_gps
 
 cam = Camera()
 # orginally 4056 x 3040
@@ -29,9 +29,6 @@ CAPTURE_INTERVAL = 10  # seconds
 
 # Global dictionary holding the latest valid state.
 # If no fix has happened yet, it will fallback gracefully to "Searching..."
-LATEST_GPS = {"timestamp": "", "latitude": "", "longitude": "", "elevation": ""}
-
-
 def parse_nmea_degrees(nmea_value, direction):
     """Converts NMEA DDMM.MMMM to Decimal Degrees"""
     if not nmea_value:
@@ -50,7 +47,7 @@ def parse_nmea_degrees(nmea_value, direction):
 
 # --- Async Task 1: Continuous GPS Monitor ---
 async def gps_worker():
-    global LATEST_GPS
+    global gps
     print("Starting background GPS worker...")
 
     try:
@@ -76,7 +73,7 @@ async def gps_worker():
                         elevation = float(data[9]) if len(data) > 9 and data[9] else 0.0
 
                         # Update the global object immediately
-                        LATEST_GPS = {
+                        gps = {
                             "timestamp": datetime.now(timezone.utc)
                             .astimezone()
                             .isoformat(),
@@ -84,6 +81,7 @@ async def gps_worker():
                             "longitude": lon,
                             "elevation": elevation,
                         }
+                        save_gps(gps)
 
             # Yield control to allow the image worker to run
             await asyncio.sleep(0.1)
@@ -94,7 +92,7 @@ async def gps_worker():
 
 # --- Async Task 2: Strict Camera Schedule ---
 async def image_worker():
-    global LATEST_GPS
+    global gps
     print("Starting background Image capture worker...")
 
     while True:
@@ -120,15 +118,16 @@ async def image_worker():
             with open(image_path, "wb") as f:
                 f.write(encrypted)
 
-            if LATEST_GPS["latitude"] and time.time() - datetime.fromisoformat(LATEST_GPS["timestamp"]).timestamp() < 60:
+            gps = load_gps()
+            if gps["latitude"] and time.time() - datetime.fromisoformat(gps["timestamp"]).timestamp() < 60:
                 # Snapshot the current values of LATEST_GPS.
                 txt_path = image_path.replace(".jpg", ".txt")
                 with open(txt_path, "w") as f:
                     f.write(
-                        f"{LATEST_GPS['timestamp']},{LATEST_GPS['latitude']},{LATEST_GPS['longitude']},{LATEST_GPS['elevation']}"
+                        f"{gps['timestamp']},{gps['latitude']},{gps['longitude']},{gps['elevation']}"
                     )
 
-            print(f"Captured image & text: {file_name} | Lat: {LATEST_GPS['latitude']}")
+            print(f"Captured image & text: {file_name} | Lat: {gps['latitude']}")
 
         except Exception as e:
             print("Failed to capture image:", e)
@@ -145,20 +144,6 @@ async def main():
         await asyncio.sleep(10)
 
     print("Camera connected. Starting concurrent tasks...")
-
-    # Check latest GPS
-    gps_data = get_latest_gps()
-    while gps_data is None:
-        gps_data = get_latest_gps()
-
-    print(
-        f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}"
-    )
-
-    os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
-    time.tzset()  # Apply the timezone change
-    print(f"System timezone set to: {time.tzname}")
-    LATEST_GPS.update(gps_data)  # Update the global state with the initial GPS data
 
     # Run both workers simultaneously
     await asyncio.gather(
