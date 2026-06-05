@@ -2,3 +2,6 @@ pynacl
 tzlocal
 aioserial
 watchdog
+opencv-python
+picamzero
+python-dotenv

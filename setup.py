@@ -19,6 +19,7 @@ with open(".env", "a") as f:
     f.write(f"DEVICE_ID={get_id()}\n")
     f.write(f"DEVICE_PUBLIC_KEY={local_pk.encode().hex()}\n")
     f.write(f"DEVICE_PRIVATE_KEY={local_sk.encode().hex()}\n")
+    f.write(f"SERVER_PUBLIC_KEY=\n")
 
 print(f"Public key: {local_pk.encode().hex()}")
 print(f"Private key: {local_sk.encode().hex()}")
