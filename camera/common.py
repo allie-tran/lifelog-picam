@@ -54,6 +54,8 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         with open(LOG_FILE, "a") as log:
             log.write(f"{image_path}\n")
         return response.json()
+    else:
+        print(f"Failed to upload {image_path}: {response.status_code} - {response.text}")
 
     return "photo"
 
