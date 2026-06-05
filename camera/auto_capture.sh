@@ -1,5 +1,6 @@
 #!/bin/bash
-LOGFILE="/home/allie/Camera/camera/auto_capture.log"
+FILE_DIR=$( dirname -- "${BASH_SOURCE[0]}" )
+LOGFILE="$FILE_DIR/auto_capture.log"
 TIMEOUT=60  # Seconds to wait before deciding it's "stuck"
 
 while true; do

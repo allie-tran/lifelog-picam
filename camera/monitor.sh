@@ -1,5 +1,7 @@
 #!/bin/bash
-LOGFILE="/home/allie/Camera/camera/monitor.log"
+
+ILE_DIR=$( dirname -- "${BASH_SOURCE[0]}" )
+LOGFILE="$FILE_DIR/monitor.log"
 STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
 echo $STARTTIME > start_time.txt
