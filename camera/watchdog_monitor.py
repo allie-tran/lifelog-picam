@@ -17,53 +17,42 @@ from common import (
     send_video,
 )
 
-# Assuming these are imported/available from your files
-from monitor import check_if_folder_is_synced
-
 # A queue to hold files that failed to upload
-retry_queue = Queue()
+retry_stack = []
 missing_files = set()
 uploaded_files = set()
 LOG_FILE = "synced.txt"
 
 device_id = os.getenv("DEVICE_ID", "omi")
 
-# STARTTIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
-if os.path.exists("start_time.txt"):
-    starttime = open("start_time.txt", "r").read().strip()
-else:
-    starttime = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 class NewFileHandler(FileSystemEventHandler):
     def on_created(self, event):
+        """Called when a new file is created in the OUTPUT directory."""
         if event.is_directory:
             return
         # Wait for capture script to finish writing/encrypting
         time.sleep(2)
-        self.enqueue_file(event.src_path)
+        self.add_file_to_stack(event.src_path)
 
-    def enqueue_file(self, file_path):
+    def add_file_to_stack(self, file_path):
         if file_path.endswith(".mp4") or file_path.endswith(IMAGE_EXTENSION):
-            print(f"Adding to queue: {file_path}")
-            retry_queue.put(file_path)
+            print(f"Adding to upload stack: {file_path}")
+            retry_stack.append(file_path)
 
 
-def process_queue():
+def process_stack():
     """Attempts to upload everything in the queue."""
-    if retry_queue.empty():
+    if len(retry_stack) == 0:
         return
 
-    if not check_if_connected():  # From your common.py
-        print("Still no internet. Skipping retry cycle.")
-        return
-
-    print(f"Attempting to upload {retry_queue.qsize()} files...")
+    print(f"Attempting to upload {len(retry_stack)} items in the queue...")
 
     # Create a temporary list to hold items that fail again
     failed_again = []
 
-    while not retry_queue.empty():
-        file_path = retry_queue.get()
+    while len(retry_stack) > 0:
+        file_path = retry_stack.pop() # Get the last item (LIFO)
         success = False
         try:
             if file_path.endswith(".mp4"):
@@ -71,7 +60,6 @@ def process_queue():
                 success = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
                 print(f"Attempting to upload image and GPS for {file_path}")
-                send_gps(file_path.replace(IMAGE_EXTENSION, ".txt"))
                 print(f"Uploading image {file_path}...")
                 success = send_image(file_path, uploaded_files, LOG_FILE)
             else:
@@ -86,9 +74,9 @@ def process_queue():
         # Micro-sleep to prevent Pi Zero CPU saturation
         time.sleep(0.5)
 
-    # Put failed items back in the queue for the next cycle
-    for item in failed_again:
-        retry_queue.put(item)
+    # Put failed items back in the queue for the next retry cycle, maintaining LIFO order
+    for item in failed_again[::-1]:
+        retry_stack.append(item)
 
 
 def check_if_folder_is_synced(date: str):
@@ -166,7 +154,7 @@ if __name__ == "__main__":
             continue
         missing = check_if_folder_is_synced(folder)
         for f in missing:
-            retry_queue.put(f)
+            retry_stack.append(f)
 
     # 2. Start Watchdog
     event_handler = NewFileHandler()
@@ -177,10 +165,10 @@ if __name__ == "__main__":
     # 3. Responsive Main Loop
     try:
         while True:
-            if not retry_queue.empty():
+            if len(retry_stack) > 0:
                 if check_if_connected():
                     # Process the queue immediately if we have internet
-                    process_queue()
+                    process_stack()
                 else:
                     print("No internet, waiting 1 minute before retrying...")
                     time.sleep(60)

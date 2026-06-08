@@ -1,4 +1,6 @@
 import os
+import json
+import time
 from datetime import datetime
 from tzlocal import get_localzone
 
@@ -30,6 +32,7 @@ UPLOAD_VIDEO_URL = f"{BACKEND_URL}/upload-video"
 OUTPUT = "Camera/timelapse"
 
 IMAGE_EXTENSION = ".jpg"
+
 
 
 def send_image(image_path, uploaded_files, LOG_FILE):
@@ -127,10 +130,23 @@ def get_latest_gps():
         )
         return None
 
+def load_gps():
+    if os.path.exists("latest_gps.josn"):
+        return json.load(open("latest_gps.json"))
+    else:
+        return {"timestamp": "", "latitude": "", "longitude": "", "elevation": "", "timezone": str(get_localzone())}
+
+def save_gps(gps_data):
+    with open("latest_gps.json", "w") as f:
+        json.dump(gps_data, f)
 
 def check_if_connected():
-    try:
-        response = requests.get("https://www.google.com", timeout=5)
-        return response.status_code == 200
-    except requests.RequestException:
+    gps_data = get_latest_gps()
+    if gps_data is None:
         return False
+
+    print(f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}")
+    os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
+    time.tzset()
+    print(f"System timezone set to: {time.tzname}")
+    return True
