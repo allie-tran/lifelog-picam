@@ -15,7 +15,7 @@ import { useGeolocated } from 'react-geolocated';
 import { useAppSelector } from 'reducers/hooks';
 
 const GpsTrackerHook = () => {
-    const device = useAppSelector((state) => state.auth.deviceId);
+    const user = useAppSelector((state) => state.auth.deviceId);
     const sensors = useAppSelector((state) => state.auth.sensors);
     const [disableGps, setDisableGps] = React.useState(true);
     const [secretDeviceId, setDeviceId] = React.useState<string | null>();
@@ -34,9 +34,11 @@ const GpsTrackerHook = () => {
 
     useEffect(() => {
         setDeviceId(navigator.userAgent);
-        setIsRegisteredDevice(
-            sensors?.some((sensor) => sensor.deviceId === navigator.userAgent) || false
+        const isRegistered = sensors?.some(
+            (sensor) => sensor.deviceId === navigator.userAgent
         );
+        setIsRegisteredDevice(isRegistered);
+        setDisableGps(!isRegistered);
     }, [sensors]);
 
     useEffect(() => {
@@ -68,9 +70,9 @@ const GpsTrackerHook = () => {
                             new Date().toISOString()
                         ).catch((error) => {
                             const message = parseErrorResponse(error.response);
-                            alert('Error sending GPS data: ' + message);
+                            // alert('Error sending GPS data: ' + message);
                         }),
-                    10000
+                    15000
                 )();
                 throttle(() => onProcessGps(), 60000)();
             }
@@ -79,7 +81,7 @@ const GpsTrackerHook = () => {
 
     const onProcessGps = () => {
         processGPS(
-            device,
+            user,
             new Date().toISOString().split('T')[0],
             secretDeviceId || ''
         )
@@ -126,7 +128,7 @@ const GpsTrackerHook = () => {
             return (
                 <Stack>
                     <Typography variant="body1">
-                        Current Location:{' '}
+                        Sending location data for <b>{user}...</b>
                         {currentPosition.coords.latitude.toFixed(6)},{' '}
                         {currentPosition.coords.longitude.toFixed(6)}
                     </Typography>

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
 
@@ -408,14 +408,49 @@ def get_day_summary(
     if not date:
         raise HTTPException(status_code=400, detail="Date is required.")
 
+    # Get current state:
+    number_of_images = session.execute(
+        select(func.count(ImageModel.id)).where(
+            ImageModel.date == date,
+            ImageModel.device == device,
+            ImageModel.deleted == False,
+        )
+    ).scalar_one()
+    last_image = session.execute(
+        select(ImageModel).where(
+            ImageModel.date == date,
+            ImageModel.device == device,
+            ImageModel.deleted == False,
+        ).order_by(ImageModel.image_path.desc())
+    ).scalars().first()
+    last_image_time = last_image.timestamp if last_image else None
+
+
     day_summary = DaySummaryRecord.find_one(filter={"date": date, "device": device})
-    if day_summary and day_summary.segments and not day_summary.updated:
-        return day_summary
+    # if day_summary and day_summary.segments and not day_summary.updated:
+    #     return day_summary
+
+    if number_of_images == 0:
+        return None
+
+
+    if (day_summary
+            and day_summary.segments
+            and day_summary.updated
+            and day_summary.number_of_images == number_of_images
+            and day_summary.last_image_time == last_image_time):
+        print(f"Returning cached day summary for date {date} and device {device}.")
+        return DaySummary.model_validate(day_summary)
 
     print(f"Creating day summary for date {date} and device {device}.")
     summary = DaySummary(
         device=device, date=date, segments=[], summary_text="", updated=False
     )
+
+    # Reload segments
+    load_all_segments(session, device, date, skip_annotations=False)
+
+    # Create timeline segments
     summary.segments = create_day_timeline(session, device, date)
     if not summary.segments:
         raise HTTPException(status_code=404, detail="No segments found for this date.")
@@ -428,6 +463,9 @@ def get_day_summary(
         summary,
         my_targets
     )
+
+    summary.number_of_images = number_of_images
+    summary.last_image_time = last_image_time  # type: ignore
 
     DaySummaryRecord.update_one(
         {

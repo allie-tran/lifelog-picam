@@ -3,7 +3,7 @@ from datetime import timezone
 from typing import Optional
 import traceback
 
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql import select
 from auth.ortho import apply_transformation, get_matrix
@@ -229,3 +229,4 @@ def process_video(
     # ).create()
 
     # encode_image(device_id, f"{date}/{file_name}", collection)
+

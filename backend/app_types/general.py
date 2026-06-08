@@ -214,6 +214,10 @@ class CustomTarget(NamedTuple):
 
 class DaySummary(CamelCaseModel):
     date: str
+    number_of_images: int = 0
+    last_image_time: Optional[datetime] = None
+
+
     segments: List[SummarySegment] = []
     summary_text: str = ""
     updated: bool = False

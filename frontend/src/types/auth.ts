@@ -11,6 +11,7 @@ export type DeviceAccess = {
 };
 
 export type SensorDevice = {
+    associatedUser: string;
     deviceId: string;
     deviceNickname: string;
     sensorType: string;
