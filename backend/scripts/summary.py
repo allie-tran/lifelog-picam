@@ -2,12 +2,11 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import os
 import numpy as np
-from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app_types import ActionType, CustomTarget, DaySummary, SummarySegment
 from auth.ortho import apply_transformation, get_matrix
@@ -226,15 +225,6 @@ def time_to_ms(date_str, time_str):
         * 1000
     )
 
-class TempActivitySegment(BaseModel):
-    activity: str
-    start_time: datetime
-    end_time: datetime
-    image_paths: List[str]
-    duration: int = 0
-    location_name: str = ""
-
-
 def _fetch_segment_locations(session, device: str, date: str) -> dict[int, str]:
     """
     Return {segment_id: most_common_location_display_name} for the given date/device.
@@ -267,8 +257,6 @@ def _fetch_segment_locations(session, device: str, date: str) -> dict[int, str]:
 def _fetch_day_hr_rows(session, device_id: str, date: str) -> list:
     """Fetch all HeartRateData rows for device/date (Polar epoch)."""
     start_ns, end_ns = _date_ns_window(date)
-    # device_id for bio sensors may differ — we try both the camera device_id and
-    # any associated sensor device. For simplicity use the camera device_id as-is.
     return session.execute(
         select(HeartRateData)
         .where(
@@ -280,116 +268,169 @@ def _fetch_day_hr_rows(session, device_id: str, date: str) -> list:
     ).scalars().all()
 
 
+def _build_segment_entry(
+    segment_id: int,
+    images: list,
+    seg_to_location: dict[int, str],
+) -> Optional[SummarySegment]:
+    """
+    Build one SummarySegment from pre-fetched LifelogImage list.
+    HR is attached separately via attach_bio_to_segments so the full-day
+    window can be used (call after collecting all segments).
+    Returns None when images is empty.
+    """
+    if not images:
+        return None
+    images_sorted = sorted(images, key=lambda img: img.timestamp)
+    activity = images_sorted[0].activity or "Unclear"
+    start_time = images_sorted[0].timestamp
+    end_time = images_sorted[-1].timestamp
+    duration = max(int((end_time - start_time).total_seconds()), 10)
+    return SummarySegment(
+        segment_id=segment_id,
+        segment_index=None,
+        activity=activity,
+        start_time=start_time,
+        end_time=end_time,
+        duration=duration,
+        location_name=seg_to_location.get(segment_id, ""),
+    )
+
+
+def _renumber(segments: list[SummarySegment]) -> None:
+    """Assign segment_index based on sorted position."""
+    for i, seg in enumerate(segments):
+        seg.segment_index = i
+
+
 def create_day_timeline(session, device: str, date: str) -> list[SummarySegment]:
-    records = session.execute(
-        select(Image).where(
+    """
+    Full rebuild: one SummarySegment per DB segment, sorted by start_time.
+    Does NOT use 15-minute slot bucketing — segments map 1:1 to DB segment_ids,
+    which enables precise incremental updates.
+    """
+    rows = session.execute(
+        select(Image)
+        .where(
             Image.device == device,
             Image.date == date,
             Image.deleted == False,
-            Image.segment_id != None,
-        ).order_by(Image.timestamp.asc())
-    ).fetchall()
-
-    records = [_orm_to_lifelog(r.Image) for r in records]
-
-    # Batch-fetch segment locations (one query)
-    seg_to_location = _fetch_segment_locations(session, device, date)
-
-    # Batch-fetch HR for the day (one query)
-    hr_rows = _fetch_day_hr_rows(session, device, date)
-
-    # Group by segment_id
-    groups: dict = {}
-    for record in records:
-        sid = record.segment_id
-        if sid not in groups:
-            groups[sid] = {
-                "activity": record.activity,
-                "time": [record.timestamp],
-                "image_paths": [record.image_path],
-                "location_name": seg_to_location.get(sid, ""),
-            }
-        else:
-            groups[sid]["time"].append(record.timestamp)
-            groups[sid]["image_paths"].append(record.image_path)
-
-    activities: list[TempActivitySegment] = []
-    for sid, data in groups.items():
-        activities.append(
-            TempActivitySegment(
-                activity=data.get("activity", "Unclear") or "Unclear",
-                start_time=min(data["time"]),
-                end_time=max(data["time"]),
-                image_paths=data["image_paths"],
-                location_name=data["location_name"],
-            )
+            Image.segment_id.isnot(None),
         )
+        .order_by(Image.timestamp.asc())
+    ).scalars().all()
 
-    activities.sort(key=lambda x: x.start_time)
-
-    if not activities:
-        logger.info("No activities for %s/%s", device, date)
+    if not rows:
+        logger.info("No images with segment_id for %s/%s", device, date)
         return []
 
-    earliest_hour = activities[0].start_time.hour
-    latest_hour = activities[-1].end_time.hour + 1
+    images_by_seg: dict[int, list] = {}
+    for img in rows:
+        images_by_seg.setdefault(img.segment_id, []).append(_orm_to_lifelog(img))
 
-    slot_duration = 15 * 60
-    time_slots = [
-        (s, s + slot_duration)
-        for s in range(earliest_hour * 3600, latest_hour * 3600, slot_duration)
-    ]
+    seg_to_location = _fetch_segment_locations(session, device, date)
+    hr_rows = _fetch_day_hr_rows(session, device, date)
 
-    summary_slots: list[SummarySegment] = []
-    for slot_start, slot_end in time_slots:
-        slot_start_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
-        slot_end_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
+    segments: list[SummarySegment] = []
+    for seg_id, imgs in images_by_seg.items():
+        entry = _build_segment_entry(seg_id, imgs, seg_to_location)
+        if entry:
+            segments.append(entry)
 
-        slot_activities = []
-        slot_locations = []
-        for temp_seg in activities:
-            if temp_seg.start_time <= slot_end_time and temp_seg.end_time >= slot_start_time:
-                slot_activities.append(temp_seg.activity)
-                if temp_seg.location_name:
-                    slot_locations.append(temp_seg.location_name)
+    segments.sort(key=lambda s: s.start_time)
 
-        activity = "No Activity"
-        if slot_activities:
-            activity = max(set(slot_activities), key=slot_activities.count)
-
-        from collections import Counter
-        location_name = Counter(slot_locations).most_common(1)[0][0] if slot_locations else None
-
-        summary_slots.append(
-            SummarySegment(
-                segment_index=None,
-                activity=activity,
-                start_time=slot_start_time,
-                end_time=slot_end_time,
-                duration=slot_duration,
-                representative_image=None,
-                representative_images=[],
-                location_name=location_name,
-            )
-        )
-
-    # Merge consecutive same-activity slots
-    merged: list[SummarySegment] = []
-    for slot in summary_slots:
-        if merged and merged[-1].activity == slot.activity:
-            merged[-1].end_time = slot.end_time
-            merged[-1].duration += slot.duration
-            # keep most common location
-            if slot.location_name and not merged[-1].location_name:
-                merged[-1].location_name = slot.location_name
-        else:
-            merged.append(slot)
-
-    # Attach HR data to each merged segment
     if hr_rows:
-        attach_bio_to_segments(merged, hr_rows)
+        attach_bio_to_segments(segments, hr_rows)
 
-    return merged
+    _renumber(segments)
+    return segments
+
+
+def update_dirty_segments(
+    session,
+    device: str,
+    date: str,
+    dirty_ids: list[int],
+    existing_segments: list[SummarySegment],
+) -> list[SummarySegment]:
+    """
+    Incrementally update only the dirty DB segments in the cached timeline.
+
+    Handles out-of-order image delivery: a late image may change a segment's
+    start_time / activity, so we always re-sort the full list after patching.
+
+    Strategy:
+      1. Fetch images only for dirty_ids (cheap — small subset of the day).
+      2. Build/replace SummarySegment entries in the existing list.
+      3. Re-sort by start_time, re-attach HR, renumber.
+
+    Falls back to a full create_day_timeline() if existing_segments lack
+    segment_id fields (e.g., old cache built before this was added).
+    """
+    if not dirty_ids:
+        return existing_segments
+
+    # Migration guard: if cached segments don't carry segment_id we can't patch them.
+    if existing_segments and all(s.segment_id is None for s in existing_segments):
+        logger.info(
+            "Cache missing segment_id — falling back to full rebuild for %s/%s", device, date
+        )
+        return create_day_timeline(session, device, date)
+
+    # Fetch images only for the dirty segments
+    rows = session.execute(
+        select(Image)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.in_(dirty_ids),
+        )
+        .order_by(Image.timestamp.asc())
+    ).scalars().all()
+
+    images_by_seg: dict[int, list] = {}
+    for img in rows:
+        images_by_seg.setdefault(img.segment_id, []).append(_orm_to_lifelog(img))
+
+    # Location and HR queries cover the whole day but are each a single cheap query
+    seg_to_location = _fetch_segment_locations(session, device, date)
+    hr_rows = _fetch_day_hr_rows(session, device, date)
+
+    # Build new entries for dirty segments
+    new_entries: dict[int, Optional[SummarySegment]] = {}
+    for seg_id in dirty_ids:
+        imgs = images_by_seg.get(seg_id, [])
+        new_entries[seg_id] = _build_segment_entry(seg_id, imgs, seg_to_location)
+
+    # Patch the existing list
+    # Build a lookup from segment_id → list index for O(1) replacement
+    idx_by_seg_id = {
+        s.segment_id: i
+        for i, s in enumerate(existing_segments)
+        if s.segment_id is not None
+    }
+
+    result: list[SummarySegment] = list(existing_segments)
+    for seg_id, entry in new_entries.items():
+        if entry is None:
+            # All images for this segment were deleted — remove from timeline
+            if seg_id in idx_by_seg_id:
+                result[idx_by_seg_id[seg_id]] = None  # type: ignore[assignment]
+        elif seg_id in idx_by_seg_id:
+            result[idx_by_seg_id[seg_id]] = entry
+        else:
+            result.append(entry)
+
+    # Filter out tombstoned entries, re-sort, re-attach HR
+    result = [s for s in result if s is not None]
+    result.sort(key=lambda s: s.start_time)
+
+    if hr_rows:
+        attach_bio_to_segments(result, hr_rows)
+
+    _renumber(result)
+    return result
 
 
 def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
@@ -398,16 +439,16 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
     Includes activity descriptions AND location context.
     """
     try:
-        records = session.execute(
+        raw_rows = session.execute(
             select(Image).where(
                 Image.device == day_summary.device,
                 Image.date == day_summary.date,
                 Image.deleted == False,
-                Image.segment_id != None,
+                Image.segment_id.isnot(None),
             ).order_by(Image.timestamp.asc())
-        ).fetchall()
+        ).scalars().all()
 
-        records = [_orm_to_lifelog(r.Image) for r in records]
+        records = [_orm_to_lifelog(r) for r in raw_rows]
 
         # Batch-fetch segment locations
         seg_to_location = _fetch_segment_locations(session, day_summary.device, day_summary.date)

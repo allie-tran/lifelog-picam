@@ -81,6 +81,26 @@ def describe_segment_task(
         logging.info(f"Updated {pg_result.rowcount} rows in the database for segment {segment_id}")
         self.session.commit()
 
+        # Fire notification if location is new or activity is unusual
+        try:
+            from database.models import Image as _Img
+            from scripts.notify import maybe_notify_segment
+            img_row = self.session.execute(
+                select(_Img.location_id, _Img.thumbnail)
+                .where(_Img.device == device, _Img.segment_id == segment_id, _Img.date == date)
+                .order_by(_Img.timestamp.asc())
+                .limit(1)
+            ).first()
+            location_id = img_row.location_id if img_row else None
+            representative_thumbnail = img_row.thumbnail if img_row else None
+            maybe_notify_segment(
+                self.session, device, date, segment_id,
+                activity_obj["activity"], location_id, representative_thumbnail,
+            )
+            self.session.commit()
+        except Exception as _ne:
+            logging.warning("maybe_notify_segment failed for %s/%s seg %s: %s", device, date, segment_id, _ne)
+
         # Incremental dirty flag: record which segment changed rather than
         # invalidating the whole day summary at once.
         mongo_client["picam"]["day_summaries"].update_one(

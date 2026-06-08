@@ -34,6 +34,7 @@ from preprocess import  load_features
 from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
+    update_dirty_segments,
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
@@ -48,6 +49,7 @@ from apis.annotations import app as annotation_app
 from apis.retrieval import app as retrieval_app
 from apis.face import app as face_app
 from apis.delete import app as delete_app
+from apis.notifications import app as notifications_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime
@@ -153,6 +155,7 @@ app.mount("/annotations", annotation_app)
 app.mount("/retrieval", retrieval_app)
 app.mount("/face", face_app)
 app.mount("/delete", delete_app)
+app.mount("/notify", notifications_app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -467,12 +470,14 @@ def get_day_summary(
 
     if not need_full_rebuild and dirty_ids:
         logging.info(
-            "Incremental timeline rebuild for %s/%s (%d dirty segments)",
-            device, date, len(dirty_ids),
+            "Incremental segment patch for %s/%s (dirty: %s)",
+            device, date, dirty_ids,
         )
         summary = DaySummary.model_validate(day_summary.__dict__)
-        # Rebuild the full timeline cheaply (pure SQL + Python, no LLM)
-        summary.segments = create_day_timeline(session, device, date)
+        # Patch only the dirty segments; re-sort handles out-of-order arrivals
+        summary.segments = update_dirty_segments(
+            session, device, date, dirty_ids, summary.segments
+        )
         summary.dirty_segment_ids = []
     elif need_full_rebuild:
         logging.info("Full day-summary rebuild for %s/%s", device, date)
@@ -492,6 +497,34 @@ def get_day_summary(
     if text_stale and not is_live:
         summary = summarize_day_by_text(session, summary)
         summary.text_summary_stale = False
+
+        # Novelty analysis and notifications are cheap to fire after full LLM rebuild
+        try:
+            from scripts.novelty import generate_unique_day_highlight
+            from scripts.notify import notify_day_complete, notify_novelty
+            highlight, novel_ids = generate_unique_day_highlight(session, device, date)
+            summary.unique_highlight = highlight
+            summary.novelty_segments = novel_ids
+            notify_day_complete(session, device, date, summary.summary_text)
+            if highlight:
+                rep_thumb = None
+                if novel_ids:
+                    _rep = session.execute(
+                        select(ImageModel.thumbnail)
+                        .where(
+                            ImageModel.device == device,
+                            ImageModel.segment_id == novel_ids[0],
+                            ImageModel.date == date,
+                            ImageModel.deleted == False,
+                        )
+                        .limit(1)
+                    ).scalars().first()
+                    rep_thumb = _rep
+                notify_novelty(session, device, date, highlight, rep_thumb)
+            session.commit()
+        except Exception as _nve:
+            logging.warning("Novelty/notification step failed for %s/%s: %s", device, date, _nve)
+
     elif text_stale and is_live:
         logging.debug("Skipping LLM text summary: day %s is still live", date)
 
