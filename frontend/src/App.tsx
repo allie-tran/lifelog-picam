@@ -21,12 +21,12 @@ import PasswordLock from './components/PasswordLock';
 import FeedbackComponents from 'components/FeedbackComponents';
 import dayjs from 'dayjs';
 import Admin from 'pages/Admin';
+import Biometrics from 'pages/Biometrics';
 import FaceIntelligence from 'pages/Faces';
 import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
-import Biometrics from 'pages/Biometrics';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
 
 const activityTrackerTheme = createTheme({

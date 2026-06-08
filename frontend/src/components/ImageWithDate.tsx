@@ -1,18 +1,21 @@
 import {
     DeleteRounded,
     EditRounded,
+    SendRounded,
     TimerRounded,
     VideocamRounded,
 } from '@mui/icons-material';
-import { Box, Button, Stack, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, Stack, Tooltip, Typography } from '@mui/material';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
+import { submitImage } from 'apis/dres';
 import { ImageObject, ResultSegment } from '@utils/types';
-import { useAppSelector } from 'reducers/hooks';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { useEffect, useState } from 'react';
+import { showNotification } from 'reducers/feedback';
 import Annotator from './Annotator';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import LifelogEvent from './LifelogEvent';
@@ -41,7 +44,10 @@ const ImageWithDate = ({
 }) => {
     const [deleted, setDeleted] = useState(false);
     const [showAnnotator, setShowAnnotator] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    const dispatch = useAppDispatch();
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const { evaluationId, sessionId, currentTask } = useAppSelector((state) => state.dres);
     const imageUrl = image.thumbnail
         ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
         : '';
@@ -71,6 +77,26 @@ const ImageWithDate = ({
             setDeletedIndexes([]);
         } catch (err) {
             console.error('Failed to fetch context images:', err);
+        }
+    };
+
+    const handleDRESSubmit = async () => {
+        if (!evaluationId || !sessionId) return;
+        setSubmitting(true);
+        try {
+            const result = await submitImage({
+                image: image.imagePath,
+                evaluationId,
+                sessionId,
+            });
+            dispatch(showNotification({
+                message: `DRES: ${result.verdict} — ${result.message}`,
+                type: result.severity,
+            }));
+        } catch {
+            dispatch(showNotification({ message: 'DRES submission failed', type: 'error' }));
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -209,6 +235,23 @@ const ImageWithDate = ({
                 >
                     <TimerRounded />
                 </Button>
+                {evaluationId && sessionId && (
+                    <Tooltip title={currentTask ? `Submit to: ${currentTask.name}` : 'Submit to DRES'}>
+                        <span>
+                            <Button
+                                color="success"
+                                size="small"
+                                sx={{ fontSize: '12px', minWidth: 24 }}
+                                onClick={handleDRESSubmit}
+                                disabled={submitting}
+                            >
+                                {submitting
+                                    ? <CircularProgress size={14} color="inherit" />
+                                    : <SendRounded fontSize="small" />}
+                            </Button>
+                        </span>
+                    </Tooltip>
+                )}
                 {extra}
             </Stack>
             <ModalWithCloseButton

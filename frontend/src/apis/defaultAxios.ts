@@ -9,6 +9,7 @@ axios.interceptors.request.use(
         const token = getCookie('token');
         if (token) {
             config.headers['Authorization'] = `Bearer ${token}`;
+            config.headers['Custom-Axios'] = 'true';
         }
         return config;
     },

@@ -4,6 +4,7 @@ import feedbackSlice from './feedback';
 import authSlice from './auth';
 import mapSlice from './map';
 import searchSlice from './search';
+import dresSlice from './dres';
 
 export const store = configureStore({
     reducer: {
@@ -11,7 +12,8 @@ export const store = configureStore({
         feedback: feedbackSlice,
         search: searchSlice,
         auth: authSlice,
-        map: mapSlice
+        map: mapSlice,
+        dres: dresSlice,
     },
 });
 

@@ -7,7 +7,6 @@ import {
     Accordion,
     AccordionDetails,
     AccordionSummary,
-    Badge,
     Box,
     Button,
     Checkbox,
@@ -21,40 +20,43 @@ import {
     Stack,
     TextField,
     Typography,
-    styled,
+    styled
 } from '@mui/material';
-import { ImageObject } from '@utils/types';
 import {
     deleteImages,
     searchImages,
-    similarImages,
-    similarImagesPost,
 } from 'apis/browsing';
+import DRESSettings from 'components/DRESSettings';
+import { FaceFiltersHook } from 'components/FaceFilters';
 import ImageDropSearch from 'components/ImageDropSearch';
 import ImageWithDate from 'components/ImageWithDate';
 import LifelogEvent from 'components/LifelogEvent';
-import React, { useMemo, useState } from 'react';
+import { LocationFiltersHook } from 'components/LocationFilters';
+import { TemporalFiltersHook } from 'components/TemporalFilters';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import { setDeviceId } from 'reducers/auth';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setSearchQuery } from 'reducers/search';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
-import { TemporalFiltersHook } from 'components/TemporalFilters';
-import { LocationFiltersHook } from 'components/LocationFilters';
 import DeviceSelect from './DeviceSelect';
-import { FaceFiltersHook } from 'components/FaceFilters';
-import { setSearchQuery } from 'reducers/search';
 
 const PAGE_SIZE = 20;
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, _] = useSearchParams();
-
+    const device = searchParams.get('device');
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const searchQuery = useAppSelector((state) => state.search.query);
+
+    useEffect(() => {
+        if (device) dispatch(setDeviceId(device));
+    }, [device]);
 
     // View Settings
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
@@ -66,7 +68,7 @@ const SearchPage = () => {
     const [textQuery, setTextQuery] = useState('');
     const [useImageInput, setUseImageInput] = useState<boolean>(false);
     const [filterShown, setFilterShown] = useState<
-        'temporal' | 'location' | 'faces' | null
+        'temporal' | 'location' | 'faces' | 'dres' | null
     >(null);
 
     const {
@@ -332,6 +334,37 @@ const SearchPage = () => {
                         {FaceFilterOptions()}
                     </AccordionDetails>
                 </StyledAccordion>
+                <StyledAccordion
+                    square
+                    elevation={0}
+                    expanded={filterShown === 'dres'}
+                    onChange={() =>
+                        setFilterShown((prev) =>
+                            prev === 'dres' ? null : 'dres'
+                        )
+                    }
+                >
+                    <AccordionSummary>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                            <ArrowDropDownRounded
+                                color="primary"
+                                fontSize="large"
+                                sx={{
+                                    verticalAlign: 'middle',
+                                    transition: 'transform 0.3s',
+                                    transform:
+                                        filterShown === 'dres'
+                                            ? 'rotate(180deg)'
+                                            : 'rotate(0deg)',
+                                }}
+                            />
+                            DRES Competition
+                        </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ padding: 0 }}>
+                        <DRESSettings />
+                    </AccordionDetails>
+                </StyledAccordion>
                 <Stack
                     direction="row"
                     justifyContent="flex-end"
@@ -348,7 +381,9 @@ const SearchPage = () => {
                             textTransform: 'none',
                             width: 80,
                         }}
-                        onClick={() => mutate()}
+                        onClick={
+                            () => dispatch(setSearchQuery({ text: textQuery }))
+                        }
                     >
                         Search
                     </Button>

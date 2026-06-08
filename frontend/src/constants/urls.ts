@@ -10,11 +10,11 @@ if (window.location.hostname === "localhost") {
   IMAGE_HOST_URL = `http://localhost:9000/LifelogPicam/`;
 }
 
-
 const api = axios.create({
     baseURL: BACKEND_URL,
     timeout: 60000,
 });
+
 
 api.interceptors.request.use(
     function (config) {
@@ -32,5 +32,11 @@ api.interceptors.request.use(
 )
 
 export const THUMBNAIL_HOST_URL = IMAGE_HOST_URL;
+
 export { BACKEND_URL, IMAGE_HOST_URL, api };
+
+export const DRES_URL = "https://vbs.videobrowsing.org/api/v2"
+
+
+
 

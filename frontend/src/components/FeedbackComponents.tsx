@@ -1,4 +1,4 @@
-import { CircularProgress, Modal, Snackbar } from '@mui/material';
+import { Alert, CircularProgress, Modal, Snackbar } from '@mui/material';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
 const FeedbackComponents = () => {
@@ -13,7 +13,16 @@ const FeedbackComponents = () => {
                 onClose={() => dispatch({ type: 'feedback/hideNotification' })}
                 message={notification ? notification.message : ''}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-            />
+            >
+                <Alert
+                    severity={notification ? notification.type : 'info'}
+                    onClose={() =>
+                        dispatch({ type: 'feedback/hideNotification' })
+                    }
+                >
+                    {notification ? notification.message : ''}
+                </Alert>
+            </Snackbar>
             <Modal
                 open={loading}
                 aria-labelledby="loading-modal"

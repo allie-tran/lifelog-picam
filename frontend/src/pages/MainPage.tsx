@@ -29,8 +29,7 @@ function MainPage() {
     const today = dayjs().format('YYYY-MM-DD');
     const date = searchParams.get('date');
     const device = searchParams.get('device');
-    const deviceId =
-        useAppSelector((state) => state.auth.deviceId) || device || '';
+    const deviceId = useAppSelector((state) => state.auth.deviceId);
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
