@@ -594,6 +594,29 @@ class SkinTemperatureData(Base):
 
     temperature: Mapped[float] = mapped_column(Float)
 
+
+class BioDayStats(Base):
+    """Per-day biometric aggregates, computed by the nightly Celery task."""
+    __tablename__ = "bio_day_stats"
+    __table_args__ = (
+        Index("ix_bio_day_stats_device_date", "device_id", "date"),
+        UniqueConstraint("device_id", "date", name="uq_bio_day_stats_device_date"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    avg_hr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resting_hr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_hr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rmssd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    step_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sleep_start = Column(DateTime, nullable=True)
+    sleep_end = Column(DateTime, nullable=True)
+    sleep_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    computed_at = Column(DateTime, nullable=True)
+
+
 # Updated mapping pointing directly to the SQLalchemy Entities
 db_type_mapping = {
     "PPG": PPGData,

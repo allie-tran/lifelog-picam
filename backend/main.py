@@ -395,6 +395,10 @@ def process_date(
 # ---------------------------------------------------------------------------
 # Day summary
 # ---------------------------------------------------------------------------
+
+_LIVE_THRESHOLD_MINUTES = 20  # day is "live" if last image arrived within this window
+
+
 @app.get("/day-summary", response_model=DaySummary)
 def get_day_summary(
     date: str,
@@ -408,7 +412,6 @@ def get_day_summary(
     if not date:
         raise HTTPException(status_code=400, detail="Date is required.")
 
-    # Get current state:
     number_of_images = session.execute(
         select(func.count(ImageModel.id)).where(
             ImageModel.date == date,
@@ -416,6 +419,10 @@ def get_day_summary(
             ImageModel.deleted == False,
         )
     ).scalar_one()
+
+    if number_of_images == 0:
+        return None
+
     last_image = session.execute(
         select(ImageModel).where(
             ImageModel.date == date,
@@ -425,54 +432,101 @@ def get_day_summary(
     ).scalars().first()
     last_image_time = last_image.timestamp if last_image else None
 
+    # Determine if day is still actively being recorded
+    today = datetime.now().strftime("%Y-%m-%d")
+    is_live = False
+    if date == today and last_image_time is not None:
+        age = (datetime.utcnow() - last_image_time).total_seconds() / 60
+        is_live = age < _LIVE_THRESHOLD_MINUTES
 
     day_summary = DaySummaryRecord.find_one(filter={"date": date, "device": device})
-    # if day_summary and day_summary.segments and not day_summary.updated:
-    #     return day_summary
 
-    if number_of_images == 0:
-        return None
+    # ── Fast path: cache is clean ────────────────────────────────────────────
+    if (
+        day_summary
+        and day_summary.segments
+        and not getattr(day_summary, "dirty_segment_ids", [])
+        and not getattr(day_summary, "text_summary_stale", False)
+        and day_summary.number_of_images == number_of_images
+        and day_summary.last_image_time == last_image_time
+    ):
+        logging.info("day-summary cache hit for %s/%s", device, date)
+        cached = DaySummary.model_validate(day_summary.__dict__)
+        cached.is_live = is_live
+        return cached
 
+    # ── Partial path: only some segments changed ─────────────────────────────
+    dirty_ids: list[int] = list(getattr(day_summary, "dirty_segment_ids", []) or [])
+    text_stale: bool = bool(getattr(day_summary, "text_summary_stale", True))
 
-    if (day_summary
-            and day_summary.segments
-            and day_summary.updated
-            and day_summary.number_of_images == number_of_images
-            and day_summary.last_image_time == last_image_time):
-        print(f"Returning cached day summary for date {date} and device {device}.")
-        return DaySummary.model_validate(day_summary)
-
-    print(f"Creating day summary for date {date} and device {device}.")
-    summary = DaySummary(
-        device=device, date=date, segments=[], summary_text="", updated=False
+    need_full_rebuild = (
+        day_summary is None
+        or not day_summary.segments
+        or day_summary.number_of_images != number_of_images
     )
 
-    # Reload segments
-    load_all_segments(session, device, date, skip_annotations=False)
+    if not need_full_rebuild and dirty_ids:
+        logging.info(
+            "Incremental timeline rebuild for %s/%s (%d dirty segments)",
+            device, date, len(dirty_ids),
+        )
+        summary = DaySummary.model_validate(day_summary.__dict__)
+        # Rebuild the full timeline cheaply (pure SQL + Python, no LLM)
+        summary.segments = create_day_timeline(session, device, date)
+        summary.dirty_segment_ids = []
+    elif need_full_rebuild:
+        logging.info("Full day-summary rebuild for %s/%s", device, date)
+        load_all_segments(session, device, date, skip_annotations=False)
+        summary = DaySummary(
+            device=device, date=date, segments=[], summary_text="",
+            updated=False, dirty_segment_ids=[], text_summary_stale=True,
+        )
+        summary.segments = create_day_timeline(session, device, date)
+        if not summary.segments:
+            raise HTTPException(status_code=404, detail="No segments found for this date.")
+        text_stale = True
+    else:
+        summary = DaySummary.model_validate(day_summary.__dict__)
 
-    # Create timeline segments
-    summary.segments = create_day_timeline(session, device, date)
-    if not summary.segments:
-        raise HTTPException(status_code=404, detail="No segments found for this date.")
+    # ── LLM text summary — skip when day is still live ──────────────────────
+    if text_stale and not is_live:
+        summary = summarize_day_by_text(session, summary)
+        summary.text_summary_stale = False
+    elif text_stale and is_live:
+        logging.debug("Skipping LLM text summary: day %s is still live", date)
 
-    summary = summarize_day_by_text(session, summary)
-    my_targets = user.goal_targets or DEFAULT_TARGETS
+    # ── Custom targets (CLIP analysis) — skip on live days ──────────────────
+    if not is_live or need_full_rebuild:
+        my_targets = user.goal_targets or DEFAULT_TARGETS
+        summary = summarize_lifelog_by_day(session, summary, my_targets)
 
-    summary = summarize_lifelog_by_day(
-        session,
-        summary,
-        my_targets
-    )
+    # ── Attach bio stats if available ────────────────────────────────────────
+    from database.models import BioDayStats as BioDayStatsModel
+    bio = session.execute(
+        select(BioDayStatsModel).where(
+            BioDayStatsModel.device_id == device,
+            BioDayStatsModel.date == date,
+        )
+    ).scalars().first()
+    if bio:
+        summary.avg_hr = bio.avg_hr
+        summary.resting_hr = bio.resting_hr
+        summary.max_hr = bio.max_hr
+        summary.rmssd = bio.rmssd
+        summary.step_count = bio.step_count
+        summary.sleep_start = bio.sleep_start
+        summary.sleep_end = bio.sleep_end
+        summary.sleep_minutes = bio.sleep_minutes
 
     summary.number_of_images = number_of_images
-    summary.last_image_time = last_image_time  # type: ignore
+    summary.last_image_time = last_image_time
+    summary.is_live = is_live
+    summary.dirty_segment_ids = []
+    summary.updated = True
 
     DaySummaryRecord.update_one(
-        {
-            "date": date,
-            "device": device,
-        },
-        data={"$set": { **summary.model_dump(), "updated": False}},
+        {"date": date, "device": device},
+        data={"$set": {**summary.model_dump(), "dirty_segment_ids": [], "text_summary_stale": False}},
         upsert=True,
     )
 

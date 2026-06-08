@@ -1,29 +1,33 @@
 # Summary of various activities in the day
 
+import logging
 from datetime import datetime, timedelta
 from typing import Callable, List
 
 import os
 import numpy as np
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app_types import ActionType, CustomTarget, DaySummary, SummarySegment
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, GROUPED_CATEGORIES
-from database.models import Image, ImageEmbedding
+from database.models import Image, ImageEmbedding, HeartRateData, Location
 from database.types import ImageRecord, _orm_to_lifelog
 from llm import llm
 from llm.gemini import MixedContent, get_visual_content
 from scripts.date_utils import parse_date
+from scripts.bio_stats import attach_bio_to_segments, hr_zone, _date_ns_window, _polar_ts_to_unix
 from visual import clip_model
 
 from scripts.segmentation import fetch_embeddings, pick_representative_index_for_segment
 
+logger = logging.getLogger(__name__)
+
 SocialClassifier = Callable[[np.ndarray], bool]
-ActivityClassifier = Callable[[np.ndarray], str]  # returns a category label
+ActivityClassifier = Callable[[np.ndarray], str]
 FoodDrinkClassifier = Callable[[np.ndarray], bool]
-WorkBreakClassifier = Callable[[np.ndarray], str]  # returns "work", "break" or "other"
+WorkBreakClassifier = Callable[[np.ndarray], str]
 
 encoded_activities = clip_model.encode_texts(
     list(GROUPED_CATEGORIES.keys()),
@@ -41,6 +45,7 @@ def encode_with_cache(session: Session, prompt: str, device: str):
         encoded_prompts[prompt] = apply_transformation(encoded, get_matrix(session, device))
     return encoded_prompts[prompt]
 
+
 def summarize_lifelog_by_day(
     session,
     summary: DaySummary,
@@ -49,7 +54,6 @@ def summarize_lifelog_by_day(
     """
     Summarize lifelog with custom targets: Bursts, Periods, and Binary.
     """
-    # Fetch all image paths and embeddings for the day
     paths = [
         record.image_path
         for record in ImageRecord.find(
@@ -59,40 +63,31 @@ def summarize_lifelog_by_day(
     ]
     paths, feats = fetch_embeddings(session, summary.device, paths)
 
-    # 1. Handle BINARY and BURST targets (Frame-by-frame analysis)
-    # We pre-encode the prompts for efficiency
     target_configs = []
     for target in targets:
-        print(f"Encoding prompt for target: {target.name} with action type {target.action_type}")
+        logger.debug("Encoding target: %s (%s)", target.name, target.action_type)
         name = target.name
         action_type = target.action_type
         encoded_query = encode_with_cache(session, f"a photo of {name}", summary.device)
         encoded_negative_query = encode_with_cache(session, f"a photo without {name}", summary.device)
 
-        # encoded_query = clip_model.encode_text(f"a photo of {name}", normalize=True)
-        # encoded_negative_query = clip_model.encode_text(f"a photo without {name}", normalize=True)
-
-        # encoded_query = apply_transformation(encoded_query, get_matrix(session, summary.device))
-        # encoded_negative_query = apply_transformation(encoded_negative_query, get_matrix(session, summary.device))
-
         target_configs.append((name, action_type, encoded_query, encoded_negative_query))
 
         if action_type == ActionType.BINARY:
-            summary.binary_metrics[name] = 0.0  # Initialize binary metric
+            summary.binary_metrics[name] = 0.0
         elif action_type == ActionType.BURST:
             summary.burst_metrics[name] = []
 
     if len(feats) == 0:
-        print("No embeddings found for the day's images.")
+        logger.warning("No embeddings for %s on %s.", summary.device, summary.date)
         return summary
-    all_feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)  # Normalize for cosine similarity
+    all_feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
     summary.total_images = len(paths)
 
     for name, action_type, query_vec, neg_query_vec in target_configs:
-        print(f"Processing target: {name} with action type {action_type}")
         all_pos_sim = all_feats @ query_vec
         all_neg_sim = all_feats @ neg_query_vec
-        is_present_array = all_pos_sim > all_neg_sim  # Simple decision boundary
+        is_present_array = all_pos_sim > all_neg_sim
 
         for idx, is_present in enumerate(is_present_array):
             if is_present:
@@ -106,13 +101,11 @@ def summarize_lifelog_by_day(
                     else:
                         summary.burst_metrics[name].append(timestamp)
 
-    # 2. Handle PERIOD targets (Segment aggregation)
     period_targets = [
         target.name for target in targets if target.action_type == ActionType.PERIOD
     ]
 
     for target_name in period_targets:
-        # Filter segments where activity matches the target
         target_segments = [
             seg
             for seg in summary.segments
@@ -120,12 +113,9 @@ def summarize_lifelog_by_day(
             or GROUPED_CATEGORIES.get(seg.activity) == target_name
         ]
 
-        print(f"Found {len(target_segments)} segments for target '{target_name}' before merging.")
-
         if not target_segments:
             continue
 
-        # Merge Logic (reused from your original food/drink logic)
         target_segments.sort(key=lambda seg: seg.start_time)
         merged = []
         current_seg = target_segments[0]
@@ -139,11 +129,8 @@ def summarize_lifelog_by_day(
                 current_seg = next_seg
         merged.append(current_seg)
 
-        # Attach Visuals and LLM Summaries for the Period
-        # query_vec = clip_model.encode_text(f"a photo of {target_name}", normalize=True)
         query_vec = encode_with_cache(session, f"a photo of {target_name}", summary.device)
         for seg in merged:
-            # (Selection logic for representative images remains same as your snippet)
             seg_paths, seg_feats = get_segment_data(session, summary, seg)
             rep_indices = pick_representative_index_for_segment(
                 seg_paths, seg_feats, query_vec
@@ -161,16 +148,11 @@ def summarize_lifelog_by_day(
             )
 
         summary.period_metrics[target_name] = merged
-
-        # Optional: Generate text summary for this specific period
         summary.custom_summaries[target_name] = generate_period_description(
             target_name, merged, summary.device
         )
 
-    # Finalize totals
     summary.total_minutes = sum(seg.duration / 60.0 for seg in summary.segments)
-
-    # Categories Minutes
     for seg in summary.segments:
         category = GROUPED_CATEGORIES.get(seg.activity, "Unclear")
         summary.category_minutes[category] = summary.category_minutes.get(category, 0) + seg.duration / 60.0
@@ -179,16 +161,12 @@ def summarize_lifelog_by_day(
 
 
 def generate_period_description(target_name: str, segments: List[SummarySegment], device: str) -> str:
-    """
-    Generates a concise LLM summary for a specific target period (e.g., 'Eating', 'Working').
-    """
     if not segments:
         return ""
 
     bytes_list = []
     times = []
 
-    # 1. Collect representative images and timeframes for the LLM context
     for segment in segments:
         rep_image = segment.representative_image
         if rep_image is not None:
@@ -203,38 +181,33 @@ def generate_period_description(target_name: str, segments: List[SummarySegment]
     if not bytes_list:
         return f"Engaged in {target_name}."
 
-    # 2. Prepare multi-modal content for the LLM
     visual_contents = get_visual_content(bytes_list)
     time_contents = [
         MixedContent(type="text", content=f"Timeframe: {t}") for t in times
     ]
 
-    # Interleave time and images
     combined_context = []
     for t_cont, v_cont in zip(time_contents, visual_contents):
         combined_context.extend([t_cont, v_cont])
 
-    # 3. Request specialized summary based on the target name
     prompt = (
         f"Based on these images of '{target_name}', describe the activity briefly. "
-        "Focus on the health-relevant aspects and nature of the task, environment, and any notable details that are useful for understanding the context of this activity. "
+        "Focus on the health-relevant aspects and nature of the task, environment, and any notable details. "
         "Use note-style, be objective, and keep it under 30 words. "
         "Ignore dates, keep time only. "
     )
 
     try:
         description = llm.generate_from_mixed_media(
-            [MixedContent(type="text", content=prompt)] + combined_context  # type: ignore
+            [MixedContent(type="text", content=prompt)] + combined_context
         )
         return str(description).strip()
     except Exception as e:
-        print(f"Error generating description for {target_name}: {e}")
+        logger.error("Error generating description for %s: %s", target_name, e)
         return f"Activity: {target_name} detected."
 
 
-
 def get_segment_data(session, summary, segment):
-    # Helper to fetch embeddings for a specific time range
     records = session.execute(
         select(Image.image_path).where(
             Image.device == summary.device,
@@ -259,9 +232,55 @@ class TempActivitySegment(BaseModel):
     end_time: datetime
     image_paths: List[str]
     duration: int = 0
+    location_name: str = ""
 
 
-def create_day_timeline(session, device: str, date: str):
+def _fetch_segment_locations(session, device: str, date: str) -> dict[int, str]:
+    """
+    Return {segment_id: most_common_location_display_name} for the given date/device.
+    One query, grouped in Python.
+    """
+    from collections import Counter
+    rows = session.execute(
+        select(Image.segment_id, Location.name, Location.address)
+        .join(Location, Image.location_id == Location.id)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+        )
+    ).all()
+
+    seg_locs: dict[int, list[str]] = {}
+    for seg_id, name, address in rows:
+        display = name if name and name not in ("---", "Unknown Place", "") else (address or "")
+        seg_locs.setdefault(seg_id, []).append(display)
+
+    return {
+        seg_id: Counter(names).most_common(1)[0][0]
+        for seg_id, names in seg_locs.items()
+        if names
+    }
+
+
+def _fetch_day_hr_rows(session, device_id: str, date: str) -> list:
+    """Fetch all HeartRateData rows for device/date (Polar epoch)."""
+    start_ns, end_ns = _date_ns_window(date)
+    # device_id for bio sensors may differ — we try both the camera device_id and
+    # any associated sensor device. For simplicity use the camera device_id as-is.
+    return session.execute(
+        select(HeartRateData)
+        .where(
+            HeartRateData.device_id == device_id,
+            HeartRateData.time_stamp >= start_ns,
+            HeartRateData.time_stamp < end_ns,
+        )
+        .order_by(HeartRateData.time_stamp.asc())
+    ).scalars().all()
+
+
+def create_day_timeline(session, device: str, date: str) -> list[SummarySegment]:
     records = session.execute(
         select(Image).where(
             Image.device == device,
@@ -269,170 +288,142 @@ def create_day_timeline(session, device: str, date: str):
             Image.deleted == False,
             Image.segment_id != None,
         ).order_by(Image.timestamp.asc())
-        ).fetchall()
+    ).fetchall()
 
     records = [_orm_to_lifelog(r.Image) for r in records]
 
-    # Group by segment_id and aggregate activities, start_time, end_time, and image_paths
-    groups = {}
+    # Batch-fetch segment locations (one query)
+    seg_to_location = _fetch_segment_locations(session, device, date)
+
+    # Batch-fetch HR for the day (one query)
+    hr_rows = _fetch_day_hr_rows(session, device, date)
+
+    # Group by segment_id
+    groups: dict = {}
     for record in records:
-        if record.segment_id not in groups:
-            groups[record.segment_id] = {
+        sid = record.segment_id
+        if sid not in groups:
+            groups[sid] = {
                 "activity": record.activity,
                 "time": [record.timestamp],
                 "image_paths": [record.image_path],
+                "location_name": seg_to_location.get(sid, ""),
             }
         else:
-            groups[record.segment_id]["time"].append(record.timestamp)
-            groups[record.segment_id]["image_paths"].append(record.image_path)
+            groups[sid]["time"].append(record.timestamp)
+            groups[sid]["image_paths"].append(record.image_path)
 
     activities: list[TempActivitySegment] = []
-    for data in groups.values():
+    for sid, data in groups.items():
         activities.append(
             TempActivitySegment(
                 activity=data.get("activity", "Unclear") or "Unclear",
-                start_time=min(data.get("time", [datetime.now()])),
-                end_time=max(data.get("time", [datetime.now()])),
-                image_paths=data.get("image_paths", [])
-                )
+                start_time=min(data["time"]),
+                end_time=max(data["time"]),
+                image_paths=data["image_paths"],
+                location_name=data["location_name"],
+            )
         )
 
-    # Sort activities by start_time
     activities.sort(key=lambda x: x.start_time)
 
-    print("Aggregated activities for day summary.")
     if not activities:
-        print("No activities found for the day.")
+        logger.info("No activities for %s/%s", device, date)
         return []
 
-    # Predefine a grid of time slots (e.g., every 30 minutes)
-    earliest_hour = 0
-    latest_hour = 24
-    if activities:
-        earliest_hour = activities[0].start_time.hour
-        latest_hour = activities[-1].end_time.hour + 1
+    earliest_hour = activities[0].start_time.hour
+    latest_hour = activities[-1].end_time.hour + 1
 
-    print("Creating time slots from", earliest_hour, "to", latest_hour)
-    time_slots = []
     slot_duration = 15 * 60
+    time_slots = [
+        (s, s + slot_duration)
+        for s in range(earliest_hour * 3600, latest_hour * 3600, slot_duration)
+    ]
 
-    for slot_start in range(
-        earliest_hour * 60 * 60, latest_hour * 60 * 60, slot_duration
-    ):
-        slot_end = slot_start + slot_duration
-        time_slots.append((slot_start, slot_end))
-
-    summary = []
+    summary_slots: list[SummarySegment] = []
     for slot_start, slot_end in time_slots:
-        activity = "No Activity"
-        slot_activities = []
         slot_start_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_start)
         slot_end_time = datetime.strptime(date, "%Y-%m-%d") + timedelta(seconds=slot_end)
 
-        seg_paths = []
-        for temp_segment in activities:
-            if (
-                temp_segment.start_time <= slot_end_time and temp_segment.end_time >= slot_start_time
-            ):
-                slot_activities.append(temp_segment.activity)
-                seg_paths.extend(temp_segment.image_paths)
+        slot_activities = []
+        slot_locations = []
+        for temp_seg in activities:
+            if temp_seg.start_time <= slot_end_time and temp_seg.end_time >= slot_start_time:
+                slot_activities.append(temp_seg.activity)
+                if temp_seg.location_name:
+                    slot_locations.append(temp_seg.location_name)
 
+        activity = "No Activity"
         if slot_activities:
-            # Choose the most frequent activity in the slot
             activity = max(set(slot_activities), key=slot_activities.count)
 
-        # if seg_paths:
-        #     # Get features
-        #     feats = (
-        #         session.execute(
-        #             select(ImageEmbedding.embedding, Image.image_path).where(
-        #                 Image.image_path.in_(seg_paths),
-        #             ).join(Image, ImageEmbedding.image_id == Image.id)
-        #         )
-        #     )
-        #     image_to_feats = {row.image_path: row.embedding for row in feats}
-        #     seg_paths = [path for path in seg_paths if path in image_to_feats]
-        #     seg_feats = np.array([image_to_feats[path] for path in seg_paths if path in image_to_feats])
-        #     if len(seg_feats) == 0:
-        #         representative_image = None
-        #         representative_images = []
-        #     else:
-        #         representative_image_paths = pick_representative_index_for_segment(
-        #             seg_paths,
-        #             seg_feats,
-        #             encoded_activities_dict.get(activity),
-        #         )
-        #         representative_image = session.execute(select(Image).where(
-        #             Image.device == device,
-        #             Image.image_path == representative_image_paths[0],
-        #         )).scalar_one_or_none()
+        from collections import Counter
+        location_name = Counter(slot_locations).most_common(1)[0][0] if slot_locations else None
 
-        #         representative_image = _orm_to_lifelog(representative_image) if representative_image else None
-
-        #         representative_images = session.execute(
-        #             select(Image).where(
-        #                 Image.device == device,
-        #                 Image.image_path.in_(representative_image_paths),
-        #             ).order_by(Image.timestamp.asc())
-        #         ).scalars().all()
-        #         representative_images = [
-        #             _orm_to_lifelog(img) for img in representative_images
-        #         ]
-        # else:
-        representative_image = None
-        representative_images = []
-
-        summary.append(
+        summary_slots.append(
             SummarySegment(
                 segment_index=None,
                 activity=activity,
                 start_time=slot_start_time,
                 end_time=slot_end_time,
                 duration=slot_duration,
-                representative_image=representative_image,
-                representative_images=list(representative_images),
+                representative_image=None,
+                representative_images=[],
+                location_name=location_name,
             )
         )
 
-
-    # Merge consecutive segments with the same activity
-    merged_summary = []
-    for temp_segment in summary:
-        if merged_summary and merged_summary[-1].activity == temp_segment.activity:
-            # Merge with the previous segment
-            merged_summary[-1].end_time = temp_segment.end_time
-            merged_summary[-1].duration += temp_segment.duration
-            merged_summary[-1].representative_images.extend(
-                temp_segment.representative_images
-            )
+    # Merge consecutive same-activity slots
+    merged: list[SummarySegment] = []
+    for slot in summary_slots:
+        if merged and merged[-1].activity == slot.activity:
+            merged[-1].end_time = slot.end_time
+            merged[-1].duration += slot.duration
+            # keep most common location
+            if slot.location_name and not merged[-1].location_name:
+                merged[-1].location_name = slot.location_name
         else:
-            merged_summary.append(temp_segment)
+            merged.append(slot)
 
-    return merged_summary
+    # Attach HR data to each merged segment
+    if hr_rows:
+        attach_bio_to_segments(merged, hr_rows)
+
+    return merged
 
 
-def summarize_day_by_text(session, day_summay: DaySummary):
+def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
+    """
+    Generate a natural-language highlight of the day.
+    Includes activity descriptions AND location context.
+    """
     try:
         records = session.execute(
             select(Image).where(
-                Image.device == day_summay.device,
-                Image.date == day_summay.date,
+                Image.device == day_summary.device,
+                Image.date == day_summary.date,
                 Image.deleted == False,
                 Image.segment_id != None,
             ).order_by(Image.timestamp.asc())
         ).fetchall()
 
-        recods = [_orm_to_lifelog(r.Image) for r in records]
-        groups = {}
-        for record in recods:
-            if record.segment_id not in groups:
-                groups[record.segment_id] = {
+        records = [_orm_to_lifelog(r.Image) for r in records]
+
+        # Batch-fetch segment locations
+        seg_to_location = _fetch_segment_locations(session, day_summary.device, day_summary.date)
+
+        groups: dict = {}
+        for record in records:
+            sid = record.segment_id
+            if sid not in groups:
+                groups[sid] = {
                     "activity": record.activity,
                     "activity_description": record.activity_description,
                     "time": [record.timestamp],
+                    "location": seg_to_location.get(sid, ""),
                 }
             else:
-                groups[record.segment_id]["time"].append(record.timestamp)
+                groups[sid]["time"].append(record.timestamp)
 
         raw_activities = []
         for data in groups.values():
@@ -441,25 +432,28 @@ def summarize_day_by_text(session, day_summay: DaySummary):
                 "activity_description": data["activity_description"],
                 "start_time": min(data["time"]),
                 "end_time": max(data["time"]),
+                "location": data["location"],
             })
         raw_activities.sort(key=lambda x: x["start_time"])
-        day_summary = llm.generate_from_text(
+
+        activity_lines = []
+        for seg in raw_activities:
+            if seg["activity"] == "No Activity":
+                continue
+            line = f'{seg["start_time"].strftime("%H:%M")}–{seg["end_time"].strftime("%H:%M")}: {seg["activity_description"] or seg["activity"]}'
+            if seg["location"]:
+                line += f' @ {seg["location"]}'
+            activity_lines.append(line)
+
+        day_summary_text = llm.generate_from_text(
             "What is the highlight of the day based on the following activities?\n"
-            "Ignore unclear activities.\n"
-            + "\n".join(
-                [
-                    f'{seg["start_time"]} to {seg["end_time"]}: {seg["activity_description"]}'
-                    for seg in raw_activities
-                    if seg["activity"] != "No Activity"
-                ]
-            )
+            "Ignore unclear activities. Write 2-3 sentences in first person.\n"
+            + "\n".join(activity_lines)
         )
-        day_summary = str(day_summary).strip()
+        day_summary.summary_text = str(day_summary_text).strip()
 
     except Exception as e:
-        trace = str(e)
-        print("Failed to generate day summary:", trace)
-        day_summary = "No summary available."
+        logger.error("Failed to generate day summary text: %s", e)
+        day_summary.summary_text = "No summary available."
 
-    day_summay.summary_text = day_summary
-    return day_summay
+    return day_summary

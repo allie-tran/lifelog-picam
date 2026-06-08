@@ -23,6 +23,12 @@ class RedisClient:
     def set_json(self, key, data):
         self.set_value(key, json.dumps(data))
 
+    def set_with_ttl(self, key, value, ttl_seconds: int):
+        self.client.set(key, value, ex=ttl_seconds)
+
+    def set_json_with_ttl(self, key, data, ttl_seconds: int):
+        self.set_with_ttl(key, json.dumps(data), ttl_seconds)
+
 
 
 redis_client = RedisClient()

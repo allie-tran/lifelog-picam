@@ -198,6 +198,9 @@ class SummarySegment(CamelCaseModel):
     duration: int
     representative_image: LifelogImage | None = None
     representative_images: list[LifelogImage] = []
+    avg_hr: Optional[float] = None
+    hr_zone: Optional[str] = None
+    location_name: Optional[str] = None
 
 
 class ActionType(str, Enum):
@@ -217,25 +220,36 @@ class DaySummary(CamelCaseModel):
     number_of_images: int = 0
     last_image_time: Optional[datetime] = None
 
-
     segments: List[SummarySegment] = []
     summary_text: str = ""
     updated: bool = False
     device: str = ""
 
+    # Incremental rebuild flags
+    dirty_segment_ids: List[int] = Field(default_factory=list)
+    text_summary_stale: bool = False
+    is_live: bool = False  # True when date==today and capture is still active
+
+    # Daily biometrics
+    avg_hr: Optional[float] = None
+    resting_hr: Optional[float] = None
+    max_hr: Optional[float] = None
+    rmssd: Optional[float] = None
+    step_count: Optional[int] = None
+    sleep_start: Optional[datetime] = None
+    sleep_end: Optional[datetime] = None
+    sleep_minutes: Optional[int] = None
+
     # 1. BINARY: Tracks durations for "state" targets (e.g., "social_minutes": 120.0)
-    # Replaces: social_minutes, alone_minutes
     binary_metrics: Dict[str, float] = Field(default_factory=dict)
 
     # 2. PERIODS: Stores groups of segments for specific activities (e.g., "eating")
-    # Replaces: food_drink_segments, food_drink_minutes
     period_metrics: Dict[str, List[SummarySegment]] = Field(default_factory=dict)
 
     # 3. BURSTS: Lists of timestamps/counts for instant actions (e.g., "drinking water")
     burst_metrics: Dict[str, List[float]] = Field(default_factory=dict)
 
     # Summaries for specific periods (e.g., {"Dining": "Quick lunch at desk"})
-    # Replaces: food_drink_summary
     custom_summaries: Dict[str, str] = Field(default_factory=dict)
 
     # Bookkeeping

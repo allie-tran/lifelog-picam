@@ -1,4 +1,5 @@
 from celery.app.task import Task
+from celery.schedules import crontab
 from celery.contrib.abortable import AbortableAsyncResult, AbortableTask
 from celery.local import class_property
 from celery.result import AsyncResult
@@ -24,6 +25,24 @@ celery.conf.update(
     result_serializer="json",
     accept_content=["json"],
     task_track_started=True,
+    beat_schedule={
+        # 02:00 UTC — bio aggregates for today + yesterday across all sensor devices
+        "nightly-bio-stats": {
+            "task": "tasks.nightly_bio_stats_all_devices",
+            "schedule": crontab(hour=2, minute=0),
+        },
+        # 03:00 UTC — location assignment catch-up for any dates still missing it
+        "nightly-location-update": {
+            "task": "tasks.nightly_location_update_all_devices",
+            "schedule": crontab(hour=3, minute=0),
+        },
+        # 03:30 UTC — face cluster catch-up across all devices
+        "nightly-face-recluster": {
+            "task": "tasks.nightly_recluster_all_devices",
+            "schedule": crontab(hour=3, minute=30),
+        },
+    },
+    timezone="UTC",
 )
 
 

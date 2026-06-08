@@ -1,14 +1,14 @@
 import base64
 import io
+import logging
+import os
 from typing import Annotated, Any, List, Literal, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
-from joblib import os
 from sqlalchemy import update
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
-from sqlalchemy.sql.coercions import ColumnArgumentImpl
 
 from app_types.general import LifelogImage, ResultSegment
 from auth import _require_owner, _require_any_access
@@ -21,10 +21,38 @@ from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
 from scripts.segmentation import load_all_segments
 from scripts.utils import get_thumbnail_path
+from sessions.redis import redis_client
 from PIL import Image as PILImage
 
-
+logger = logging.getLogger(__name__)
 app = FastAPI()
+
+_SEG_COMPLETE_TTL = 60  # seconds to cache "all images segmented" per device/date
+
+
+def _maybe_load_segments(session: Session, device: str, date: str) -> None:
+    """
+    Call load_all_segments only if the Redis TTL cache says unsegmented images
+    may exist for this device/date. Avoids a DB query on every browse request
+    when the day is fully segmented.
+    """
+    cache_key = f"segs_complete:{device}:{date}"
+    if redis_client.get_value(cache_key):
+        return  # recently verified: all segmented
+
+    load_all_segments(session, device, date, skip_annotations=True)
+
+    # Check if any unsegmented remain; if not, cache the result
+    remaining = session.execute(
+        select(func.count(Image.id)).where(
+            Image.device == device,
+            Image.date == date,
+            Image.segment_id.is_(None),
+            Image.deleted == False,
+        )
+    ).scalar_one()
+    if remaining == 0:
+        redis_client.set_with_ttl(cache_key, "1", _SEG_COMPLETE_TTL)
 
 @app.get("/health")
 def health_check():
@@ -199,7 +227,7 @@ async def get_images_by_hour(
     if not os.path.exists(dir_path):
         return {"message": f"No images found for date {date}"}
 
-    load_all_segments(session, device, date, skip_annotations=True)
+    _maybe_load_segments(session, device, date)
 
     all_hours = list(
         ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)
@@ -209,9 +237,8 @@ async def get_images_by_hour(
 
     if not hour:
         if not all_hours:
-            print(f"No hours found for date {date} and device {device}.")
+            logger.info("No hours for date %s device %s", date, device)
             return {"date": date, "hour": None, "images": []}
-        print(all_hours)
         hour = all_hours[0]
 
     results = ImageRecord.find_segments(
