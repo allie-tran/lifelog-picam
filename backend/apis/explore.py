@@ -1,11 +1,12 @@
 import base64
+import logging
+import time
+from functools import lru_cache
 from PIL import Image
 import io
 import os
 from fastapi import Depends, FastAPI, HTTPException
-
-from fastapi import Depends, HTTPException
-from sqlalchemy import  func, case, select, desc
+from sqlalchemy import func, case, select, desc
 from sqlalchemy.orm import Session
 
 from app_types.general import LocationInfo
@@ -13,7 +14,6 @@ from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from auth import _require_owner
 import numpy as np
-
 
 from typing import Annotated, Any
 
@@ -24,6 +24,13 @@ from app_types import CamelCaseModel
 from scripts.utils import to_absolute_bbox
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
+
+# Simple in-process TTL cache for /all-faces — avoids re-cropping images on
+# every FacesScreen reload. Keyed by device; expires after 5 minutes.
+_FACES_CACHE: dict[str, tuple[float, list]] = {}
+_FACES_TTL = 300  # seconds
+
 
 @app.get("/health")
 def health_check():
@@ -61,7 +68,7 @@ def get_locations(
 
     stmt = (stmt
         .group_by(Location.id)
-        .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+        .order_by(desc(func.count(ImageModel.id)))
         .limit(20)
     )
 
@@ -103,7 +110,7 @@ def get_moving_periods(
 
     stmt = (stmt
         .group_by(Location.id)
-        .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+        .order_by(desc(func.count(ImageModel.id)))
         .limit(20)
     )
 
@@ -122,8 +129,6 @@ def get_moving_periods(
 async def get_map_markers(query: ValuesRequest,
                           device: str,
                           db: Session = Depends(get_session)):
-    # 1. Select coordinates and count the related images
-    # We join Location to Image using the relationship
     stmt = (
         select(
             Location.id,
@@ -133,11 +138,10 @@ async def get_map_markers(query: ValuesRequest,
             Location.address,
             func.count(ImageModel.id).label("image_count")
         )
-        .join(Location.images) # This follows your relationship "images"
+        .join(Location.images)
         .where(Location.stop == True, ImageModel.device == device, ImageModel.deleted == False)
     )
 
-    # 2. Apply SearchQuery Filters
     extra_params = query.extra_params
     country_filter = extra_params.get("country")
     if country_filter:
@@ -150,18 +154,16 @@ async def get_map_markers(query: ValuesRequest,
             Location.longitude.between(bounds[1], bounds[3])
         )
 
-    # 3. Grouping is required because of the count() function
     stmt = stmt.group_by(Location.id)
     result = db.execute(stmt).all()
 
-    # 4. Format the response
     return [
         {
             "id": str(r.id),
             "lat": r.latitude if not np.isnan(r.latitude) else None,
             "lng": r.longitude if not np.isnan(r.longitude) else None,
             "name": r.name if r.name not in ["---", "Unknown Place"] else r.address,
-            "weight": r.image_count # We'll use this for custom clustering
+            "weight": r.image_count
         } for r in result
     ]
 
@@ -176,8 +178,7 @@ def available_values(
     _require_owner(access_level)
     field = request.field
     extra_params = request.extra_params
-    print(f"Getting available values for field: {field} and device: {device}")
-    print(f"Extra params: {extra_params}")
+    logger.debug("available-values field=%s device=%s extra=%s", field, device, extra_params)
     match field:
         case "person":
             stmt = (
@@ -199,7 +200,7 @@ def available_values(
 
             stmt = (stmt
                 .group_by(display_name)
-                .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+                .order_by(desc(func.count(ImageModel.id)))
                 .limit(20)
             )
         case "country":
@@ -208,7 +209,7 @@ def available_values(
                 .join(ImageModel, ImageModel.location_id == Location.id)
                 .where(ImageModel.device == device)
                 .group_by(Location.country)
-                .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+                .order_by(desc(func.count(ImageModel.id)))
                 .where(Location.country != None, Location.country != "")
                 .where(Location.stop == True)
                 .limit(20)
@@ -219,7 +220,7 @@ def available_values(
                 .join(ImageModel, ImageModel.location_id == Location.id)
                 .where(ImageModel.device == device)
                 .group_by(Location.country)
-                .order_by(desc(func.count(ImageModel.id))) # Sort by most images
+                .order_by(desc(func.count(ImageModel.id)))
                 .where(Location.country != None, Location.country != "")
                 .where(Location.stop == False)
                 .limit(20)
@@ -247,16 +248,20 @@ def get_all_faces(
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
-    # stmt = select(PeopleCluster).join(PeopleCluster.people).join(ImagePerson.image).where(ImageModel.device == device).distinct()
+
+    cached = _FACES_CACHE.get(device)
+    if cached and (time.time() - cached[0]) < _FACES_TTL:
+        logger.debug("all-faces cache hit for device %s", device)
+        return cached[1]
+
     stmt = select(PeopleCluster).where(PeopleCluster.people.any(ImagePerson.image.has(ImageModel.device == device)))
     clusters = session.execute(stmt).scalars().all()
-    print(f"Found {len(clusters)} clusters for device {device}")
+    logger.info("Building all-faces for device %s: %d clusters", device, len(clusters))
 
     faces = []
-    # get actual images for each person
     for cluster in clusters:
         face = {
-            "id" : str(cluster.id),
+            "id": str(cluster.id),
             "name": cluster.cluster_label,
             "images": []
         }
@@ -272,8 +277,6 @@ def get_all_faces(
         )
 
         images = session.execute(stmt).fetchall()
-        # get cropped images for each bbox
-        cropped = []
         for rel_bbox, thumbnail_path, _ in images:
             image_full_path = os.path.join(THUMBNAIL_DIR, device, thumbnail_path)
             if os.path.exists(image_full_path):
@@ -283,10 +286,11 @@ def get_all_faces(
                 buf = io.BytesIO()
                 try:
                     cropped_img.save(buf, format="JPEG")
-                    cropped.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
-                    face["images"].append(f"data:image/jpeg;base64, {cropped[-1]}")
+                    face["images"].append(f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}")
                 except ValueError as e:
-                    print(f"Error processing image {image_full_path}: {e}")
-        if len(face["images"]) > 0:
+                    logger.warning("Skipping crop for %s: %s", image_full_path, e)
+        if face["images"]:
             faces.append(face)
+
+    _FACES_CACHE[device] = (time.time(), faces)
     return faces

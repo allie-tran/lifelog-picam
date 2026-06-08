@@ -217,6 +217,9 @@ class Image(Base):
         Index("ix_images_device_ref", "device_ref_id"),
         Index("ix_images_deleted", "deleted"),
         Index("ix_images_deleted_time", "deleted_time"),
+        # Composite indexes for the most common multi-column filter patterns
+        Index("ix_images_device_date_deleted", "device", "date", "deleted"),
+        Index("ix_images_device_deleted_time", "device", "deleted", "deleted_time"),
         # constraint: (device, image_path) should be unique to prevent duplicates from the same device
         UniqueConstraint("device", "image_path", name="uq_device_image_path"),
     )

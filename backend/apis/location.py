@@ -1,7 +1,7 @@
-from fastapi import Depends, FastAPI, HTTPException
+import logging
 
-from fastapi import Depends
-from sqlalchemy import  select
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from timezonefinder import TimezoneFinder
 from location.utils import find_timezone
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 @app.get("/health")
 def health_check():
@@ -56,9 +57,10 @@ async def upload_gps(
         timezone=timezone
     )
 
-    print("Inserting/updating GPS data for device {}: lat={}, lon={}, elev={}, time={}, tz={}".format(
-        device_id, request.latitude, request.longitude, request.elevation, timestamp, timezone
-    ))
+    logger.debug(
+        "GPS upsert device=%s lat=%s lon=%s elev=%s time=%s tz=%s",
+        device_id, request.latitude, request.longitude, request.elevation, timestamp, timezone,
+    )
 
     stmt = stmt.on_conflict_do_update(
         constraint="uq_raw_gps_device_time",
@@ -99,15 +101,16 @@ async def last_gps(
 ):
     associated_user = session.execute(select(SensorDevice.associated_user).where(SensorDevice.device_id == device)).scalars().first()
     if not associated_user:
-        print(f"No associated user found for device {device}")
+        logger.warning("No associated user found for device %s", device)
         raise HTTPException(status_code=404, detail="Device not found or not associated with a user")
 
     last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == associated_user).order_by(RawGPS.timestamp.desc())).scalars().first()
     if not last_gps:
         raise HTTPException(status_code=404, detail="No GPS data found for device")
-    print("Last GPS data for device {}: lat={}, lon={}, elev={}, time={}, tz={}".format(
-        device, last_gps.latitude, last_gps.longitude, last_gps.elevation, last_gps.timestamp, last_gps.timezone
-    ))
+    logger.debug(
+        "Last GPS device=%s lat=%s lon=%s time=%s tz=%s",
+        device, last_gps.latitude, last_gps.longitude, last_gps.timestamp, last_gps.timezone,
+    )
     return {
         "latitude": last_gps.latitude,
         "longitude": last_gps.longitude,

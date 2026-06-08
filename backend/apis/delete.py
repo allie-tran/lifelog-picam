@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List
@@ -15,6 +16,10 @@ from auth import _require_owner
 from pipelines.delete import remove_physical_images
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
+
+_DELETED_IMAGES_LIMIT = 500
+_PURGE_THRESHOLD_DAYS = 7
 
 # ---------------------------------------------------------------------------
 # Delete / restore endpoints
@@ -49,8 +54,9 @@ def delete_image(
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
     res: CursorResult = session.execute(stmt)
-    print(
-        f"Marked {res.rowcount} record(s) as deleted for image {request.image_path} on device {device}."
+    logger.info(
+        "Marked %d record(s) as deleted for image %s on device %s.",
+        res.rowcount, request.image_path, device,
     )
     session.commit()
 
@@ -80,36 +86,33 @@ def get_deleted_images(
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
-    now = datetime.now(timezone.utc)
-    deleted_list = ImageRecord.find(
+    deleted_list = list(ImageRecord.find(
         session,
         deleted=True,
         device=device,
         sort="deleted_time",
         sort_desc=True,
-    )
-    deleted_list = list(deleted_list)
-    print(
-        f"Took {(datetime.now(timezone.utc) - now).total_seconds():.2f} seconds to query deleted images."
-    )
-    print(f"Found {len(deleted_list)} deleted images for device {device}.")
+        limit=_DELETED_IMAGES_LIMIT,
+    ))
+    logger.info("Found %d deleted images for device %s.", len(deleted_list), device)
 
-    now_ms = datetime.now(timezone.utc)
-    threshold = now_ms - timedelta(days=7)  # 7 days ago
-
+    threshold = datetime.now(timezone.utc) - timedelta(days=_PURGE_THRESHOLD_DAYS)
     final_list = []
+    to_purge = []
 
-    to_delete = []
     for image in deleted_list:
         full_path = os.path.join(DIR, device, image.image_path)
         if not os.path.exists(full_path):
-            to_delete.append(image.image_path)
+            to_purge.append(image.image_path)
         elif image.deleted_time and image.deleted_time < threshold:
-            to_delete.append(image.image_path)
+            to_purge.append(image.image_path)
         else:
             final_list.append(image)
-    if to_delete:
-        remove_physical_images(session, device, to_delete)
+
+    if to_purge:
+        logger.info("Auto-purging %d expired/missing images for device %s.", len(to_purge), device)
+        remove_physical_images(session, device, to_purge)
+
     return final_list
 
 
@@ -150,5 +153,3 @@ def force_delete_images(
 ):
     _require_owner(access_level)
     remove_physical_images(session, device, request.image_paths)
-    # remove_physical_image(device, image_path, collection, session)
-
