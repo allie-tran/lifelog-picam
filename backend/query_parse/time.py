@@ -328,3 +328,5 @@ def holiday_text_to_datetime(text):
                 else:
                     return datetime.year, datetime.month, datetime.day
     return None, None, None
+
+time_tagger = TimeTagger()

@@ -108,19 +108,8 @@ export const getActiveEvaluations = async () => {
     return axios.get(url)
 }
 
-export const getEvalutionInfo = async (evaluationId: string) => {
-    const sessionId = localStorage.getItem('dresSessionId');
-    const url = `${DRES_URL}/client/evaluation/currentTask/${evaluationId}?session=${sessionId}`
-    return axios.get(url)
-}
-
 export const getCurrentTask = async (evaluationId: string) => {
     const sessionId = localStorage.getItem('dresSessionId');
     const url = `${DRES_URL}/client/evaluation/currentTask/${evaluationId}?session=${sessionId}`
     return axios.get(url)
-}
-
-export const notifySubmissionToServer = async ({ submission }: { submission: SubmissionHistoryItem }) => {
-    const url = `${BACKEND_URL}/notify-submission`
-    return axios.post(url, submission)
 }

@@ -10,7 +10,6 @@ import {
     Button,
     Chip,
     CircularProgress,
-    Divider,
     FormControl,
     InputAdornment,
     InputLabel,
@@ -72,7 +71,7 @@ const DRESSettings = () => {
         fetchTask();
         const interval = setInterval(fetchTask, POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, [evaluationId, dispatch]);
+    }, [evaluationId]);
 
     const autoSelectEvaluation = (evs: Evaluation[]) => {
         if (!evaluationId && evs.length > 0) {
@@ -146,7 +145,6 @@ const DRESSettings = () => {
 
     return (
         <Stack spacing={2} sx={{ p: 0, minWidth: 300, pr: 1 }}>
-            <Divider />
             {!isLoggedIn ? (
                 <>
                     <TextField

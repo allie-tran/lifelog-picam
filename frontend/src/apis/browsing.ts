@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { BACKEND_URL } from '../constants/urls';
+import axios from 'apis/defaultAxios';
 import {
     ActionType,
     CustomGoal,
@@ -10,23 +9,7 @@ import {
     ResultSegment,
     SearchQuery,
 } from 'utils/types';
-import { getCookie, parseErrorResponse } from 'utils/misc';
-
-axios.defaults.headers.common['Authorization'] = `Bearer ${getCookie('token')}`;
-axios.interceptors.request.use(
-    function (config) {
-        const token = getCookie('token');
-        if (token) {
-            config.headers['Authorization'] = `Bearer ${token}`;
-        }
-        return config;
-    },
-    function (error: any) {
-        console.error('There was an error setting auth header!', error);
-        alert(parseErrorResponse(error.response));
-        return Promise.reject(error);
-    }
-);
+import { BACKEND_URL } from '../constants/urls';
 
 export const getDevices = async () => {
     const response = await axios.get(`${BACKEND_URL}/get-devices`);
@@ -92,18 +75,44 @@ export const getAllDates = async (deviceId: string) => {
     return response.data as string[];
 };
 
+export const parseQueryFilters = async (text: string, deviceId?: string): Promise<Partial<SearchQuery>> => {
+    const deviceParam = deviceId ? `&device=${encodeURIComponent(deviceId)}` : '';
+    const response = await axios.get(
+        `${BACKEND_URL}/retrieval/parse-query?text=${encodeURIComponent(text)}${deviceParam}`
+    );
+    return response.data as Partial<SearchQuery>;
+};
+
+export type LocationSummaryItem = {
+    id?: string;
+    name: string;
+    address?: string;
+    country: string;
+    info?: string;
+    latitude?: number;
+    longitude?: number;
+    count: number;
+};
+export type CountItem = { name: string; count: number };
+export type SearchResult = {
+    segments: ImageObject[][];
+    topLocations: LocationSummaryItem[];
+    topCountries: CountItem[];
+    topPeople: CountItem[];
+};
+
 export const searchImages = async (
     deviceId: string,
     query: SearchQuery,
     sortBy: 'time' | 'relevance' = 'time'
-) => {
+): Promise<SearchResult> => {
     const response = await axios.post(
         `${BACKEND_URL}/retrieval/search-images?device=${encodeURIComponent(deviceId)}&sort_by=${sortBy}`,
         {
             ...query,
         }
     );
-    return response.data as ImageObject[][];
+    return response.data as SearchResult;
 };
 
 export const similarImages = async (deviceId: string, imagePath: string) => {

@@ -227,6 +227,14 @@ def available_values(
         case "year":
             stmt = select(ImageModel.year).where(ImageModel.device == device).distinct()
 
+        case "date":
+            stmt = (
+                select(func.to_char(ImageModel.local_timestamp, 'YYYY-MM-DD'))
+                .where(ImageModel.device == device, ImageModel.deleted == False)
+                .distinct()
+                .order_by(func.to_char(ImageModel.local_timestamp, 'YYYY-MM-DD'))
+            )
+
         case _:
             raise HTTPException(status_code=400, detail="Invalid field name.")
     results = session.execute(stmt).fetchall()

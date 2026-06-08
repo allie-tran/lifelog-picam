@@ -52,8 +52,8 @@ const ImageWithDate = ({
         ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
         : '';
     const formattedDate = timeOnly
-        ? dayjs.utc(image.timestamp).tz(image.timezone).format('HH:mm z')
-        : dayjs.utc(image.timestamp).tz(image.timezone).format('dd DD MMM YYYY HH:mm z');
+        ? dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('HH:mm z')
+        : dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('dd DD MMM YYYY HH:mm z');
 
     const handleDelete = async () => {
         setDeleted(true);

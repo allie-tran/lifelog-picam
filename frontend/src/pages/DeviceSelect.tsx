@@ -43,7 +43,7 @@ const DeviceSelect = ({
     }, [devices, deviceId, onChange]);
 
     return (
-        <FormControl fullWidth sx={{ width: '200px', pt: 1 }}>
+        <FormControl fullWidth sx={{ width: '200px' }} size="small">
             <InputLabel id="device-select-label">Device</InputLabel>
             <CameraAltRounded
                 sx={{
@@ -52,14 +52,14 @@ const DeviceSelect = ({
                     top: '50%',
                     transform: 'translateY(-50%)',
                     zIndex: 1,
-                    mt: '4px',
+                    mt: '2px',
                 }}
             />
             <Select
                 sx={{ pl: '32px' }}
                 labelId="device-select-label"
                 value={deviceId || ''}
-                label="Device"
+                label="Content"
                 onChange={(e) => {
                     const selectedDeviceId = e.target.value;
                     selfOnChange(selectedDeviceId);

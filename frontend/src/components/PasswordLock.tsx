@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate, useSearchParams } from 'react-router';
 import { verifyTokenRequest } from '../apis/auth';
@@ -6,10 +6,13 @@ import {
     AppBar,
     Box,
     Button,
+    Chip,
     Container,
     Drawer,
     IconButton,
+    Popover,
     Stack,
+    Toolbar,
     Tooltip,
     Typography,
 } from '@mui/material';
@@ -20,15 +23,59 @@ import { useSWRConfig } from 'swr';
 import DeletedImages from './DeletedImages';
 import {
     AdminPanelSettingsRounded,
+    CheckCircleOutlineRounded,
     FaceRounded,
     HomeRounded,
-    LogoutOutlined,
+    LoginRounded,
     LogoutRounded,
     MonitorHeartRounded,
-    RotateLeftRounded,
     SearchRounded,
     UploadRounded,
 } from '@mui/icons-material';
+import DeviceSelect from '../pages/DeviceSelect';
+import DRESSettings from './DRESSettings';
+
+const DRESWidget = () => {
+    const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+    const { sessionId, evaluationId } = useAppSelector((s) => s.dres);
+    const isLoggedIn = !!sessionId;
+    return (
+        <>
+            {isLoggedIn ? (
+                <Chip
+                    icon={<CheckCircleOutlineRounded />}
+                    label={evaluationId ? 'DRES' : 'DRES (no eval)'}
+                    color="success"
+                    size="small"
+                    onClick={(e) => setAnchor(e.currentTarget)}
+                    sx={{ cursor: 'pointer', ml: 1 }}
+                />
+            ) : (
+                <Button
+                    size="small"
+                    startIcon={<LoginRounded />}
+                    onClick={(e) => setAnchor(e.currentTarget)}
+                    sx={{ ml: 1 }}
+                >
+                    DRES
+                </Button>
+            )}
+            <Popover
+                open={Boolean(anchor)}
+                anchorEl={anchor}
+                onClose={() => setAnchor(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                slotProps={{ paper: { sx: { p: 2, minWidth: 320 } } }}
+            >
+                <Typography variant="subtitle2" fontWeight="bold" mb={1}>
+                    DRES Competition
+                </Typography>
+                <DRESSettings />
+            </Popover>
+        </>
+    );
+};
 
 const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
@@ -82,21 +129,37 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     if (isAuthenticated) {
         return (
             <>
-                <AppBar position="static" color="transparent" elevation={0} sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-                    <Typography
-                        variant="h5"
-                        margin={2}
-                        pl={4}
-                        color="primary"
-                        fontWeight="bold"
-                    >
-                        SelfHealth
-                    </Typography>
+                <AppBar
+                    position="sticky"
+                    color="transparent"
+                    elevation={0}
+                    sx={{
+                        zIndex: (theme) => theme.zIndex.drawer + 1,
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                        backdropFilter: 'blur(8px)',
+                        ml: 4,
+                        mr: 4,
+                    }}
+                >
+                    <Toolbar>
+                        <Typography
+                            variant="h6"
+                            color="primary"
+                            fontWeight="bold"
+                            sx={{ mr: 2, whiteSpace: 'nowrap' }}
+                        >
+                            SelfHealth
+                        </Typography>
+                        <Box sx={{ flex: 1 }} />
+                        <DeviceSelect />
+                        <DRESWidget />
+                    </Toolbar>
                 </AppBar>
                 <Drawer
                     variant="permanent"
                     open
-                    sx={{ zIndex: (theme) => theme.zIndex.appBar - 1 }}
+                    sx={{ zIndex: 2200 }}
                 >
                     <Stack spacing={2} alignItems="center" mt={2}>
                         <Tooltip title="Home">

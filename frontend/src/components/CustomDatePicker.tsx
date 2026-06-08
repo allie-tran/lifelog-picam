@@ -9,7 +9,7 @@ import {
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import '../App.css';
@@ -93,10 +93,11 @@ const CustomDatePicker = ({
 }) => {
     const navigate = useNavigate();
     const today = dayjs().format('YYYY-MM-DD');
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const [searchParams, _] = useSearchParams();
     const [usePicker, setUsePicker] = React.useState(true);
     const [textDate, setTextDate] = React.useState(date || '');
+
+    const allDatesSet = useMemo(() => new Set(allDates ?? []), [allDates]);
 
     const allMonths = React.useMemo(() => {
         if (!allDates) return [];
@@ -143,7 +144,18 @@ const CustomDatePicker = ({
         setTextDate(date ? dayjs(date).format('DD/MM/YYYY') : '');
     }, [date]);
 
-
+    const referenceDate = useMemo(() => {
+        if (allDates && allDates.length > 0) {
+            if (date && allDatesSet.has(date)) {
+                return dayjs(date);
+            }
+            return dayjs(allDates[-1]);
+        }
+        if (date) {
+            return dayjs(date);
+        }
+        return dayjs();
+    }, [allDates, date, allDatesSet]);
 
     return (
         <>
@@ -173,6 +185,10 @@ const CustomDatePicker = ({
                     value={date ? dayjs(date) : null}
                     views={['year', 'month', 'day']}
                     sx={{ width: '250px', transform: 'translateY(4px)' }}
+                    shouldDisableDate={(day) =>
+                        allDatesSet.size > 0 &&
+                        !allDatesSet.has(day.format('YYYY-MM-DD'))
+                    }
                     onChange={(newValue) => {
                         setPage(1);
                         setHour(null);
@@ -197,7 +213,7 @@ const CustomDatePicker = ({
                             <AvailableYear allYears={allYears} {...props} />
                         ),
                     }}
-                    referenceDate={date ? dayjs(date) : dayjs() }
+                    referenceDate={referenceDate}
                 />
             ) : (
                 <TextField

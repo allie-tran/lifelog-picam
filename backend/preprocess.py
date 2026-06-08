@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 import uuid
-from sqlalchemy import and_, extract, func, or_, select, text
+from sqlalchemy import and_, case, extract, func, or_, select, text
 
 from app_types import (
     AppFeatures,
@@ -13,7 +13,7 @@ from app_types import (
 from app_types.search import ResultSummary, SearchQuery
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
-from database.models import Image, ImageEmbedding, ImagePerson, Location
+from database.models import Image, ImageEmbedding, ImagePerson, Location, PeopleCluster
 from visual import clip_model
 from scripts.utils import make_video_thumbnail
 from query_parse.extract_info import Query
@@ -120,6 +120,25 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
     if query.years:
         stmt = stmt.where(or_(*[Image.year.in_(query.years)]))
 
+    if query.custom_ranges:
+        range_conditions = []
+        for tr in query.custom_ranges:
+            if tr.start and tr.end and tr.start.date() == tr.end.date():
+                # Single day: use pre-extracted columns to avoid timezone issues
+                range_conditions.append(
+                    and_(Image.year == tr.start.year, Image.month == tr.start.month, Image.day == tr.start.day)
+                )
+            elif tr.start and tr.end:
+                range_conditions.append(
+                    and_(Image.local_timestamp >= tr.start, Image.local_timestamp < tr.end)
+                )
+            elif tr.start:
+                range_conditions.append(Image.local_timestamp >= tr.start)
+            elif tr.end:
+                range_conditions.append(Image.local_timestamp < tr.end)
+        if range_conditions:
+            stmt = stmt.where(or_(*range_conditions))
+
     # Location filters
     if query.is_moving or query.countries or query.location_ids:
         # merge with location table
@@ -164,7 +183,85 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
         else:
             segments[segment_key] = [record]
 
-    return list(segments.values())
+    # Build summary data
+    image_paths = [r.image_path for r in records]
+    top_locations: list[dict] = []
+    top_countries: list[dict] = []
+    top_people: list[dict] = []
+
+    if image_paths:
+        display_name_expr = case(
+            (Location.name.in_(["---", "Unknown Place", ""]), Location.address),
+            else_=Location.name,
+        ).label("display_name")
+
+        location_rows = session.execute(
+            select(
+                Location.id,
+                Location.name,
+                Location.address,
+                Location.country,
+                Location.info,
+                Location.latitude,
+                Location.longitude,
+                func.count().label("cnt"),
+            )
+            .join(Image, Image.location_id == Location.id)
+            .where(Image.image_path.in_(image_paths), Image.device == device_id)
+            .group_by(Location.id)
+            .order_by(func.count().desc())
+            .limit(5)
+        ).fetchall()
+        top_locations = [
+            {
+                "id": str(row.id) if row.id else None,
+                "name": (
+                    row.name
+                    if row.name and row.name not in ("---", "Unknown Place", "")
+                    else (row.address or "Unknown")
+                ),
+                "address": row.address,
+                "country": row.country or "",
+                "info": row.info,
+                "latitude": row.latitude if row.latitude and not (row.latitude != row.latitude) else None,
+                "longitude": row.longitude if row.longitude and not (row.longitude != row.longitude) else None,
+                "count": row.cnt,
+            }
+            for row in location_rows
+        ]
+
+        country_rows = session.execute(
+            select(Location.country, func.count().label("cnt"))
+            .join(Image, Image.location_id == Location.id)
+            .where(
+                Image.image_path.in_(image_paths),
+                Image.device == device_id,
+                Location.country.isnot(None),
+                Location.country != "",
+            )
+            .group_by(Location.country)
+            .order_by(func.count().desc())
+            .limit(5)
+        ).fetchall()
+        top_countries = [{"name": row.country, "count": row.cnt} for row in country_rows]
+
+        people_rows = session.execute(
+            select(PeopleCluster.cluster_label, func.count().label("cnt"))
+            .join(ImagePerson, ImagePerson.cluster_id == PeopleCluster.id)
+            .join(Image, Image.id == ImagePerson.image_id)
+            .where(Image.image_path.in_(image_paths), Image.device == device_id)
+            .group_by(PeopleCluster.cluster_label)
+            .order_by(func.count().desc())
+            .limit(5)
+        ).fetchall()
+        top_people = [{"name": row.cluster_label, "count": row.cnt} for row in people_rows]
+
+    summary = {
+        "topLocations": top_locations,
+        "topCountries": top_countries,
+        "topPeople": top_people,
+    }
+    return list(segments.values()), summary
 
 time_of_days = {
     "morning": (5, 12),

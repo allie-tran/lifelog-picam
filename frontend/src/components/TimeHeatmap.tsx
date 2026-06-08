@@ -23,10 +23,24 @@ import {
 } from 'types/filters';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import weekYear from 'dayjs/plugin/weekYear';
-import { s } from 'react-router/dist/development/instrumentation-BYr6ff5D';
+import dayOfYear from 'dayjs/plugin/dayOfYear';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+import { ImageObject } from 'utils/types';
 
 dayjs.extend(weekOfYear);
 dayjs.extend(weekYear);
+dayjs.extend(dayOfYear);
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const hourToTimeOfDayIndex = (hour: number): number => {
+    if (hour >= 5 && hour < 11) return 0; // morning
+    if (hour >= 11 && hour < 13) return 2; // midday
+    if (hour >= 13 && hour < 17) return 1; // afternoon
+    if (hour >= 17 && hour < 21) return 3; // evening
+    return 4; // night
+};
 
 // Heatmap template (2D array) for time-based data
 // TIME OF DAY: row = time of day, column = 365 days of the year
@@ -170,6 +184,16 @@ const applyCustomCells = (
     });
 };
 
+const timeOfDayRanges: Record<string, string> = {
+    morning: '05:00–11:00',
+    afternoon: '13:00–17:00',
+    midday: '11:00–13:00',
+    evening: '17:00–21:00',
+    night: '21:00–05:00',
+};
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 const colorScale: ColorScale = [
     [0, '#02030310'],
     [1, '#16A29980'],
@@ -191,6 +215,7 @@ const TimeHeatmap = ({
     setCustomCells,
     nothingIsSelected,
     noFiltersSelected,
+    resultImages,
 }: {
     timeOfDays: TimeOfDay[];
     dayOfWeeks: DayOfWeek[];
@@ -204,6 +229,7 @@ const TimeHeatmap = ({
     >;
     nothingIsSelected: boolean;
     noFiltersSelected: boolean;
+    resultImages: ImageObject[];
 }) => {
     const [viewMode, setViewMode] = React.useState<
         'daily' | 'weekly' | 'monthly'
@@ -251,48 +277,71 @@ const TimeHeatmap = ({
     const heatmapData = useMemo(() => {
         if (!timeOfDayHeatmap) return null;
         if (viewMode === 'daily') {
+            const numCols = timeOfDayHeatmap[0].length;
+            const hovertext = timeOfDayOptions.map((tod) =>
+                Array.from({ length: numCols }, (_, col) => {
+                    const date = dayjs(`${currentYear}-01-01`).add(col, 'day');
+                    return `${date.format('ddd D MMM YYYY')}<br>${capitalize(tod)} (${timeOfDayRanges[tod]})`;
+                })
+            );
             return {
                 z: timeOfDayHeatmap,
-                x: Array.from(
-                    { length: timeOfDayHeatmap[0].length },
-                    (_, i) => i + 1
-                ), // days of the year
+                x: Array.from({ length: numCols }, (_, i) => i + 1),
                 y: timeOfDayOptions,
                 ticktext: timeOfDayOptions,
-                tickvals: timeOfDayOptions.map((_, i) => i), // Center ticks on the heatmap cells
+                tickvals: timeOfDayOptions.map((_, i) => i),
+                hovertext,
             };
         }
         if (viewMode === 'weekly') {
             const weeklyHeatmap = getWeeklyView(timeOfDayHeatmap, currentYear);
+            const numRows = weeklyHeatmap.length;
+            const numCols = weeklyHeatmap[0].length;
+            const hovertext = Array.from({ length: numRows }, (_, row) => {
+                const dayOfWeekIdx = Math.floor(row / timeOfDayOptions.length);
+                const todIdx = row % timeOfDayOptions.length;
+                const tod = timeOfDayOptions[todIdx];
+                const dayName = dayOfWeekOptions[dayOfWeekIdx];
+                return Array.from({ length: numCols }, (_, col) => {
+                    const date = dayjs(`${currentYear}-01-01`).add(col * 7 + dayOfWeekIdx, 'day');
+                    return `${dayName} ${date.format('D MMM YYYY')}<br>${capitalize(tod)} (${timeOfDayRanges[tod]})`;
+                });
+            });
             return {
                 z: weeklyHeatmap,
-                x: Array.from(
-                    { length: weeklyHeatmap[0].length },
-                    (_, i) => `Week ${i + 1}`
-                ), // weeks of the year
+                x: Array.from({ length: numCols }, (_, i) => `Week ${i + 1}`),
                 y: dayOfWeekOptions.flatMap((day) =>
                     timeOfDayOptions.map((time) => `${day} - ${time}`)
                 ),
-                // only do day names
-                ticktext: dayOfWeekOptions.flatMap((day) => day.slice(0, 3)), // Show only day names (e.g., "Mon", "Tue")
+                ticktext: dayOfWeekOptions.flatMap((day) => day.slice(0, 3)),
                 tickvals: dayOfWeekOptions.map(
                     (_, i) => i * timeOfDayOptions.length + 2
-                ), // Center ticks on the heatmap cells
+                ),
+                hovertext,
             };
         }
         if (viewMode === 'monthly') {
             const monthlyHeatmap = getMonthlyView(timeOfDayHeatmap, currentYear);
+            const numRows = monthlyHeatmap.length;
+            const hovertext = Array.from({ length: numRows }, (_, row) => {
+                const monthIdx = Math.floor(row / timeOfDayOptions.length);
+                const todIdx = row % timeOfDayOptions.length;
+                const tod = timeOfDayOptions[todIdx];
+                const monthName = dayjs().month(monthIdx).format('MMMM');
+                return Array.from({ length: 12 }, () =>
+                    `${monthName} ${currentYear}<br>${capitalize(tod)} (${timeOfDayRanges[tod]})`
+                );
+            });
             return {
                 z: monthlyHeatmap,
-                x: Array.from({ length: monthlyHeatmap[0].length }, (_, i) =>
-                    dayjs().month(i).format('MMMM')
-                ), // months of the year
+                x: Array.from({ length: 12 }, (_, i) => dayjs().month(i).format('MMMM')),
                 y: timeOfDayOptions,
                 ticktext: timeOfDayOptions,
-                tickvals: timeOfDayOptions.map((_, i) => i), // Center ticks on the heatmap cells
+                tickvals: timeOfDayOptions.map((_, i) => i),
+                hovertext,
             };
         }
-    }, [timeOfDayHeatmap, viewMode]);
+    }, [timeOfDayHeatmap, viewMode, currentYear]);
 
     const handlePointClick = (point: any, value: number) => {
         const row = point[0];
@@ -356,25 +405,84 @@ const TimeHeatmap = ({
         window.addEventListener('keyup', handleKeyUp);
     }, []);
 
+    const resultDensityData = useMemo(() => {
+        if (!resultImages.length || !heatmapData) return null;
+        const daysInYear = dayjs(`${currentYear}-12-31`).diff(dayjs(`${currentYear}-01-01`), 'day') + 1;
+        let numRows: number;
+        let numCols: number;
+        if (viewMode === 'daily') {
+            numRows = timeOfDayOptions.length;
+            numCols = daysInYear;
+        } else if (viewMode === 'weekly') {
+            numRows = 7 * timeOfDayOptions.length;
+            numCols = dayjs(`${currentYear}-12-31`).week() - dayjs(`${currentYear}-01-01`).week() + 1;
+        } else {
+            numRows = 12 * timeOfDayOptions.length;
+            numCols = 12;
+        }
+        const grid: number[][] = Array.from({ length: numRows }, () => new Array(numCols).fill(0));
+        for (const img of resultImages) {
+            const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
+            if (ts.year() !== currentYear) continue;
+            const hour = ts.hour();
+            const todRow = hourToTimeOfDayIndex(hour);
+            if (viewMode === 'daily') {
+                const col = ts.dayOfYear() - 1;
+                if (col >= 0 && col < numCols) grid[todRow][col]++;
+            } else if (viewMode === 'weekly') {
+                const dayOfWeekIdx = (ts.day() + 6) % 7;
+                let weekIdx = ts.week() + (ts.day() === 0 ? -2 : -1);
+                weekIdx += currentYear - ts.weekYear();
+                const row = dayOfWeekIdx * timeOfDayOptions.length + todRow;
+                if (weekIdx >= 0 && weekIdx < numCols && row >= 0 && row < numRows) grid[row][weekIdx]++;
+            } else {
+                const monthIdx = ts.month();
+                const row = monthIdx * timeOfDayOptions.length + todRow;
+                if (row >= 0 && row < numRows) grid[row][monthIdx]++;
+            }
+        }
+        const maxVal = Math.max(...grid.flatMap(r => r));
+        if (maxVal === 0) return null;
+        return { z: grid.map(r => r.map(v => v === 0 ? 0 : v / maxVal)), x: heatmapData.x, y: heatmapData.y };
+    }, [resultImages, currentYear, viewMode, heatmapData]);
+
     const plotData = useMemo(() => {
         if (!heatmapData) return null;
-        return [
+        const traces: any[] = [
             {
                 x: heatmapData.x,
                 y: heatmapData.y,
                 z: heatmapData.z,
                 type: 'heatmap',
-                colorscale: nothingIsSelected
-                    ? nothingIsSelectedScale
-                    : colorScale,
-                hoverinfo: 'x+y',
+                colorscale: nothingIsSelected ? nothingIsSelectedScale : colorScale,
+                text: heatmapData.hovertext,
+                hovertemplate: '%{text}<extra></extra>',
                 hoverongaps: false,
                 showscale: false,
                 zmin: 0,
                 zmax: 1,
             },
         ];
-    }, [heatmapData, nothingIsSelected]);
+        if (resultDensityData) {
+            traces.push({
+                x: resultDensityData.x,
+                y: resultDensityData.y,
+                z: resultDensityData.z,
+                type: 'heatmap',
+                colorscale: [
+                    [0, 'rgba(0,0,0,0)'],
+                    [0.001, 'rgba(147,51,234,0.15)'],
+                    [0.4, 'rgba(126,34,206,0.55)'],
+                    [1, 'rgba(88,28,135,0.9)'],
+                ] as ColorScale,
+                hoverinfo: 'none',
+                showscale: false,
+                zmin: 0,
+                zmax: 1,
+            });
+        }
+        return traces;
+    }, [heatmapData, nothingIsSelected, resultDensityData]);
 
     const layoutData = useMemo(
         () => ({

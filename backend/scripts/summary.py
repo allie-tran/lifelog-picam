@@ -444,7 +444,7 @@ def summarize_day_by_text(session, day_summay: DaySummary):
             })
         raw_activities.sort(key=lambda x: x["start_time"])
         day_summary = llm.generate_from_text(
-            "What are 3 key activities I did during the day? Use note-style, avoid full sentences, less than 50 words in total, and focus on key activities.\n"
+            "What is the highlight of the day based on the following activities?\n"
             "Ignore unclear activities.\n"
             + "\n".join(
                 [

@@ -25,17 +25,17 @@ auth_app = FastAPI()
 
 def _require_owner(access_level: AccessLevel):
     if access_level not in (AccessLevel.OWNER, AccessLevel.ADMIN):
-        raise HTTPException(status_code=403, detail="Not authorized.")
+        raise HTTPException(status_code=403, detail=f"Not authorized. Owner or Admin access required, but got {access_level}.")
 
 
 def _require_any_access(access_level: AccessLevel):
     if access_level == AccessLevel.NONE:
-        raise HTTPException(status_code=403, detail="Not authorized.")
+        raise HTTPException(status_code=403, detail=f"Not authorized. Access required, but got {access_level}.")
 
 
 def _require_admin(access_level: AccessLevel):
     if access_level != AccessLevel.ADMIN:
-        raise HTTPException(status_code=403, detail="Not authorized.")
+        raise HTTPException(status_code=403, detail="fNot authorized. Admin access required.")
 
 @auth_app.get("/health")
 def health_check():

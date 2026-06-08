@@ -22,7 +22,6 @@ import { AccessLevel } from 'types/auth';
 import '../App.css';
 import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
-import DeviceSelect from './DeviceSelect';
 
 function MainPage() {
     const [searchParams, _] = useSearchParams();
@@ -140,7 +139,6 @@ function MainPage() {
                         alignItems="center"
                         mb={2}
                     >
-                        <DeviceSelect />
                         <CustomDatePicker
                             date={date}
                             setPage={setPage}
