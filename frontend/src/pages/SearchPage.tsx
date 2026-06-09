@@ -300,7 +300,7 @@ const SearchPage = () => {
                             padding: 2,
                             ml: 6,
                             backgroundColor: '#f4f6e8',
-                            zIndex: 2200,
+                            zIndex: 1300,
                         },
                     },
                 }}

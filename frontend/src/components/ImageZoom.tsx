@@ -103,7 +103,6 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
         <ModalWithCloseButton
             open={true}
             onClose={() => dispatch(clearZoomedImage())}
-            sx={{ zIndex: 2300 }} // Ensure it appears above other content
         >
             <Stack direction="row" spacing={2} alignItems="center" marginBottom={2}>
                 <Button variant="outlined" onClick={handleSimilarImages}>

@@ -16,7 +16,14 @@ const ModalWithCloseButton = ({
     sx?: React.CSSProperties;
 }) => {
     return (
-        <Modal open={open} onClose={onClose} sx={{ ...sx }}>
+        <Modal
+            open={open}
+            onClose={onClose}
+            sx={{
+                zIndex: 2300, // Ensure it appears above other content
+                ...sx,
+            }}
+        >
             <Stack
                 sx={{
                     position: 'absolute',
