@@ -39,12 +39,13 @@ const RootNavigator = () => {
         const token = await AsyncStorage.getItem('token');
         if (token) {
           axiosInstance.defaults.headers.common.Authorization = `Bearer ${token}`;
-          const res = await axiosInstance.post('/auth/verify', { token });
+          const res = await axiosInstance.get('/auth/verify', { params: { token } });
           if (res.data.success) {
+            const deviceIds = (res.data.devices ?? []).map((d: any) => d?.deviceId ?? d);
             dispatch(login({
               username: res.data.username,
               token,
-              devices: res.data.devices ?? [],
+              devices: deviceIds,
             }));
           }
         }

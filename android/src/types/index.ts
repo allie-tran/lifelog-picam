@@ -43,6 +43,12 @@ export interface CountItem {
   count: number;
 }
 
+export interface BrowseSegment {
+  images: ImageObject[];
+  location?: { name?: string; address?: string; country?: string };
+  gps?: { latitude: number; longitude: number }[];
+}
+
 export interface SearchResult {
   segments: ImageObject[][];
   topLocations: LocationSummaryItem[];
@@ -72,6 +78,7 @@ export interface DaySummary {
   customSummaries: Record<string, string>;
   categoryMinutes: Record<string, number>;
   totalImages: number;
+  totalMinutes: number;
 }
 
 export interface Notification {

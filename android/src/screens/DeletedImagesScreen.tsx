@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { forceDeleteImage, getDeletedImages, restoreImage } from '../api/browsing';
 import { useAppSelector } from '../store';
-import { COLORS } from '../constants';
+import { COLORS, config } from '../constants';
 import { ImageObject } from '../types';
 import dayjs from 'dayjs';
 
@@ -128,7 +128,7 @@ const DeletedImagesScreen = () => {
                 <Image source={{ uri: item.thumbnail ?? item.imagePath }} style={styles.thumb} />
                 <View style={styles.rowInfo}>
                   <Text style={styles.rowPath} numberOfLines={1}>{item.imagePath.split('/').pop()}</Text>
-                  <Text style={styles.rowDate}>{dayjs(item.timestamp).format('D MMM YYYY, HH:mm')}</Text>
+                  <Text style={styles.rowDate}>{dayjs(item.timestamp || config.defaultTimezone).format('D MMM YYYY, HH:mm z')}</Text>
                 </View>
                 {isBusy ? (
                   <ActivityIndicator size="small" color={COLORS.primary} style={styles.rowSpinner} />

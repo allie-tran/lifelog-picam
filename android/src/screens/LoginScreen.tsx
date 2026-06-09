@@ -39,8 +39,8 @@ const LoginScreen = ({ navigation }: Props) => {
       const { token, devices } = res.data;
       await AsyncStorage.setItem('token', token);
       axiosInstance.defaults.headers.common.Authorization = `Bearer ${token}`;
-      dispatch(login({ username, token, devices: devices ?? [] }));
-      navigation.replace('Main');
+      const deviceIds = (devices ?? []).map((d: any) => d?.deviceId ?? d);
+      dispatch(login({ username, token, devices: deviceIds }));
     } catch (e: any) {
       Alert.alert('Login failed', e?.response?.data?.detail ?? 'Check your credentials');
     } finally {

@@ -14,7 +14,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAppDispatch, useAppSelector } from '../store';
 import { logout, setDeviceId } from '../store/slices/authSlice';
 import { clearHistory } from '../store/slices/searchSlice';
-import { config, COLORS, setBackendUrl } from '../constants';
+import { config, COLORS, setBackendUrl, setImageUrl } from '../constants';
 import type { RootStackParamList } from '../types';
 
 const SettingsScreen = () => {
@@ -23,12 +23,20 @@ const SettingsScreen = () => {
   const { deviceId, devices, username } = useAppSelector(s => s.auth);
   const historyCount = useAppSelector(s => s.search.history.length);
   const [urlInput, setUrlInput] = useState(config.backendUrl);
+  const [imageUrlInput, setImageUrlInput] = useState(config.imageUrl);
 
   const handleSaveUrl = async () => {
     const trimmed = urlInput.trim();
     if (!trimmed) { return; }
     await setBackendUrl(trimmed);
     Alert.alert('Server URL updated', `Now connecting to:\n${trimmed}`);
+  };
+
+  const handleSaveImageUrl = async () => {
+    const trimmed = imageUrlInput.trim();
+    if (!trimmed) { return; }
+    await setImageUrl(trimmed);
+    Alert.alert('Image URL updated', `Images loading from:\n${trimmed}`);
   };
 
   const handleLogout = async () => {
@@ -58,12 +66,11 @@ const SettingsScreen = () => {
       {/* Server */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Server</Text>
-        <Text style={styles.hint}>Backend URL (e.g. http://192.168.1.10:8082)</Text>
+        <Text style={styles.hint}>Backend URL</Text>
         <TextInput
           style={styles.urlInput}
           value={urlInput}
           onChangeText={setUrlInput}
-          placeholder="http://10.0.2.2:8082"
           placeholderTextColor={COLORS.textSecondary}
           autoCapitalize="none"
           autoCorrect={false}
@@ -76,7 +83,27 @@ const SettingsScreen = () => {
           onPress={handleSaveUrl}
           disabled={!urlInput.trim()}
         >
-          <Text style={styles.saveUrlBtnText}>Save URL</Text>
+          <Text style={styles.saveUrlBtnText}>Save</Text>
+        </TouchableOpacity>
+
+        <Text style={[styles.hint, { marginTop: 14 }]}>Image URL</Text>
+        <TextInput
+          style={styles.urlInput}
+          value={imageUrlInput}
+          onChangeText={setImageUrlInput}
+          placeholderTextColor={COLORS.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          returnKeyType="done"
+          onSubmitEditing={handleSaveImageUrl}
+        />
+        <TouchableOpacity
+          style={[styles.saveUrlBtn, !imageUrlInput.trim() && styles.saveUrlBtnDisabled]}
+          onPress={handleSaveImageUrl}
+          disabled={!imageUrlInput.trim()}
+        >
+          <Text style={styles.saveUrlBtnText}>Save</Text>
         </TouchableOpacity>
       </View>
 

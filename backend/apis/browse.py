@@ -16,7 +16,7 @@ from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from constants import DIR
 from database import get_session
-from database.models import HeartRateData as HeartRateTable, Image, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
+from database.models import HeartRateData as HeartRateTable, Image, ImagePerson, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
 from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
 from scripts.segmentation import load_all_segments
@@ -355,9 +355,17 @@ class ObjectData(CamelCaseModel):
     confidence: float
     bbox: list[float]  # [x_min, y_min, x_max, y_max]
 
+class PersonData(CamelCaseModel):
+    label: str
+    confidence: float
+    bbox: list[float]
+    cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
+
 class LocationData(CamelCaseModel):
-    address: str
     name: Optional[str]
+    address: Optional[str]
+    country: Optional[str]
 
 class ImageInfoResponse(CamelCaseModel):
     image_path: str
@@ -365,7 +373,7 @@ class ImageInfoResponse(CamelCaseModel):
     timezone: str
     gps: Optional[GPSData]
     objects: List[ObjectData]
-    people: List[ObjectData]
+    people: List[PersonData]
     location: Optional[LocationData]
 
 @app.get("/get-image")
@@ -395,7 +403,7 @@ def get_image(
             .options(
                 selectinload(Image.gps),
                 selectinload(Image.objects),
-                selectinload(Image.people),
+                selectinload(Image.people).selectinload(ImagePerson.cluster),
                 selectinload(Image.clip_embedding),
                 selectinload(Image.location),
                 selectinload(Image.annotations),
@@ -422,15 +430,18 @@ def get_image(
             for obj in image_metadata.objects
         ] if image_metadata and image_metadata.objects else [],
         people=[
-            ObjectData(
-                label=person.label,
+            PersonData(
+                label=person.cluster.cluster_label if person.cluster else (person.label or 'person'),
                 confidence=person.confidence,
-                bbox=person.rel_bbox
+                bbox=person.rel_bbox or [],
+                cluster_id=str(person.cluster_id) if person.cluster_id else None,
+                cluster_name=person.cluster.cluster_label if person.cluster else None,
             )
             for person in image_metadata.people
         ] if image_metadata and image_metadata.people else [],
         location=LocationData(
-            address=image_metadata.location.address,
             name=image_metadata.location.name,
+            address=image_metadata.location.address,
+            country=image_metadata.location.country,
         ) if image_metadata and image_metadata.location else None,
     )

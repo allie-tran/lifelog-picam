@@ -75,6 +75,21 @@ export const deleteImages = (deviceId: string, imagePaths: string[]) =>
     data: { imagePaths },
   });
 
+export interface ImageMetadata {
+  imagePath: string;
+  timestamp: string;
+  timezone: string;
+  gps?: { latitude: number; longitude: number } | null;
+  location?: { name?: string; address?: string; country?: string } | null;
+  objects: { label: string; confidence: number; bbox: number[] }[];
+  people: { label: string; confidence: number; bbox: number[]; clusterId?: string | null; clusterName?: string | null }[];
+}
+
+export const getImageMetadata = (deviceId: string, imagePath: string) =>
+  axiosInstance.get<ImageMetadata>(
+    `/browse/get-image?device=${encodeURIComponent(deviceId)}&filename=${encodeURIComponent(imagePath)}`,
+  );
+
 export interface GpsPoint {
   latitude: number;
   longitude: number;

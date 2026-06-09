@@ -1,10 +1,12 @@
 import {
     AccessTimeRounded,
+    CategoryRounded,
     DeleteRounded,
     DownloadRounded,
     EditRounded,
     ImageRounded,
     LocationOnRounded,
+    PeopleRounded,
 } from '@mui/icons-material';
 import {
     Box,
@@ -13,13 +15,22 @@ import {
     CardContent,
     Chip,
     CircularProgress,
-    Divider,
     Grid,
     Stack,
-    Typography,
+    Typography
 } from '@mui/material';
-import { ImageWithMetadata, ObjectDetection } from '@utils/types';
+import { ImageWithMetadata, ObjectDetection, PersonDetection } from '@utils/types';
+import { getAllFaces } from '../apis/searchFilters';
+import dayjs from 'dayjs';
+import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
+import L from 'leaflet';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import 'leaflet/dist/leaflet.css';
 import { useEffect, useRef, useState } from 'react';
+import { MapContainer, Marker, TileLayer } from 'react-leaflet';
 import { useNavigate } from 'react-router';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
@@ -28,6 +39,19 @@ import { deleteImage, getImage } from '../apis/browsing';
 import { IMAGE_HOST_URL } from '../constants/urls';
 import Annotator from './Annotator';
 import ModalWithCloseButton from './ModalWithCloseButton';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+// Fix leaflet default marker icons (webpack/vite strips them otherwise)
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconUrl: markerIcon,
+    iconRetinaUrl: markerIcon2x,
+    shadowUrl: markerShadow,
+});
+
+const BORING_NAMES = new Set(['---', 'Unknown Place', 'Unknown', '']);
 
 const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
     const dispatch = useAppDispatch();
@@ -75,28 +99,18 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
         return null;
     }
 
-    console.log(imageData);
-
     return (
         <ModalWithCloseButton
             open={true}
             onClose={() => dispatch(clearZoomedImage())}
+            sx={{ zIndex: 2300 }} // Ensure it appears above other content
         >
-            <Stack
-                direction="row"
-                spacing={2}
-                alignItems="center"
-                marginBottom={2}
-            >
+            <Stack direction="row" spacing={2} alignItems="center" marginBottom={2}>
                 <Button variant="outlined" onClick={handleSimilarImages}>
                     <ImageRounded sx={{ marginRight: 1 }} />
                     Similar Images
                 </Button>
-                <Button
-                    onClick={handleDownload}
-                    variant="outlined"
-                    color="primary"
-                >
+                <Button onClick={handleDownload} variant="outlined" color="primary">
                     <DownloadRounded sx={{ marginRight: 1 }} />
                     Download
                 </Button>
@@ -114,14 +128,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                 </Button>
             </Stack>
             {showAnnotator ? (
-                <Box
-                    sx={{
-                        width: '100%',
-                        height: '80dvh',
-                        position: 'relative',
-                        zIndex: 1,
-                    }}
-                >
+                <Box sx={{ width: '100%', height: '80dvh', position: 'relative', zIndex: 1 }}>
                     <Annotator
                         image={{
                             imagePath: imagePath,
@@ -152,18 +159,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
             ) : isLoading ? (
                 <CircularProgress size="3rem" />
             ) : (
-                <Stack direction="column" alignItems="center" spacing={2}>
-                    <img
-                        src={imageData?.imagePath}
-                        alt="Zoomed"
-                        style={{
-                            maxWidth: '100%',
-                            maxHeight: 'calc(90dvh - 112px)',
-                            borderRadius: '8px',
-                        }}
-                    />
-                    <ImageVisualizer data={imageData as any} />
-                </Stack>
+                <ImageVisualizer data={imageData as any} />
             )}
         </ModalWithCloseButton>
     );
@@ -178,8 +174,15 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
     const imageRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [hoveredBox, setHoveredBox] = useState<ObjectDetection | null>(null);
+    const [showBBoxes, setShowBBoxes] = useState(true);
+    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
 
-    // Combine objects and people for rendering, adding a type flag for coloring
+    const { data: allFaces } = useSWR(
+        data.people.length > 0 ? [deviceId, 'faces'] : null,
+        () => getAllFaces(deviceId),
+        { revalidateOnFocus: false }
+    );
+
     const allDetections = [
         ...data.objects.map((obj) => ({ ...obj, type: 'object' })),
         ...data.people.map((p) => ({ ...p, type: 'person' })),
@@ -189,258 +192,263 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
         const canvas = canvasRef.current;
         const img = imageRef.current;
         if (!canvas || !img) return;
-
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Match canvas dimensions to the displayed image dimensions
         canvas.width = img.clientWidth;
         canvas.height = img.clientHeight;
-
-        // Clear previous drawings
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!showBBoxes) return;
 
-        // Get natural image dimensions to calculate scale factors
         const scaleX = img.clientWidth / img.naturalWidth;
         const scaleY = img.clientHeight / img.naturalHeight;
 
         allDetections.forEach((det) => {
-            let [xMin, yMin, xMax, yMax] = det.bbox; // relative
-            const imgWidth = img.naturalWidth;
-            const imgHeight = img.naturalHeight;
-
-            // Scale coordinates to fit current UI size
-            const x = xMin * scaleX * imgWidth;
-            const y = yMin * scaleY * imgHeight;
-            const width = (xMax - xMin) * scaleX * imgWidth;
-            const height = (yMax - yMin) * scaleY * imgHeight;
+            const [xMin, yMin, xMax, yMax] = det.bbox;
+            const x = xMin * scaleX * img.naturalWidth;
+            const y = yMin * scaleY * img.naturalHeight;
+            const width = (xMax - xMin) * scaleX * img.naturalWidth;
+            const height = (yMax - yMin) * scaleY * img.naturalHeight;
 
             const isHovered =
                 hoveredBox?.label === det.label &&
                 hoveredBox?.bbox.toString() === det.bbox.toString();
-            const color = det.type === 'person' ? '#ff1744' : '#00e676'; // Red for people, Green for objects
+            const color = det.type === 'person' ? '#ff1744' : '#00e676';
 
-            // Draw Box
             ctx.strokeStyle = color;
             ctx.lineWidth = isHovered ? 4 : 2;
             ctx.strokeRect(x, y, width, height);
 
-            // Draw Label Background
             ctx.fillStyle = color;
             ctx.font = '12px Roboto, sans-serif';
             const label = `${det.label} (${Math.round(det.confidence * 100)}%)`;
             const textWidth = ctx.measureText(label).width;
-
             ctx.fillRect(x, y - 20 >= 0 ? y - 20 : y, textWidth + 10, 20);
-
-            // Draw Label Text
             ctx.fillStyle = '#ffffff';
             ctx.fillText(label, x + 5, y - 20 >= 0 ? y - 6 : y + 14);
         });
     };
 
-    // Redraw whenever data changes, or window resizes
     useEffect(() => {
         const img = imageRef.current;
         if (img) {
-            if (img.complete) {
-                drawBoundingBoxes();
-            } else {
-                img.onload = drawBoundingBoxes;
-            }
+            if (img.complete) drawBoundingBoxes();
+            else img.onload = drawBoundingBoxes;
         }
-
         window.addEventListener('resize', drawBoundingBoxes);
         return () => window.removeEventListener('resize', drawBoundingBoxes);
-    }, [data, hoveredBox]);
+    }, [data, hoveredBox, showBBoxes]);
+
+    const tz = data.timezone || 'UTC';
+    const formattedTime = dayjs.utc(data.timestamp).tz(tz).format('ddd D MMM YYYY, HH:mm z');
+
+    const loc = data.location;
+    const locName = loc?.name && !BORING_NAMES.has(loc.name) ? loc.name : null;
+    const locParts = [locName, loc?.address].filter(Boolean).join(', ');
+    const locLine = [locParts, loc?.country].filter(Boolean).join(' · ');
+
+    const hasGps = data.gps && typeof data.gps.latitude === 'number' && typeof data.gps.longitude === 'number';
 
     return (
-        <Grid
-            container
-            spacing={3}
-            sx={{ p: 3, maxWidth: 1200, margin: '0 auto' }}
-        >
-            {/* Left Column: Image Canvas Overlay */}
+        <Grid container spacing={3} sx={{ p: 3, maxWidth: 1200, margin: '0 auto' }}>
+            {/* Left: image with bbox overlay */}
             <Grid size={{ xs: 12, md: 7 }}>
                 <Box
                     ref={containerRef}
                     sx={{
-                        position: 'relative',
-                        width: '100%',
-                        borderRadius: 2,
+                        position: 'relative', width: '100%', borderRadius: 1,
                         overflow: 'hidden',
-                        boxShadow: 3,
-                        backgroundColor: '#000',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
+                        backgroundColor: '#000', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
                     }}
                 >
                     <img
                         ref={imageRef}
                         src={data.imagePath}
                         alt="Source"
-                        style={{
-                            width: '100%',
-                            height: 'auto',
-                            display: 'block',
-                        }}
+                        style={{ width: '100%', maxHeight: 'calc(80dvh - 120px)', height: 'auto', display: 'block', objectFit: 'contain' }}
                     />
                     <canvas
                         ref={canvasRef}
-                        style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            pointerEvents: 'none', // Allows mouse interactions to pass through if needed
-                        }}
+                        style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
                     />
+                    {allDetections.length > 0 && (
+                        <Button
+                            size="small"
+                            variant="contained"
+                            onClick={(e) => { e.stopPropagation(); setShowBBoxes(v => !v); }}
+                            sx={{
+                                position: 'absolute', top: 8, right: 8, zIndex: 10,
+                                minWidth: 0, fontSize: '0.7rem', py: 0.5, px: 1.5,
+                                backgroundColor: showBBoxes ? 'rgba(0,0,0,0.65)' : 'rgba(80,80,80,0.5)',
+                                '&:hover': { backgroundColor: 'rgba(0,0,0,0.85)' },
+                            }}
+                        >
+                            {showBBoxes ? '🔲 Boxes' : '⬜ Boxes'}
+                        </Button>
+                    )}
                 </Box>
             </Grid>
 
-            {/* Right Column: Metadata Panels */}
+            {/* Right: metadata */}
             <Grid size={{ xs: 12, md: 5 }}>
                 <Stack spacing={2}>
-                    {/* Info Card */}
+                    {/* Time + Location card */}
                     <Card variant="outlined">
                         <CardContent>
-                            <Typography
-                                variant="h6"
-                                gutterBottom
-                                fontWeight="bold"
-                            >
-                                Image Metadata
+                            <Typography variant="h6" gutterBottom fontWeight="bold">
+                                When &amp; Where
                             </Typography>
                             <Stack spacing={1.5}>
-                                <Box
-                                    sx={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 1,
-                                    }}
-                                >
-                                    <AccessTimeRounded color="action" />
-                                    <Typography variant="body2">
-                                        {new Date(
-                                            data.timestamp
-                                        ).toLocaleString()}{' '}
-                                        ({data.timezone})
-                                    </Typography>
-                                </Box>
-                                {data.location && (
-                                    <Box
-                                        sx={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 1,
-                                        }}
-                                    >
-                                        <LocationOnRounded color="action" />
-                                        <Typography variant="body2">
-                                            {data.location.name}{' '}
-                                            <Typography
-                                                variant="caption"
-                                                color="text.secondary"
-                                            >
-                                                ({data.gps.latitude},{' '}
-                                                {data.gps.longitude})
-                                            </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                    <AccessTimeRounded color="action" sx={{ mt: 0.3 }} />
+                                    <Box>
+                                        <Typography variant="body2" fontWeight={500}>
+                                            {formattedTime}
                                         </Typography>
+                                    </Box>
+                                </Box>
+
+                                {(locLine || hasGps) && (
+                                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                        <LocationOnRounded color="action" sx={{ mt: 0.3 }} />
+                                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                                            {locLine && (
+                                                <Typography variant="body2" fontWeight={500} sx={{ mb: 0.5 }}>
+                                                    {locLine}
+                                                </Typography>
+                                            )}
+                                            {hasGps && (
+                                                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                                                    {data.gps!.latitude.toFixed(5)}, {data.gps!.longitude.toFixed(5)}
+                                                </Typography>
+                                            )}
+                                        </Box>
+                                    </Box>
+                                )}
+
+                                {hasGps && (
+                                    <Box sx={{ height: 180, borderRadius: 1, overflow: 'hidden', mt: 0.5 }}>
+                                        <MapContainer
+                                            center={[data.gps!.latitude, data.gps!.longitude]}
+                                            zoom={15}
+                                            style={{ height: '100%', width: '100%' }}
+                                            zoomControl={true}
+                                            scrollWheelZoom={false}
+                                            attributionControl={false}
+                                        >
+                                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                                            <Marker position={[data.gps!.latitude, data.gps!.longitude]} />
+                                        </MapContainer>
                                     </Box>
                                 )}
                             </Stack>
                         </CardContent>
                     </Card>
 
-                    {/* Detections List Card */}
-                    <Card variant="outlined">
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Detected Elements
-                            </Typography>
-
-                            {/* People Section */}
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                sx={{ mt: 1, mb: 1 }}
-                            >
-                                People ({data.people.length})
-                            </Typography>
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: 1,
-                                    mb: 2,
-                                }}
-                            >
-                                {data.people.map((person, index) => (
-                                    <Chip
-                                        key={`person-${index}`}
-                                        label={`${person.label} ${Math.round(person.confidence * 100)}%`}
-                                        color="error"
-                                        variant="outlined"
-                                        onMouseEnter={() =>
-                                            setHoveredBox(person)
-                                        }
-                                        onMouseLeave={() => setHoveredBox(null)}
-                                        sx={{
-                                            cursor: 'pointer',
-                                            '&:hover': {
-                                                backgroundColor: '#ffebee',
-                                            },
-                                        }}
-                                    />
-                                ))}
-                                {data.people.length === 0 && (
-                                    <Typography variant="caption">
-                                        No people detected
+                    {/* People */}
+                    {data.people.length > 0 && (
+                        <Card variant="outlined">
+                            <CardContent>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                                    <PeopleRounded color="error" fontSize="small" />
+                                    <Typography variant="h6" fontWeight="bold">
+                                        People ({data.people.length})
                                     </Typography>
-                                )}
-                            </Box>
+                                </Box>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                                    {data.people.map((person, i) => {
+                                        const face = allFaces?.find(f => f.id === person.clusterId);
+                                        const avatar = face?.images[0];
+                                        const name = person.clusterName || person.label;
+                                        return (
+                                            <Box
+                                                key={`person-${i}`}
+                                                onMouseEnter={() => setHoveredBox(person)}
+                                                onMouseLeave={() => setHoveredBox(null)}
+                                                sx={{
+                                                    display: 'flex', flexDirection: 'column',
+                                                    alignItems: 'center', gap: 0.5,
+                                                    cursor: 'pointer',
+                                                    p: 1, borderRadius: 1,
+                                                    border: '1px solid',
+                                                    borderColor: hoveredBox === person ? 'error.main' : 'divider',
+                                                    backgroundColor: hoveredBox === person ? '#ffebee' : 'transparent',
+                                                    transition: 'all 0.15s',
+                                                    minWidth: 64,
+                                                }}
+                                            >
+                                                {avatar ? (
+                                                    <img
+                                                        src={avatar}
+                                                        alt={name}
+                                                        style={{
+                                                            width: 48, height: 48,
+                                                            borderRadius: '50%',
+                                                            objectFit: 'cover',
+                                                            border: '2px solid #ef5350',
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <Box sx={{
+                                                        width: 48, height: 48, borderRadius: '50%',
+                                                        backgroundColor: '#ffcdd2',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        border: '2px solid #ef5350',
+                                                    }}>
+                                                        <PeopleRounded sx={{ color: '#ef5350', fontSize: 24 }} />
+                                                    </Box>
+                                                )}
+                                                <Typography variant="caption" fontWeight={600} textAlign="center" noWrap sx={{ maxWidth: 72 }}>
+                                                    {name}
+                                                </Typography>
+                                                <Typography variant="caption" color="text.secondary">
+                                                    {Math.round(person.confidence * 100)}%
+                                                </Typography>
+                                            </Box>
+                                        );
+                                    })}
+                                </Box>
+                            </CardContent>
+                        </Card>
+                    )}
 
-                            <Divider sx={{ my: 1.5 }} />
-
-                            {/* Objects Section */}
-                            <Typography
-                                variant="subtitle2"
-                                color="text.secondary"
-                                sx={{ mb: 1 }}
-                            >
-                                Objects ({data.objects.length})
-                            </Typography>
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: 1,
-                                }}
-                            >
-                                {data.objects.map((obj, index) => (
-                                    <Chip
-                                        key={`obj-${index}`}
-                                        label={`${obj.label} ${Math.round(obj.confidence * 100)}%`}
-                                        color="success"
-                                        variant="outlined"
-                                        onMouseEnter={() => setHoveredBox(obj)}
-                                        onMouseLeave={() => setHoveredBox(null)}
-                                        sx={{
-                                            cursor: 'pointer',
-                                            '&:hover': {
-                                                backgroundColor: '#e8f5e9',
-                                            },
-                                        }}
-                                    />
-                                ))}
-                                {data.objects.length === 0 && (
-                                    <Typography variant="caption">
-                                        No objects detected
+                    {/* Objects */}
+                    {data.objects.length > 0 && (
+                        <Card variant="outlined">
+                            <CardContent>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                                    <CategoryRounded color="success" fontSize="small" />
+                                    <Typography variant="h6" fontWeight="bold">
+                                        Objects ({data.objects.length})
                                     </Typography>
-                                )}
-                            </Box>
-                        </CardContent>
-                    </Card>
+                                </Box>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                    {data.objects.map((obj, i) => (
+                                        <Chip
+                                            key={`obj-${i}`}
+                                            label={`${obj.label} ${Math.round(obj.confidence * 100)}%`}
+                                            color="success"
+                                            variant="outlined"
+                                            onMouseEnter={() => setHoveredBox(obj)}
+                                            onMouseLeave={() => setHoveredBox(null)}
+                                            sx={{ cursor: 'pointer', '&:hover': { backgroundColor: '#e8f5e9' } }}
+                                        />
+                                    ))}
+                                </Box>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {data.people.length === 0 && data.objects.length === 0 && (
+                        <Card variant="outlined">
+                            <CardContent>
+                                <Typography variant="body2" color="text.secondary">
+                                    No people or objects detected
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    )}
                 </Stack>
             </Grid>
         </Grid>

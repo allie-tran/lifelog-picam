@@ -23,9 +23,9 @@ export type GPSData = {
 
 export type LocationData = {
     id?: string;
-    name: string;
-    address: string;
-    country: string;
+    name?: string;
+    address?: string;
+    country?: string;
     info?: string;
     timezone?: string;
 };
@@ -49,14 +49,19 @@ export type ObjectDetection = {
     bbox: [number, number, number, number]; // [x_min, y_min, x_max, y_max]
 };
 
+export type PersonDetection = ObjectDetection & {
+    clusterId?: string | null;
+    clusterName?: string | null;
+};
+
 export type ImageWithMetadata = {
     imagePath: string;
     timestamp: string;
     timezone: string;
-    gps: GPSData;
-    location: LocationData;
+    gps?: GPSData | null;
+    location?: LocationData | null;
     objects: ObjectDetection[];
-    people: ObjectDetection[];
+    people: PersonDetection[];
 };
 
 

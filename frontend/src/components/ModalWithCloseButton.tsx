@@ -1,5 +1,5 @@
 import CloseIcon from '@mui/icons-material/Close';
-import { Box, Button, Modal, Stack } from '@mui/material';
+import { Button, Modal, Stack } from '@mui/material';
 import React from 'react';
 
 const ModalWithCloseButton = ({

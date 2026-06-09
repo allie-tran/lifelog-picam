@@ -190,7 +190,7 @@ const AdminScreen = () => {
             {user.sensors && user.sensors.length > 0 ? (
               user.sensors.map(s => (
                 <TouchableOpacity
-                  key={s.deviceNickname}
+                  key={s.deviceNickname + s.deviceId + s.sensorType}
                   style={styles.deviceRow}
                   onPress={() => openSensorModal(user.username, s)}
                 >

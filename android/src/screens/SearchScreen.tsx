@@ -32,7 +32,7 @@ import {
   removeFromHistory,
   setSearchQuery,
 } from '../store/slices/searchSlice';
-import { COLORS } from '../constants';
+import { COLORS, config, formatTimeTz } from '../constants';
 import { CountItem, ImageObject, LocationSummaryItem, SearchQuery } from '../types';
 
 dayjs.extend(utc);
@@ -113,9 +113,8 @@ interface SegmentGroupProps {
 const SegmentGroup = ({ segment, deviceId, onEditActivity }: SegmentGroupProps) => {
   const first = segment[0];
   const last = segment[segment.length - 1];
-  const startTs = dayjs.utc(first.timestamp).tz(first.timezone ?? 'UTC');
-  const endTs = dayjs.utc(last.timestamp).tz(last.timezone ?? 'UTC');
-  const timeRange = `${startTs.format('HH:mm')} – ${endTs.format('HH:mm')}`;
+  const tz = first.timezone || config.defaultTimezone;
+  const timeRange = `${formatTimeTz(first.timestamp, tz)} – ${formatTimeTz(last.timestamp, tz)}`;
 
   return (
     <View style={segStyles.container}>
@@ -126,7 +125,7 @@ const SegmentGroup = ({ segment, deviceId, onEditActivity }: SegmentGroupProps) 
         activeOpacity={0.7}
       >
         <Text style={segStyles.time}>
-          {startTs.format('D MMM')} · {timeRange}
+          {formatTimeTz(first.timestamp, tz)} · {timeRange}
         </Text>
         {first.description ? (
           <Text style={segStyles.activity} numberOfLines={2}>{first.description}</Text>
@@ -136,8 +135,8 @@ const SegmentGroup = ({ segment, deviceId, onEditActivity }: SegmentGroupProps) 
         <Text style={segStyles.count}>{segment.length} photo{segment.length !== 1 ? 's' : ''}</Text>
       </TouchableOpacity>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={segStyles.imageRow}>
-        {segment.map(img => (
-          <ImageCard key={img.imagePath} image={img} deviceId={deviceId} size={100} />
+        {segment.map((img, i) => (
+          <ImageCard key={`${i}-${img.imagePath}`} image={img} deviceId={deviceId} size={100} />
         ))}
       </ScrollView>
     </View>
@@ -385,7 +384,7 @@ const SearchScreen = () => {
       ) : (
         <FlatList
           data={pagedSegments}
-          keyExtractor={(seg, i) => seg[0]?.imagePath ?? String(i)}
+          keyExtractor={(_, i) => String(i)}
           contentContainerStyle={styles.grid}
           ListHeaderComponent={
             results.length > 0 ? (
@@ -423,7 +422,7 @@ const SearchScreen = () => {
             <Text style={styles.modalTitle}>Edit Activity</Text>
             {editingSegment && (
               <Text style={styles.modalSub}>
-                {dayjs.utc(editingSegment[0].timestamp).format('D MMM · HH:mm')}
+                {formatTimeTz(editingSegment[0].timestamp, editingSegment[0].timezone || config.defaultTimezone)}
               </Text>
             )}
             <TextInput

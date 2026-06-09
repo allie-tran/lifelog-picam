@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -7,27 +7,23 @@ import {
   Modal,
   PermissionsAndroid,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import WebView from 'react-native-webview';
 import Video, { VideoRef } from 'react-native-video';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import RNShare from 'react-native-share';
 import RNFS from 'react-native-fs';
-import { config, COLORS } from '../constants';
+import { config, COLORS, formatTimeTz, formatDateTimeTz } from '../constants';
 import { ImageObject } from '../types';
 import { useAppDispatch, useAppSelector } from '../store';
 import { addSubmission } from '../store/slices/dresSlice';
 import { submitImageToDRES, SubmitVerdict } from '../api/dres';
-import { deleteImage, similarImages } from '../api/browsing';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
+import { deleteImage, similarImages, getImageMetadata, ImageMetadata } from '../api/browsing';
 
 interface Props {
   image: ImageObject;
@@ -44,8 +40,10 @@ const VERDICT_BG: Record<SubmitVerdict, string> = {
   INVALID: '#f8d7da', ERROR: '#e2e3e5',
 };
 
-const thumbUri = (img: ImageObject, deviceId: string) =>
-  img.thumbnail ? `${config.backendUrl}/thumbnails/${deviceId}/${img.thumbnail}` : null;
+const thumbUri = (img: ImageObject, deviceId: string, log: boolean = false) => {
+  const uri = img.thumbnail ? `${config.imageUrl}/${deviceId}/${img.thumbnail}` : null;
+  return uri;
+};
 
 const fullUri = (img: ImageObject, deviceId: string) =>
   `${config.backendUrl}/get-image?device=${encodeURIComponent(deviceId)}&filename=${encodeURIComponent(img.imagePath)}`;
@@ -83,10 +81,24 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
   const [loadingSimilar, setLoadingSimilar] = useState(false);
   const [showSimilar, setShowSimilar] = useState(false);
 
+  // Metadata (location, GPS, people, objects)
+  const [metadata, setMetadata] = useState<ImageMetadata | null>(null);
+  const [loadingMeta, setLoadingMeta] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [showBBoxes, setShowBBoxes] = useState(true);
+
+  useEffect(() => {
+    if (!zoomed || metadata || loadingMeta) { return; }
+    setLoadingMeta(true);
+    getImageMetadata(deviceId, currentImg.imagePath)
+      .then(res => setMetadata(res.data))
+      .catch(() => {})
+      .finally(() => setLoadingMeta(false));
+  }, [zoomed]);
+
   if (deleted) { return null; }
 
   const uri = thumbUri(image, deviceId);
-  const ts = dayjs.utc(currentImg.timestamp).tz(currentImg.timezone ?? 'UTC');
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   const handleClose = () => {
@@ -96,6 +108,9 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
     setSimilarImgs([]);
     setCurrentImg(image);
     setPaused(true);
+    setShowInfo(false);
+    setMetadata(null);
+    setShowBBoxes(true);
   };
 
   const handleSubmitToDRES = async () => {
@@ -210,7 +225,7 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
           <Image source={{ uri }} style={styles.image} resizeMode="cover" />
         ) : (
           <View style={[styles.image, styles.placeholder]}>
-            <Text style={styles.placeholderText}>{dayjs.utc(image.timestamp).format('HH:mm')}</Text>
+            <Text style={styles.placeholderText}>{formatTimeTz(image.timestamp, image.timezone || config.defaultTimezone)}</Text>
           </View>
         )}
         {/* Video play indicator */}
@@ -220,48 +235,29 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
           </View>
         )}
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>{dayjs.utc(image.timestamp).format('HH:mm')}</Text>
+          <Text style={styles.badgeText}>{formatTimeTz(image.timestamp, image.timezone || config.defaultTimezone)}</Text>
         </View>
       </TouchableOpacity>
 
       <Modal visible={zoomed} transparent animationType="fade" onRequestClose={handleClose}>
         <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={handleClose}>
 
-          {/* Video or image */}
-          {currentImg.isVideo ? (
-            <TouchableOpacity
-              activeOpacity={1}
-              onPress={() => setPaused(p => !p)}
-              style={showSimilar ? styles.zoomedImageSmall : styles.zoomedImage}
-            >
-              <Video
-                ref={videoRef}
-                source={{ uri: fullUri(currentImg, deviceId), headers: authHeaders }}
-                style={StyleSheet.absoluteFill}
-                resizeMode="contain"
-                paused={paused}
-                repeat
-                onError={() => Alert.alert('Error', 'Could not load video.')}
-              />
-              {paused && (
-                <View style={styles.videoPauseOverlay}>
-                  <Text style={styles.videoPauseIcon}>▶</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          ) : (
-            thumbUri(currentImg, deviceId) ? (
-              <Image
-                source={{ uri: thumbUri(currentImg, deviceId)! }}
-                style={showSimilar ? styles.zoomedImageSmall : styles.zoomedImage}
-                resizeMode="contain"
-              />
-            ) : null
-          )}
+          {/* Image / video with bbox overlay */}
+          <ZoomedImageWithBBoxes
+            img={currentImg}
+            deviceId={deviceId}
+            authHeaders={authHeaders}
+            paused={paused}
+            setPaused={setPaused}
+            videoRef={videoRef}
+            metadata={metadata}
+            showBBoxes={showBBoxes}
+            containerStyle={showSimilar ? styles.zoomedImageSmall : styles.zoomedImage}
+          />
 
           {/* Meta */}
           <View style={styles.zoomedMeta}>
-            <Text style={styles.zoomedTime}>{ts.format('HH:mm · D MMM YYYY')}</Text>
+            <Text style={styles.zoomedTime}>{formatDateTimeTz(currentImg.timestamp, currentImg.timezone || config.defaultTimezone)}</Text>
             {currentImg.description ? (
               <Text style={styles.zoomedDesc}>{currentImg.description}</Text>
             ) : null}
@@ -306,7 +302,7 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
             </TouchableOpacity>
           </TouchableOpacity>
 
-          {/* Action buttons - row 2: save & share */}
+          {/* Action buttons - row 2: save, share, info */}
           <TouchableOpacity
             activeOpacity={1}
             onPress={e => e.stopPropagation?.()}
@@ -329,7 +325,32 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
             >
               <Text style={styles.actionBtnText}>↗ Share</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.infoBtn, showInfo && styles.actionBtnActive]}
+              onPress={() => setShowInfo(v => !v)}
+            >
+              {loadingMeta
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={styles.actionBtnText}>ℹ️ Info</Text>}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.bboxBtn, !showBBoxes && styles.actionBtnDisabled]}
+              onPress={() => setShowBBoxes(v => !v)}
+            >
+              <Text style={styles.actionBtnText}>{showBBoxes ? '🔲' : '⬜'} Boxes</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
+
+          {/* Info / metadata panel */}
+          {showInfo && (
+            <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation?.()} style={styles.infoPanel}>
+              <ScrollView style={styles.infoPanelScroll} nestedScrollEnabled>
+                <InfoPanel metadata={metadata} />
+              </ScrollView>
+            </TouchableOpacity>
+          )}
 
           {/* Similar images panel */}
           {showSimilar && (
@@ -349,7 +370,6 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
                 contentContainerStyle={styles.similarList}
                 renderItem={({ item }) => {
                   const sUri = thumbUri(item, deviceId);
-                  const sTs = dayjs.utc(item.timestamp).tz(item.timezone ?? 'UTC');
                   const isActive = item.imagePath === currentImg.imagePath;
                   return (
                     <TouchableOpacity
@@ -364,7 +384,7 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
                           <Text style={styles.similarPlayIcon}>▶</Text>
                         </View>
                       )}
-                      <Text style={styles.similarTime}>{sTs.format('HH:mm')}</Text>
+                      <Text style={styles.similarTime}>{formatTimeTz(item.timestamp, item.timezone || config.defaultTimezone)}</Text>
                     </TouchableOpacity>
                   );
                 }}
@@ -381,6 +401,184 @@ const ImageCard = ({ image, deviceId, size = 110 }: Props) => {
     </>
   );
 };
+
+const BORING_LOC_NAMES = new Set(['---', 'Unknown Place', 'Unknown', '']);
+
+// ── Zoomed image with bounding-box overlay ────────────────────────────────────
+const calcBBoxRect = (
+  bbox: number[],
+  containerW: number, containerH: number,
+  natW: number, natH: number,
+) => {
+  const scale = Math.min(containerW / natW, containerH / natH);
+  const dispW = natW * scale;
+  const dispH = natH * scale;
+  const ox = (containerW - dispW) / 2;
+  const oy = (containerH - dispH) / 2;
+  const [x0, y0, x1, y1] = bbox;
+  return { left: ox + x0 * dispW, top: oy + y0 * dispH, width: (x1 - x0) * dispW, height: (y1 - y0) * dispH };
+};
+
+const ZoomedImageWithBBoxes = ({
+  img, deviceId, authHeaders, paused, setPaused, videoRef, metadata, showBBoxes, containerStyle,
+}: {
+  img: ImageObject;
+  deviceId: string;
+  authHeaders: Record<string, string>;
+  paused: boolean;
+  setPaused: (fn: (p: boolean) => boolean) => void;
+  videoRef: React.RefObject<VideoRef>;
+  metadata: ImageMetadata | null;
+  showBBoxes: boolean;
+  containerStyle: object;
+}) => {
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [natSize, setNatSize] = useState({ width: 1, height: 1 });
+  const uri = thumbUri(img, deviceId);
+
+  const boxes = containerSize.width > 0 && metadata ? [
+    ...(metadata.people ?? []).map((p, i) => ({ key: `p${i}`, bbox: p.bbox, label: `${p.clusterName || p.label} ${Math.round(p.confidence * 100)}%`, color: '#ff1744' })),
+    ...(metadata.objects ?? []).map((o, i) => ({ key: `o${i}`, bbox: o.bbox, label: `${o.label} ${Math.round(o.confidence * 100)}%`, color: '#00e676' })),
+  ].filter(b => b.bbox?.length === 4) : [];
+
+  return (
+    <View
+      style={containerStyle}
+      onLayout={e => setContainerSize({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+    >
+      {img.isVideo ? (
+        <TouchableOpacity activeOpacity={1} onPress={() => setPaused(p => !p)} style={StyleSheet.absoluteFill}>
+          <Video
+            ref={videoRef}
+            source={{ uri: fullUri(img, deviceId), headers: authHeaders }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="contain"
+            paused={paused}
+            repeat
+            onError={() => Alert.alert('Error', 'Could not load video.')}
+          />
+          {paused && (
+            <View style={styles.videoPauseOverlay}>
+              <Text style={styles.videoPauseIcon}>▶</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      ) : uri ? (
+        <Image
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="contain"
+          onLoad={e => setNatSize({ width: e.nativeEvent.source.width, height: e.nativeEvent.source.height })}
+        />
+      ) : null}
+
+      {showBBoxes && boxes.map(b => {
+        const r = calcBBoxRect(b.bbox, containerSize.width, containerSize.height, natSize.width, natSize.height);
+        return (
+          <View key={b.key} style={[bboxSt.box, { left: r.left, top: r.top, width: r.width, height: r.height, borderColor: b.color }]}>
+            <Text style={[bboxSt.label, { backgroundColor: b.color }]} numberOfLines={1}>{b.label}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
+const bboxSt = StyleSheet.create({
+  box: { position: 'absolute', borderWidth: 2, borderRadius: 2 },
+  label: { position: 'absolute', top: -17, left: -1, color: '#fff', fontSize: 9, fontWeight: '700', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 3, overflow: 'hidden' },
+});
+
+const buildMapHtml = (lat: number, lng: number) => `
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>*{margin:0;padding:0;}html,body,#map{width:100%;height:100%;}</style>
+</head><body><div id="map"></div><script>
+var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([${lat},${lng}],15);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.marker([${lat},${lng}]).addTo(map);
+</script></body></html>`;
+
+const InfoPanel = ({ metadata }: { metadata: ImageMetadata | null }) => {
+  if (!metadata) {
+    return <Text style={ip.empty}>Loading details…</Text>;
+  }
+
+  const loc = metadata.location;
+  const locName = loc?.name && !BORING_LOC_NAMES.has(loc.name) ? loc.name : null;
+  const locParts = [locName, loc?.address].filter(Boolean).join(', ');
+  const locLine = [locParts, loc?.country].filter(Boolean).join(' · ');
+  const hasGps = metadata.gps && typeof metadata.gps.latitude === 'number';
+
+  return (
+    <View style={ip.container}>
+      {(locLine || hasGps) ? (
+        <View style={ip.section}>
+          <Text style={ip.sectionTitle}>📍 Location</Text>
+          {locLine ? <Text style={ip.locText}>{locLine}</Text> : null}
+          {hasGps ? (
+            <Text style={ip.coords}>{metadata.gps!.latitude.toFixed(5)}, {metadata.gps!.longitude.toFixed(5)}</Text>
+          ) : null}
+          {hasGps && (
+            <WebView
+              source={{ html: buildMapHtml(metadata.gps!.latitude, metadata.gps!.longitude) }}
+              style={ip.map}
+              scrollEnabled={false}
+              javaScriptEnabled
+            />
+          )}
+        </View>
+      ) : null}
+
+      {metadata.people.length > 0 && (
+        <View style={ip.section}>
+          <Text style={ip.sectionTitle}>👤 People ({metadata.people.length})</Text>
+          <View style={ip.chips}>
+            {metadata.people.map((p, i) => (
+              <View key={i} style={[ip.chip, ip.chipPerson]}>
+                <Text style={ip.chipText}>{p.clusterName || p.label} {Math.round(p.confidence * 100)}%</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {metadata.objects.length > 0 && (
+        <View style={ip.section}>
+          <Text style={ip.sectionTitle}>📦 Objects ({metadata.objects.length})</Text>
+          <View style={ip.chips}>
+            {metadata.objects.map((o, i) => (
+              <View key={i} style={[ip.chip, ip.chipObject]}>
+                <Text style={ip.chipText}>{o.label} {Math.round(o.confidence * 100)}%</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {!locLine && !hasGps && metadata.people.length === 0 && metadata.objects.length === 0 && (
+        <Text style={ip.empty}>No additional metadata available</Text>
+      )}
+    </View>
+  );
+};
+
+const ip = StyleSheet.create({
+  container: { padding: 12 },
+  section: { marginBottom: 14 },
+  sectionTitle: { color: COLORS.primary, fontWeight: '700', fontSize: 12, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  locText: { color: '#fff', fontSize: 13, marginBottom: 2 },
+  coords: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 8 },
+  map: { height: 150, borderRadius: 8, overflow: 'hidden' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14 },
+  chipPerson: { backgroundColor: 'rgba(255,23,68,0.25)', borderWidth: 1, borderColor: '#ff1744' },
+  chipObject: { backgroundColor: 'rgba(0,230,118,0.15)', borderWidth: 1, borderColor: '#00e676' },
+  chipText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  empty: { color: 'rgba(255,255,255,0.4)', fontSize: 13, padding: 12, textAlign: 'center' },
+});
 
 const styles = StyleSheet.create({
   card: { borderRadius: 8, overflow: 'hidden', margin: 2, backgroundColor: COLORS.divider },
@@ -403,8 +601,8 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: 'rgba(0,0,0,0.92)',
     alignItems: 'center', justifyContent: 'center',
   },
-  zoomedImage: { width: '100%', height: '55%' },
-  zoomedImageSmall: { width: '100%', height: '36%' },
+  zoomedImage: { width: '100%', height: '55%', overflow: 'hidden' },
+  zoomedImageSmall: { width: '100%', height: '36%', overflow: 'hidden' },
   videoPauseOverlay: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center', justifyContent: 'center',
@@ -439,6 +637,15 @@ const styles = StyleSheet.create({
   deleteBtn: { backgroundColor: '#c0392b', flex: 0, paddingHorizontal: 14 },
   saveBtn: { backgroundColor: '#5d6d7e' },
   shareBtn: { backgroundColor: '#2980b9' },
+  infoBtn: { backgroundColor: '#6c3483', flex: 0, paddingHorizontal: 14 },
+  bboxBtn: { backgroundColor: '#1a5276', flex: 0, paddingHorizontal: 14 },
+  infoPanel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(20,20,20,0.97)',
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    maxHeight: '50%',
+  },
+  infoPanelScroll: { flex: 1 },
 
   // Similar panel
   similarPanel: {
