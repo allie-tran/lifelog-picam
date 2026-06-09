@@ -3,7 +3,7 @@ import base64
 import io
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, List, Optional
 
 from PIL import Image
@@ -439,7 +439,7 @@ def get_day_summary(
     today = datetime.now().strftime("%Y-%m-%d")
     is_live = False
     if date == today and last_image_time is not None:
-        age = (datetime.utcnow() - last_image_time).total_seconds() / 60
+        age = (datetime.now(timezone.utc) - last_image_time).total_seconds() / 60
         is_live = age < _LIVE_THRESHOLD_MINUTES
 
     day_summary = DaySummaryRecord.find_one(filter={"date": date, "device": device})
@@ -448,6 +448,7 @@ def get_day_summary(
     if (
         day_summary
         and day_summary.segments
+        and not getattr(day_summary, "updated", False)
         and not getattr(day_summary, "dirty_segment_ids", [])
         and not getattr(day_summary, "text_summary_stale", False)
         and day_summary.number_of_images == number_of_images

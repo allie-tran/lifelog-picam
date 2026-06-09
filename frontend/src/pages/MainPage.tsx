@@ -134,7 +134,6 @@ function MainPage() {
                     <Stack
                         direction="row"
                         spacing={2}
-                        width="100%"
                         pl={1}
                         alignItems="center"
                         mb={2}

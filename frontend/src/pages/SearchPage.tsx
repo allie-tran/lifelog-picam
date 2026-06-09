@@ -3,8 +3,10 @@ import {
     AddAPhotoRounded,
     ArrowDropDownRounded,
     AutoAwesomeRounded,
+    CloseRounded,
     DeleteRounded,
     GridViewRounded,
+    HistoryRounded,
     SortRounded,
     ViewStreamRounded,
 } from '@mui/icons-material';
@@ -52,7 +54,7 @@ import { useSearchParams } from 'react-router';
 import { setDeviceId } from 'reducers/auth';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
-import { setSearchQuery } from 'reducers/search';
+import { clearHistory, pushToHistory, removeFromHistory, setSearchQuery } from 'reducers/search';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import '../App.css';
@@ -69,6 +71,7 @@ const SearchPage = () => {
     const device = searchParams.get('device');
     const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
     const searchQuery = useAppSelector((state) => state.search.query);
+    const searchHistory = useAppSelector((state) => state.search.history);
 
     useEffect(() => {
         if (device) dispatch(setDeviceId(device));
@@ -234,6 +237,17 @@ const SearchPage = () => {
         };
     }, [images, results, searchSummaryData]);
 
+    const triggerSearch = React.useCallback(() => {
+        const full = { ...searchQuery, text: textQuery };
+        dispatch(pushToHistory(full));
+        dispatch(setSearchQuery({ text: textQuery }));
+    }, [searchQuery, textQuery, dispatch]);
+
+    const restoreFromHistory = React.useCallback((entry: typeof searchQuery) => {
+        setTextQuery(entry.text || '');
+        dispatch(setSearchQuery(entry));
+    }, [dispatch]);
+
     const handleAppendToQuery = React.useCallback((text: string) => {
         setTextQuery((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
     }, []);
@@ -311,7 +325,7 @@ const SearchPage = () => {
                     onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
-                            dispatch(setSearchQuery({ text: textQuery }));
+                            triggerSearch();
                         }
                     }}
                     sx={{ marginY: 1 }}
@@ -339,6 +353,71 @@ const SearchPage = () => {
                     }}
                 />
                 <ImageDropSearch visible={useImageInput} />
+                {searchHistory.length > 0 && (
+                    <Box sx={{ mt: 0.5, mb: 0.5 }}>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.25 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <HistoryRounded sx={{ fontSize: 13 }} /> Recent
+                            </Typography>
+                            <Tooltip title="Clear history">
+                                <IconButton size="small" sx={{ p: 0.25 }} onClick={() => dispatch(clearHistory())}>
+                                    <CloseRounded sx={{ fontSize: 12 }} />
+                                </IconButton>
+                            </Tooltip>
+                        </Stack>
+                        <Stack spacing={0.25}>
+                            {searchHistory.slice(0, 8).map((entry, i) => {
+                                const filterCount = [
+                                    entry.timeOfDays?.length,
+                                    entry.dayOfWeeks?.length,
+                                    entry.months?.length,
+                                    entry.years?.length,
+                                    entry.customRanges?.length,
+                                    entry.locationIds?.length,
+                                    entry.peopleIds?.length,
+                                    entry.countries?.length,
+                                ].reduce((sum, n) => sum + (n || 0), 0);
+                                return (
+                                    <Stack key={i} direction="row" alignItems="center" sx={{ '&:hover .remove-btn': { opacity: 1 } }}>
+                                        <Button
+                                            size="small"
+                                            variant="text"
+                                            startIcon={<HistoryRounded sx={{ fontSize: 13, color: 'text.disabled' }} />}
+                                            onClick={() => restoreFromHistory(entry)}
+                                            sx={{
+                                                flex: 1,
+                                                justifyContent: 'flex-start',
+                                                textTransform: 'none',
+                                                py: 0.25,
+                                                px: 0.75,
+                                                minHeight: 0,
+                                                color: 'text.primary',
+                                                '& .MuiButton-startIcon': { mr: 0.5 },
+                                            }}
+                                        >
+                                            <Typography noWrap sx={{ fontSize: '12px', maxWidth: 185 }}>
+                                                {entry.text || '(filters only)'}
+                                            </Typography>
+                                            {filterCount > 0 && (
+                                                <Typography sx={{ fontSize: '10px', color: 'text.secondary', ml: 0.5, flexShrink: 0 }}>
+                                                    +{filterCount}
+                                                </Typography>
+                                            )}
+                                        </Button>
+                                        <IconButton
+                                            className="remove-btn"
+                                            size="small"
+                                            sx={{ p: 0.25, opacity: 0, transition: 'opacity 0.15s' }}
+                                            onClick={() => dispatch(removeFromHistory(i))}
+                                        >
+                                            <CloseRounded sx={{ fontSize: 11 }} />
+                                        </IconButton>
+                                    </Stack>
+                                );
+                            })}
+                        </Stack>
+                    </Box>
+                )}
                 <StyledAccordion
                     square
                     elevation={0}
@@ -472,9 +551,7 @@ const SearchPage = () => {
                             textTransform: 'none',
                             width: 80,
                         }}
-                        onClick={() =>
-                            dispatch(setSearchQuery({ text: textQuery }))
-                        }
+                        onClick={triggerSearch}
                     >
                         Search
                     </Button>

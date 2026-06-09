@@ -46,7 +46,6 @@ function Biometrics() {
                     alignItems="center"
                     mb={2}
                 >
-                    <DeviceSelect />
                     <CustomDatePicker
                         date={date}
                         allDates={allDates}

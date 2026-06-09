@@ -2,9 +2,10 @@ import {
     Badge,
     Button,
     ButtonProps,
+    IconButton,
     Stack,
     styled,
-    TextField
+    TextField,
 } from '@mui/material';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -13,6 +14,7 @@ import React, { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import '../App.css';
+import { ArrowLeftRounded, ArrowRightRounded } from '@mui/icons-material';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -159,28 +161,16 @@ const CustomDatePicker = ({
 
     return (
         <>
-            <Stack>
-                <Button
-                    size="small"
-                    onClick={goToPreviousDate}
-                    sx={{ mt: 1 }}
-                    variant="outlined"
-                >
-                    Previous
-                </Button>
-                <Button
-                    size="small"
-                    onClick={goToNextDate}
-                    sx={{ mt: 1 }}
-                    variant="outlined"
-                >
-                    Next
-                </Button>
-            </Stack>
+            <IconButton
+                onClick={goToPreviousDate}
+                sx={{ border: '1px solid', borderColor: 'divider' }}
+            >
+                <ArrowLeftRounded />
+            </IconButton>
             {usePicker ? (
                 <DatePicker
                     disableFuture
-                    formatDensity='spacious'
+                    formatDensity="spacious"
                     label="Select Date"
                     value={date ? dayjs(date) : null}
                     views={['year', 'month', 'day']}
@@ -192,7 +182,10 @@ const CustomDatePicker = ({
                     onChange={(newValue) => {
                         setPage(1);
                         setHour(null);
-                        searchParams.set('date', newValue ? newValue.format('YYYY-MM-DD') : '');
+                        searchParams.set(
+                            'date',
+                            newValue ? newValue.format('YYYY-MM-DD') : ''
+                        );
                         navigate({ search: searchParams.toString() });
                     }}
                     slots={{
@@ -224,7 +217,12 @@ const CustomDatePicker = ({
                         if (e.key === 'Enter') {
                             setPage(1);
                             setHour(null);
-                            searchParams.set('date', dayjs(textDate, 'DD/MM/YYYY').format('YYYY-MM-DD'));
+                            searchParams.set(
+                                'date',
+                                dayjs(textDate, 'DD/MM/YYYY').format(
+                                    'YYYY-MM-DD'
+                                )
+                            );
                             navigate({ search: searchParams.toString() });
                         }
                     }}
@@ -238,6 +236,12 @@ const CustomDatePicker = ({
             >
                 {usePicker ? 'Use Text' : 'Use Day Picker'}
             </Button>
+            <IconButton
+                onClick={goToNextDate}
+                sx={{ border: '1px solid', borderColor: 'divider'}}
+            >
+                <ArrowRightRounded />
+            </IconButton>
         </>
     );
 };
