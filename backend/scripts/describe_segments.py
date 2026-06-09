@@ -5,7 +5,7 @@ import traceback
 import numpy as np
 
 from celery.utils.log import get_task_logger
-from constants import CATEGORIES, THUMBNAIL_DIR
+from constants import CATEGORIES, CATEGORIES_WITH_GROUPS, THUMBNAIL_DIR
 from google.genai.errors import ClientError, ServerError
 from llm import MixedContent, get_visual_content, llm
 from partialjson.json_parser import JSONParser
@@ -49,18 +49,27 @@ def get_rewritten_description(description, instructions: list[str] = []):
         return description
 
 
-PROMPT = """
-These are photos captured from a POV camera worn by me.
-Describe and classify the activity being performed in the following images into one of the predefined categories.
-{categories_list}
+_GROUP_NAMES = list(CATEGORIES_WITH_GROUPS.keys())
 
-Return with the following format:
+PROMPT = """
+These are photos captured from a POV lifelogging camera worn by me.
+
+{context_block}
+Step 1 — Pick the broad group that best matches what is happening (choose exactly one):
+{groups_list}
+
+Step 2 — Write a short activity label in gerund form (2–4 words), specific enough to be useful but consistent across similar scenes. Good examples: "writing code", "eating lunch", "commuting by train", "attending a lecture", "having a conversation", "tidying the desk".
+
+Step 3 — Write one or two sentences describing what is visible in the scene. Use the context above (time, location) to understand the scene, but don't just repeat the context.
+
+Return only valid JSON in this format:
 
 ```json
 {{
-    "description": "A brief description of the activity."
-    "category": "Category Name",
-    "confidence": "High / Medium / Low",
+    "group": "exact group name from the list above",
+    "activity": "short gerund label",
+    "description": "scene description",
+    "confidence": "High / Medium / Low"
 }}
 ```
 """
@@ -71,6 +80,7 @@ def describe_segment(
     date: str,
     segment: list[str],
     segment_id: int,
+    context: str = "",
     extra_info: list[str] = [],
 ):
     logger.info(
@@ -100,15 +110,22 @@ def describe_segment(
         logger.error(f"Segment {segment_id}: no valid images, skipping.")
         return {
             "activity": "Unclear",
+            "group": "Miscellaneous",
             "activity_description": "",
             "activity_confidence": "Low",
         }
 
-    final_category = "Unclear"
-    category = "Unclear"
+    group = "Miscellaneous"
+    activity = "unclear activity"
     description = ""
     confidence = "Low"
     tries = 0
+
+    context_block = f"Context about this segment:\n{context}\n\n" if context else ""
+    formatted_prompt = PROMPT.format(
+        groups_list="\n".join(f"- {g}" for g in _GROUP_NAMES),
+        context_block=context_block,
+    )
 
     while True:
         if tries >= 5:
@@ -118,21 +135,24 @@ def describe_segment(
             tries += 1
             logger.debug(f"Segment {segment_id}: LLM attempt {tries}")
             parsed_obj = get_description_from_frames(
-                [
-                    PROMPT.format(
-                        categories_list="\n".join([f"- {c}" for c in CATEGORIES.keys()])
-                    )
-                ]
-                + extra_info,
+                [formatted_prompt] + extra_info,
                 image_bytes,
             )
 
             if parsed_obj:
-                category = parsed_obj.get("category", "Unclear")
+                raw_group = parsed_obj.get("group", "")
+                activity = parsed_obj.get("activity", "unclear activity").lower().strip()
                 description = parsed_obj.get("description", "")
                 confidence = parsed_obj.get("confidence", "Low")
+
+                # Snap to the nearest valid group (case-insensitive substring match)
+                matched = [g for g in _GROUP_NAMES if g.lower() == raw_group.lower()]
+                if not matched:
+                    matched = [g for g in _GROUP_NAMES if g.lower() in raw_group.lower() or raw_group.lower() in g.lower()]
+                group = matched[0] if matched else "Miscellaneous"
+
                 logger.info(
-                    f"Segment {segment_id}: category={category}, confidence={confidence}"
+                    f"Segment {segment_id}: group={group}, activity={activity}, confidence={confidence}"
                 )
             else:
                 logger.warning(f"Segment {segment_id}: LLM returned no parsed object")
@@ -153,17 +173,12 @@ def describe_segment(
             logger.warning(f"Segment {segment_id}: ServerError, retrying in 10s: {e}")
             time.sleep(10)
 
-    possible_categories = [c for c in CATEGORIES if c.lower() in str(category).lower()]
-    if possible_categories:
-        final_category = possible_categories[0]
-
-    logger.info(f"Segment {segment_id}: final category={final_category}")
-
     return {
-                "activity": final_category,
-                "activity_description": description,
-                "activity_confidence": confidence,
-            }
+        "activity": activity.title(),
+        "activity_group": group,
+        "activity_description": description,
+        "activity_confidence": confidence,
+    }
 
 class ADLClassifier:
     def __init__(self):

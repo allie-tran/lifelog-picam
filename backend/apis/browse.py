@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Annotated, Any, List, Literal, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import update
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timedelta, timezone
@@ -27,15 +28,21 @@ from PIL import Image as PILImage
 logger = logging.getLogger(__name__)
 app = FastAPI()
 
-_SEG_COMPLETE_TTL = 60  # seconds to cache "all images segmented" per device/date
+_SEG_COMPLETE_TTL = 3600  # seconds to cache "all images segmented" per device/date
+_BROWSE_CACHE_TTL_TODAY = 60
+_BROWSE_CACHE_TTL_PAST = 600
 
 
 def _maybe_load_segments(session: Session, device: str, date: str) -> None:
     """
-    Call load_all_segments only if the Redis TTL cache says unsegmented images
-    may exist for this device/date. Avoids a DB query on every browse request
-    when the day is fully segmented.
+    For past dates: run segmentation as a fallback if GPS pipeline never ran.
+    For today: skip — segmentation is driven by the GPS pipeline triggered from
+    upload_gps, so pre-segmenting here would block the location-aware re-run.
     """
+    from datetime import date as _date_cls
+    if date == _date_cls.today().isoformat():
+        return  # GPS pipeline handles today
+
     cache_key = f"segs_complete:{device}:{date}"
     if redis_client.get_value(cache_key):
         return  # recently verified: all segmented
@@ -229,17 +236,25 @@ async def get_images_by_hour(
 
     _maybe_load_segments(session, device, date)
 
-    all_hours = list(
-        ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device)
-    )
     today = datetime.now().strftime("%Y-%m-%d")
-    all_hours = sorted([h for h in all_hours if h is not None], reverse=(today == date))
+    is_today = (date == today)
 
-    if not hour:
-        if not all_hours:
-            logger.info("No hours for date %s device %s", date, device)
-            return {"date": date, "hour": None, "images": []}
-        hour = all_hours[0]
+    # Resolve effective hour first (fast DISTINCT query, always fresh)
+    all_hours = sorted(
+        [h for h in ImageRecord.distinct(session, "hour", date=date, deleted=False, device=device) if h is not None],
+        reverse=is_today,
+    )
+    effective_hour = hour or (all_hours[0] if all_hours else None)
+    if not effective_hour:
+        logger.info("No hours for date %s device %s", date, device)
+        return {"date": date, "hour": None, "images": []}
+
+    # Return cached response if available
+    cache_key = f"browse:{device}:{date}:{effective_hour}"
+    cached = redis_client.get_json(cache_key)
+    if cached is not None:
+        cached["available_hours"] = all_hours  # always serve fresh hour list
+        return cached
 
     results = ImageRecord.find_segments(
         session,
@@ -248,22 +263,22 @@ async def get_images_by_hour(
         deleted=False,
         page=0,
         page_size=10_000,
-        hour=hour,
-        today=today == date,
+        hour=effective_hour,
+        today=is_today,
     )
 
-    segments = results["segments"]
-    gps = results["gps"]
-    total_pages = results["total_pages"]
-
-    return {
+    response = jsonable_encoder({
         "date": date,
-        "hour": hour,
-        "segments": segments,
+        "hour": effective_hour,
+        "segments": results["segments"],
         "available_hours": all_hours,
-        "total_pages": total_pages,
-        "gps": gps,
-    }
+        "total_pages": results["total_pages"],
+        "gps": results["gps"],
+    })
+
+    ttl = _BROWSE_CACHE_TTL_TODAY if is_today else _BROWSE_CACHE_TTL_PAST
+    redis_client.set_json_with_ttl(cache_key, response, ttl)
+    return response
 
 
 @app.post("/get-images-by-range", response_model=List[LifelogImage])

@@ -12,7 +12,7 @@ import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { GPSData, ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
-import { CONFIDENCE_COLOURS } from 'constants/activityColors';
+import { CONFIDENCE_COLOURS, THEME_COLORS } from 'constants/activityColors';
 import dayjs from 'dayjs';
 import React from 'react';
 import { setLoading } from 'reducers/feedback';
@@ -48,7 +48,8 @@ const LifelogEvent = ({
     // const count = segment.length;
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
-    const color = CONFIDENCE_COLOURS[firstImage?.activityConfidence || 0];
+    const confidenceColor = CONFIDENCE_COLOURS[firstImage?.activityConfidence || ''];
+    const groupColor = firstImage?.activityGroup ? THEME_COLORS[firstImage.activityGroup] : undefined;
 
     // Initialize the hook inside each item
     const trackingRef = useOnInView(
@@ -157,17 +158,27 @@ const LifelogEvent = ({
                         flexShrink={0}
                         alignItems="center"
                     >
-                        <Typography variant="subtitle1" fontWeight="bold">
-                            {firstImage.activity
-                                ? `${firstImage.activity}`
-                                : 'No Activity Detected'}
+                        <Typography variant="subtitle1" fontWeight="bold" sx={{ textTransform: 'capitalize' }}>
+                            {firstImage.activity || 'No Activity Detected'}
                         </Typography>
+                        {firstImage.activityGroup && (
+                            <Chip
+                                label={firstImage.activityGroup}
+                                size="small"
+                                sx={{
+                                    backgroundColor: groupColor,
+                                    color: 'rgba(0,0,0,0.7)',
+                                    height: 18,
+                                    fontSize: '0.65rem',
+                                }}
+                            />
+                        )}
                         {firstImage.activityConfidence && (
                             <Typography
-                                variant="subtitle2"
-                                color={color || 'textSecondary'}
+                                variant="caption"
+                                color={`${confidenceColor}.main` || 'text.secondary'}
                             >
-                                Confidence: {firstImage.activityConfidence}
+                                {firstImage.activityConfidence}
                             </Typography>
                         )}
                     </Stack>

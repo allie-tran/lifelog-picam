@@ -243,8 +243,24 @@ def enrich_stop(lat: float, lon: float) -> dict:
     addr = raw.get("address", {})
     extratags = raw.get("extratags", {}) or {}
 
-    # POI name: Nominatim puts the place name as the value under the category key
-    name = next((addr[k] for k in _POI_ADDR_KEYS if addr.get(k)), "")
+    # 1. OSM element's own name tag — most reliable for named POIs and buildings
+    name = raw.get("name", "")
+
+    # 2. Address category keys (e.g. addr.amenity = "Starbucks").
+    #    Skip generic type strings that aren't proper names ("yes", "company", etc.)
+    _GENERIC = {"yes", "no", "company", "residential", "office", "building", "house"}
+    if not name:
+        for k in _POI_ADDR_KEYS:
+            v = addr.get(k, "")
+            if v and v.lower() not in _GENERIC:
+                name = v
+                break
+
+    # 3. For residential / unlabelled stops: use street address as a hint
+    if not name:
+        road = addr.get("road", "")
+        house = addr.get("house_number", "")
+        name = (f"{house} {road}".strip() if house else road)
 
     # OSM category types (the type string, e.g. "cafe", "supermarket")
     osm_cats = [extratags[k] for k in _POI_ADDR_KEYS if extratags.get(k)]

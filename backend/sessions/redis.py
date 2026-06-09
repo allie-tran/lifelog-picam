@@ -29,6 +29,17 @@ class RedisClient:
     def set_json_with_ttl(self, key, data, ttl_seconds: int):
         self.set_with_ttl(key, json.dumps(data), ttl_seconds)
 
+    def delete_pattern(self, pattern: str) -> int:
+        """Delete all keys matching a glob pattern. Returns count deleted."""
+        cursor = 0
+        deleted = 0
+        while True:
+            cursor, keys = self.client.scan(cursor, match=pattern, count=100)
+            if keys:
+                deleted += self.client.delete(*keys)
+            if cursor == 0:
+                break
+        return deleted
 
 
 redis_client = RedisClient()

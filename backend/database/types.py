@@ -269,12 +269,13 @@ class ImageRecord:
                 most_common_id, _ = location_counts.most_common(1)[0]
                 location = next((loc for loc in seg_locs if str(loc.id) == most_common_id), None)
 
-            # GPS points for this segment
-            gps_info = [
-                GPSInfo.model_validate(g.__dict__)
-                for p in image_paths
-                for g in path_to_gps.get(p, [])
-            ]
+            # GPS points for this segment (subsampled to keep payload small)
+            gps_raw = [g for p in image_paths for g in path_to_gps.get(p, [])]
+            _max_pts = 30
+            if len(gps_raw) > _max_pts:
+                step = max(1, len(gps_raw) // _max_pts)
+                gps_raw = gps_raw[::step][:_max_pts]
+            gps_info = [GPSInfo.model_validate(g.__dict__) for g in gps_raw]
 
             images = [_orm_to_lifelog(img) for img in images_orm]
             if today:

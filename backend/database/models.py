@@ -186,6 +186,7 @@ class SensorDevice(Base):
     secret = Column(Text, nullable=True)
     sensor_type = Column(Text, nullable=False)
     associated_user = Column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="SET NULL"), nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=True)
 
 # ---------------------------------------------------------------------------
 # Image
@@ -263,6 +264,7 @@ class Image(Base):
     segment_id = Column(Integer)
     location_id = Column(UUID(as_uuid=True), ForeignKey("locations.id"), nullable=True)
     activity = Column(Text)
+    activity_group = Column(Text, nullable=True)
     activity_confidence = Column(Text)
     activity_description = Column(Text)
     deleted = Column(Boolean, default=False)

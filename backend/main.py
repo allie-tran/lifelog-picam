@@ -50,6 +50,7 @@ from apis.retrieval import app as retrieval_app
 from apis.face import app as face_app
 from apis.delete import app as delete_app
 from apis.notifications import app as notifications_app
+from apis.status import app as status_app
 
 from sqlalchemy import select, desc, update
 from datetime import datetime
@@ -156,6 +157,7 @@ app.mount("/retrieval", retrieval_app)
 app.mount("/face", face_app)
 app.mount("/delete", delete_app)
 app.mount("/notify", notifications_app)
+app.mount("/status", status_app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -365,12 +367,23 @@ def process_date(
 ):
     _require_any_access(access_level)
 
+    # Always reset CLIP analysis state and mark the day for full recompute.
+    # Segmentation and LLM annotations in Postgres are left intact unless
+    # resegment/reannotate flags are set.
     DaySummaryRecord.update_one(
-        {
-            "date": date,
-            "device": device,
+        {"date": date, "device": device},
+        data={
+            "$set": {
+                "updated": True,
+                "text_summary_stale": True,
+                "analysis_checkpoint": None,
+                "binary_metrics": {},
+                "burst_metrics": {},
+                "period_metrics": {},
+                "category_minutes": {},
+                "dirty_segment_ids": [],
+            }
         },
-        data={"$set": {"updated": True}},
         upsert=True,
     )
 
@@ -439,20 +452,26 @@ def get_day_summary(
     today = datetime.now().strftime("%Y-%m-%d")
     is_live = False
     if date == today and last_image_time is not None:
-        age = (datetime.now(timezone.utc) - last_image_time).total_seconds() / 60
+        ts = last_image_time.replace(tzinfo=timezone.utc) if last_image_time.tzinfo is None else last_image_time
+        age = (datetime.now(timezone.utc) - ts).total_seconds() / 60
         is_live = age < _LIVE_THRESHOLD_MINUTES
 
     day_summary = DaySummaryRecord.find_one(filter={"date": date, "device": device})
 
     # ── Fast path: cache is clean ────────────────────────────────────────────
+    # For live (today) days: skip image-count/last-image checks — images arrive
+    # every 10 s so those fields are always stale.  Annotations drive updates
+    # via dirty_segment_ids instead.
     if (
         day_summary
         and day_summary.segments
         and not getattr(day_summary, "updated", False)
         and not getattr(day_summary, "dirty_segment_ids", [])
         and not getattr(day_summary, "text_summary_stale", False)
-        and day_summary.number_of_images == number_of_images
-        and day_summary.last_image_time == last_image_time
+        and (is_live or (
+            day_summary.number_of_images == number_of_images
+            and day_summary.last_image_time == last_image_time
+        ))
     ):
         logging.info("day-summary cache hit for %s/%s", device, date)
         cached = DaySummary.model_validate(day_summary.__dict__)
@@ -463,10 +482,13 @@ def get_day_summary(
     dirty_ids: list[int] = list(getattr(day_summary, "dirty_segment_ids", []) or [])
     text_stale: bool = bool(getattr(day_summary, "text_summary_stale", True))
 
+    # For live days don't rebuild just because image count grew — unannotated
+    # images don't contribute to the summary yet and dirty_segment_ids handles
+    # newly completed segments.
     need_full_rebuild = (
         day_summary is None
         or not day_summary.segments
-        or day_summary.number_of_images != number_of_images
+        or (not is_live and day_summary.number_of_images != number_of_images)
     )
 
     if not need_full_rebuild and dirty_ids:
@@ -548,15 +570,15 @@ def get_day_summary(
         summary.max_hr = bio.max_hr
         summary.rmssd = bio.rmssd
         summary.step_count = bio.step_count
-        summary.sleep_start = bio.sleep_start
-        summary.sleep_end = bio.sleep_end
+        summary.sleep_start = bio.sleep_start  # type: ignore
+        summary.sleep_end = bio.sleep_end  # type: ignore
         summary.sleep_minutes = bio.sleep_minutes
 
     summary.number_of_images = number_of_images
-    summary.last_image_time = last_image_time
+    summary.last_image_time = last_image_time  # type: ignore
     summary.is_live = is_live
     summary.dirty_segment_ids = []
-    summary.updated = True
+    summary.updated = False  # clear the "pending updates" flag so fast path works next time
 
     DaySummaryRecord.update_one(
         {"date": date, "device": device},
@@ -570,7 +592,6 @@ def get_day_summary(
 # ---------------------------------------------------------------------------
 # Targets
 # ---------------------------------------------------------------------------
-
 
 @app.get("/get-targets")
 def get_targets(
@@ -631,7 +652,7 @@ async def change_segment_activity(
         )
     ]
 
-    new_description = describe_segment_task.delay(
+    describe_segment_task.delay(
         device,
         request.date,
         thumbnails,
@@ -642,16 +663,6 @@ async def change_segment_activity(
         ],
     )
 
-    session.execute(
-        update(ImageModel)
-        .where(ImageModel.segment_id == segment.segment_id)
-        .where(ImageModel.device == device)
-        .where(ImageModel.date == request.date)
-        .values(
-            activity=request.new_activity_info, activity_description=new_description
-        )
-    )
-    session.flush()
     DaySummaryRecord.update_one(
         {
             "date": request.date,
@@ -659,9 +670,6 @@ async def change_segment_activity(
         },
         data={"$set": {"updated": True}},
     )
-
-
-
 
 # ---------------------------------------------------------------------------
 # Entry point

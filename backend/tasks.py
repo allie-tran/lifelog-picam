@@ -1,9 +1,10 @@
-from sqlalchemy import create_engine, insert, select, update
+from sqlalchemy import create_engine, insert, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 from auth.ortho import get_matrix
 from auth.types import Person
 from celery_app import celery
-from database.models import Image, ImageEmbedding, ImageObject, ImagePerson, PeopleCluster
+from collections import Counter
+from database.models import Image, ImageEmbedding, ImageObject, ImagePerson, PeopleCluster, Location
 from scripts.anonymise import anonymise_image
 from scripts.describe_segments import describe_segment, simple_describe_segment
 from pymongo import MongoClient
@@ -12,6 +13,8 @@ import uuid
 import numpy as np
 
 from scripts.object_detection import ModelWrapper, extract_object_from_images
+from location.gps_pipeline import run_pipeline
+from apis.explore import _FACES_CACHE
 import os
 
 # Cosine distance threshold for assigning a face to an existing cluster.
@@ -42,6 +45,72 @@ class MyTask(celery.Task):
         return self.sessions[self.request.id]
 
 
+def _build_segment_context(session, device: str, date: str, segment_id: int) -> str:
+    """
+    Build a natural-language context string for the LLM describing when and
+    where this segment occurred.  Returns an empty string if nothing useful
+    can be determined (GPS not yet enriched, etc.).
+    """
+    try:
+        rows = session.execute(
+            select(Image.timestamp, Image.local_timestamp, Image.location_id)
+            .where(
+                Image.device == device,
+                Image.date == date,
+                Image.segment_id == segment_id,
+                Image.deleted == False,
+            )
+            .order_by(Image.timestamp.asc())
+        ).all()
+
+        if not rows:
+            return ""
+
+        first_ts = rows[0].local_timestamp or rows[0].timestamp
+        last_ts = rows[-1].local_timestamp or rows[-1].timestamp
+        duration_min = max(1, int((last_ts - first_ts).total_seconds() / 60))
+
+        day_name = first_ts.strftime("%A")
+        date_str = first_ts.strftime("%-d %B %Y")
+        time_range = f"{first_ts.strftime('%H:%M')}–{last_ts.strftime('%H:%M')}"
+        hour = first_ts.hour
+        if hour < 6:
+            time_of_day = "night"
+        elif hour < 12:
+            time_of_day = "morning"
+        elif hour < 17:
+            time_of_day = "afternoon"
+        elif hour < 21:
+            time_of_day = "evening"
+        else:
+            time_of_day = "night"
+
+        lines = [
+            f"Date: {day_name}, {date_str}",
+            f"Time: {time_of_day}, {time_range} ({duration_min} min)",
+        ]
+
+        loc_ids = [r.location_id for r in rows if r.location_id]
+        if loc_ids:
+            most_common_id = Counter(loc_ids).most_common(1)[0][0]
+            loc = session.execute(
+                select(Location).where(Location.id == most_common_id)
+            ).scalars().first()
+            if loc:
+                place = loc.name or loc.suburb or ""
+                city = loc.city or ""
+                country = loc.country or ""
+                parts = list(dict.fromkeys(p for p in [place, city, country] if p))
+                loc_str = ", ".join(parts)
+                movement = "in transit" if loc.stop is False else "at a stop"
+                lines.append(f"Location: {movement} — {loc_str}" if loc_str else f"Location: {movement}")
+
+        return "\n".join(f"- {l}" for l in lines)
+    except Exception as e:
+        logging.warning("_build_segment_context failed for %s/%s seg %s: %s", device, date, segment_id, e)
+        return ""
+
+
 @celery.task(name="tasks.describe_segment_task", base=MyTask, bind=True)
 def describe_segment_task(
     self,
@@ -49,11 +118,13 @@ def describe_segment_task(
 ):
     mongo_client = MongoClient("mongodb://localhost:27017/")
     try:
+        context = _build_segment_context(self.session, device, date, segment_id)
         activity_obj = describe_segment(
             device,
             date,
             thumbnail_paths,
             segment_id=segment_id,
+            context=context,
             extra_info=extra_info,
         )
         # stmt = select(ImageEmbedding.embedding).join(Image).where(
@@ -74,12 +145,21 @@ def describe_segment_task(
                 Image.device == device,
                 Image.segment_id == segment_id,
                 Image.date == date,
-            ).values(activity=activity_obj["activity"], activity_description=activity_obj["activity_description"], activity_confidence=activity_obj["activity_confidence"])
+            ).values(
+                activity=activity_obj["activity"],
+                activity_group=activity_obj.get("activity_group"),
+                activity_description=activity_obj["activity_description"],
+                activity_confidence=activity_obj["activity_confidence"],
+            )
 
         logging.info(f"Updating database for segment {segment_id} with activity '{activity_obj['activity']}' and confidence '{activity_obj['activity_confidence']}'")
         pg_result = self.session.execute(stmt)
         logging.info(f"Updated {pg_result.rowcount} rows in the database for segment {segment_id}")
         self.session.commit()
+
+        # Bust browse cache for this device/date so next load reflects new annotations
+        from sessions.redis import redis_client as _rc
+        _rc.delete_pattern(f"browse:{device}:{date}:*")
 
         # Fire notification if location is new or activity is unusual
         try:
@@ -216,7 +296,6 @@ def update_location_task(self, device: str, date: str):
     Called automatically after YOLO processes new images so that location_id
     is populated without waiting for a manual trigger.
     """
-    from location.gps_pipeline import run_pipeline
     try:
         run_pipeline(self.session, device, date)
         logging.info("Location pipeline complete for %s/%s", device, date)
@@ -326,7 +405,6 @@ def recluster_unassigned_faces_task(self, device: str):
     self.session.commit()
 
     # Invalidate the /all-faces in-process cache so next request reflects new clusters
-    from apis.explore import _FACES_CACHE
     _FACES_CACHE.pop(device, None)
 
     logging.info(
@@ -353,6 +431,23 @@ def compute_bio_day_stats_task(self, device_id: str, date: str):
             logging.debug("No bio data for %s/%s, skipped.", device_id, date)
     except Exception as e:
         logging.error("compute_bio_day_stats_task failed for %s/%s: %s", device_id, date, e)
+
+
+@celery.task(name="tasks.run_gps_pipeline_task")
+def run_gps_pipeline_task(device: str, date: str):
+    """
+    Run the full GPS pipeline (enrichment + segmentation + LLM annotation)
+    for a given device/date.  Queued from upload_gps every ~10 minutes so that
+    segmentation always runs after GPS data is available.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as SaSession
+    _engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
+    with SaSession(_engine) as _session:
+        try:
+            run_pipeline(_session, device, date)
+        except Exception as e:
+            logging.error("run_gps_pipeline_task failed for %s/%s: %s", device, date, e)
 
 
 @celery.task(name="tasks.nightly_location_update_all_devices")
@@ -420,3 +515,205 @@ def nightly_bio_stats_all_devices():
             compute_bio_day_stats_task.delay(device_id, date)
 
     logging.info("Queued nightly bio_day_stats for %d devices.", len(device_ids))
+
+
+@celery.task(name="tasks.pipeline_catchup_task")
+def pipeline_catchup_task():
+    """
+    Runs every 30 minutes. Re-queues images that missed pipeline steps (YOLO,
+    thumbnail, CLIP embedding) when Celery was purged or the worker restarted.
+    Skips images newer than 15 minutes to avoid racing with in-flight tasks.
+    """
+    import os
+    from datetime import datetime, timedelta
+    from collections import defaultdict as _defaultdict
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import Session as _SaSession
+    from constants import DIR, THUMBNAIL_DIR
+
+    _engine = _ce(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
+    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    queued_yolo = queued_thumbs = queued_enc = queued_seg = 0
+
+    with _SaSession(_engine) as session:
+        # 1. YOLO: images still flagged proc_yolo=False
+        yolo_rows = session.execute(
+            select(Image.device, Image.image_path)
+            .where(
+                Image.proc_yolo == False,
+                Image.timestamp < cutoff,
+                Image.deleted == False,
+                Image.is_video == False,
+            )
+            .order_by(Image.timestamp.asc())
+            .limit(100)
+        ).all()
+
+        if yolo_rows:
+            by_device = _defaultdict(list)
+            for device, path in yolo_rows:
+                by_device[device].append(f"{DIR}/{device}/{path}")
+            for device, full_paths in by_device.items():
+                yolo_process_images_task.delay(device, full_paths, [], [])
+            queued_yolo = len(yolo_rows)
+
+        # 2. CLIP embeddings: images with no ImageEmbedding row
+        no_emb_rows = session.execute(
+            select(Image.device, Image.image_path)
+            .outerjoin(ImageEmbedding, ImageEmbedding.image_id == Image.id)
+            .where(
+                ImageEmbedding.image_id.is_(None),
+                Image.timestamp < cutoff,
+                Image.deleted == False,
+                Image.is_video == False,
+            )
+            .order_by(Image.timestamp.asc())
+            .limit(50)
+        ).all()
+
+        if no_emb_rows:
+            from pipelines.all import encode_image as _encode_image
+            for device, image_path in no_emb_rows:
+                try:
+                    _encode_image(session, device, image_path)
+                    queued_enc += 1
+                except Exception as exc:
+                    logging.warning("catchup: encode failed for %s/%s: %s", device, image_path, exc)
+
+        # 3. Thumbnails: check disk for missing .webp files among recent images.
+        #    proc_sam3=True is set immediately when the async task is dispatched, so
+        #    it doesn't tell us whether the file actually landed on disk.
+        thumb_rows = session.execute(
+            select(Image.device, Image.image_path)
+            .where(
+                Image.timestamp < cutoff,
+                Image.deleted == False,
+                Image.is_video == False,
+            )
+            .order_by(Image.timestamp.desc())
+            .limit(500)
+        ).all()
+
+        for device, image_path in thumb_rows:
+            expected_webp = f"{THUMBNAIL_DIR}/{device}/{image_path.rsplit('.', 1)[0]}.webp"
+            if os.path.exists(expected_webp):
+                continue
+            src = f"{DIR}/{device}/{image_path}"
+            if not os.path.exists(src):
+                continue
+            anonymise_image_task.delay(src, expected_webp, [], [], skip_sam3=True)
+            queued_thumbs += 1
+
+        # 4. Unannotated segments: segment_id assigned but activity is NULL (task
+        #    never ran) or "" (cleared by process_date resegment without reannotate).
+        #    Excludes "unclear activity" which means the LLM already tried and gave up.
+        unannotated_segs = session.execute(
+            select(Image.device, Image.date, Image.segment_id)
+            .where(
+                Image.segment_id.isnot(None),
+                or_(Image.activity.is_(None), Image.activity == ""),
+                Image.timestamp < cutoff,
+                Image.deleted == False,
+            )
+            .group_by(Image.device, Image.date, Image.segment_id)
+            .order_by(Image.device, Image.date, Image.segment_id)
+            .limit(20)
+        ).all()
+
+        for device, date, segment_id in unannotated_segs:
+            seg_paths = session.execute(
+                select(Image.image_path)
+                .where(
+                    Image.device == device,
+                    Image.date == date,
+                    Image.segment_id == segment_id,
+                    Image.deleted == False,
+                )
+            ).scalars().all()
+
+            if seg_paths:
+                thumb_paths = [
+                    f"{THUMBNAIL_DIR}/{device}/{p.rsplit('.', 1)[0]}.webp"
+                    for p in seg_paths
+                ]
+                describe_segment_task.delay(device, date, thumb_paths, segment_id)
+                queued_seg += 1
+
+    if queued_yolo or queued_thumbs or queued_enc or queued_seg:
+        logging.info(
+            "pipeline_catchup: YOLO=%d thumbnails=%d embeddings=%d segments=%d",
+            queued_yolo, queued_thumbs, queued_enc, queued_seg,
+        )
+
+
+@celery.task(name="tasks.update_status_summary")
+def update_status_summary():
+    """
+    Beat-scheduled every 15 min: generate a one-sentence LLM summary of what the
+    user is currently doing, for each recently-active device. Cached in Redis
+    so the /status/current endpoint serves it instantly.
+    """
+    from datetime import datetime, timedelta, timezone as tz
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as SaSession
+    from database.models import Device, Image as _Image
+    from sessions.redis import redis_client
+
+    engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
+    now = datetime.now(tz.utc)
+    cutoff = now - timedelta(hours=2)
+
+    with SaSession(engine) as session:
+        active = session.execute(
+            select(Device.device_id)
+            .where(Device.last_seen.isnot(None), Device.last_seen > cutoff)
+        ).scalars().all()
+
+        if not active:
+            return
+
+        try:
+            from llm.gemini import LLM
+            llm = LLM()
+        except Exception as e:
+            logging.warning("Status summary: LLM init failed: %s", e)
+            return
+
+        for device_id in active:
+            try:
+                thirty_min_ago = now - timedelta(minutes=30)
+                rows = session.execute(
+                    select(_Image.segment_id, _Image.activity_description)
+                    .where(
+                        _Image.device == device_id,
+                        _Image.deleted == False,
+                        _Image.timestamp > thirty_min_ago,
+                        _Image.activity_description.isnot(None),
+                        _Image.activity_description != "",
+                    )
+                    .distinct(_Image.segment_id)
+                    .order_by(_Image.segment_id.desc())
+                    .limit(5)
+                ).fetchall()
+
+                descriptions = [r.activity_description for r in rows if r.activity_description]
+                if not descriptions:
+                    continue
+
+                prompt = (
+                    "You are a lifelogging assistant. Based on these recent activity descriptions "
+                    "from a wearable camera, write a single concise sentence (under 20 words) "
+                    "summarising what the person is currently doing. "
+                    f"Activities (most recent first): {'; '.join(descriptions)}"
+                )
+                summary_text = llm.generate(prompt)
+
+                cache_key = f"status:{device_id}:summary"
+                redis_client.set_json_with_ttl(
+                    cache_key,
+                    {"text": summary_text, "updated_at": now.isoformat()},
+                    ttl_seconds=25 * 60,
+                )
+                logging.info("Updated status summary for %s.", device_id)
+            except Exception as e:
+                logging.error("Status summary failed for %s: %s", device_id, e)

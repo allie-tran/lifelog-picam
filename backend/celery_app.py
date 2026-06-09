@@ -41,6 +41,16 @@ celery.conf.update(
             "task": "tasks.nightly_recluster_all_devices",
             "schedule": crontab(hour=3, minute=30),
         },
+        # every 15 min — LLM status summary for recently-active devices
+        "update-status-summary": {
+            "task": "tasks.update_status_summary",
+            "schedule": crontab(minute="*/15"),
+        },
+        # every 30 min — re-queue images that lost pipeline tasks after Celery restart
+        "pipeline-catchup": {
+            "task": "tasks.pipeline_catchup_task",
+            "schedule": crontab(minute="*/30"),
+        },
     },
     timezone="UTC",
 )

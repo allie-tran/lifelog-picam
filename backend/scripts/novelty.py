@@ -2,21 +2,31 @@
 novelty.py — identify what was unique about a given day.
 
 Algorithm:
-  1. For each segment on `date`, compute its CLIP centroid (mean of image
-     embeddings, L2-normalised).
-  2. Fetch segment centroids for the previous HISTORY_DAYS days (same device).
-  3. novelty(s) = 1 − max cosine-similarity(s, any historical centroid).
-     A score near 1.0 means nothing like this happened recently.
-  4. Select the TOP_N most novel segments and feed their representative images
-     to the LLM with a prompt asking "what made today unusual".
+  For each segment on `date`, compute a novelty score with three components:
 
-The result is stored in DaySummary.unique_highlight.
+  1. CLIP novelty (W_CLIP):
+       1 − max cosine-similarity(segment centroid, any historical centroid).
+       Near 1.0 → nothing visually similar happened recently.
+
+  2. Frequency novelty (W_FREQ):
+       1 − (how often this activity_group appeared in history / total historical segments).
+       Near 1.0 → this group is rare in the past HISTORY_DAYS days.
+
+  3. Location novelty (W_LOCATION):
+       1 − (how often this location appeared in history / total historical segments).
+       Near 1.0 → person was somewhere they rarely go.
+
+  final_novelty = W_CLIP·clip + W_FREQ·freq + W_LOCATION·location
+
+  Top-N highest-scoring segments are sent (with images and location context)
+  to the LLM to generate a human-readable day highlight.
 """
 from __future__ import annotations
 
 import io
 import logging
 import random
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -25,27 +35,104 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from constants import THUMBNAIL_DIR
-from database.models import Image, ImageEmbedding
+from database.models import Image, ImageEmbedding, Location
 from llm import llm
 from llm.gemini import MixedContent, get_visual_content
 
 logger = logging.getLogger(__name__)
 
 HISTORY_DAYS = 14
-TOP_N = 3          # how many novel segments to highlight
-MAX_IMAGES_PER_SEG = 4  # images sent to LLM per novel segment
+TOP_N = 3
+MAX_IMAGES_PER_SEG = 4
+
+# Novelty component weights
+W_CLIP     = 0.50
+W_FREQ     = 0.30
+W_LOCATION = 0.20
 
 
 # ---------------------------------------------------------------------------
-# Centroid helpers
+# Historical stats (single query covers CLIP + frequency + location)
 # ---------------------------------------------------------------------------
+
+def _historical_stats(
+    session: Session,
+    device: str,
+    date: str,
+    days: int = HISTORY_DAYS,
+) -> tuple[np.ndarray, dict[str, int], dict[int, int], int]:
+    """
+    One query over the previous `days` days.
+
+    Returns:
+      centroids       — (S, D) L2-normalised per-segment mean CLIP embeddings
+      activity_counts — {activity_group: number_of_segments}
+      location_counts — {location_id: number_of_segments}
+      total_segments  — total distinct segments in history
+    """
+    date_dt = datetime.strptime(date, "%Y-%m-%d")
+    cutoff = (date_dt - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    rows = session.execute(
+        select(
+            Image.segment_id,
+            Image.date,
+            Image.activity_group,
+            Image.location_id,
+            ImageEmbedding.embedding,
+        )
+        .join(ImageEmbedding, ImageEmbedding.image_id == Image.id)
+        .where(
+            Image.device == device,
+            Image.date >= cutoff,
+            Image.date < date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+        )
+    ).all()
+
+    if not rows:
+        return np.empty((0, 768), dtype=np.float32), {}, {}, 0
+
+    # Group by (date, segment_id) to compute one centroid per segment
+    groups: dict[tuple, dict] = {}
+    for seg_id, seg_date, activity_group, location_id, emb in rows:
+        key = (seg_date, seg_id)
+        if key not in groups:
+            groups[key] = {
+                "embeddings": [],
+                "activity_group": activity_group or "",
+                "location_id": location_id,
+            }
+        groups[key]["embeddings"].append(np.array(emb, dtype=np.float32))
+
+    centroids: list[np.ndarray] = []
+    activity_counts: dict[str, int] = defaultdict(int)
+    location_counts: dict[int, int] = defaultdict(int)
+
+    for g in groups.values():
+        c = np.mean(g["embeddings"], axis=0)
+        norm = np.linalg.norm(c)
+        if norm > 1e-8:
+            centroids.append(c / norm)
+
+        if g["activity_group"]:
+            activity_counts[g["activity_group"]] += 1
+        if g["location_id"] is not None:
+            location_counts[g["location_id"]] += 1
+
+    total = len(groups)
+    mat = np.array(centroids, dtype=np.float32) if centroids else np.empty((0, 768), dtype=np.float32)
+    return mat, dict(activity_counts), dict(location_counts), total
+
+
 def _segment_centroid(
     session: Session,
     device: str,
     segment_id: int,
     date: str,
 ) -> Optional[np.ndarray]:
-    """Return L2-normalised mean CLIP embedding for a segment, or None."""
+    """L2-normalised mean CLIP embedding for a segment, or None."""
     rows = session.execute(
         select(ImageEmbedding.embedding)
         .join(Image, Image.id == ImageEmbedding.image_id)
@@ -61,79 +148,27 @@ def _segment_centroid(
         return None
 
     mat = np.array([np.array(r) for r in rows], dtype=np.float32)
-    centroid = mat.mean(axis=0)
-    norm = np.linalg.norm(centroid)
-    return centroid / norm if norm > 1e-8 else None
-
-
-def _historical_centroids(
-    session: Session,
-    device: str,
-    date: str,
-    days: int = HISTORY_DAYS,
-) -> np.ndarray:
-    """
-    Return matrix of shape (S, D) containing one centroid per segment
-    for the `days` days preceding `date`.  May be empty (shape (0, D)).
-    """
-    date_dt = datetime.strptime(date, "%Y-%m-%d")
-    cutoff = (date_dt - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    # Compute per-(date, segment_id) mean embedding in one query via averaging
-    rows = session.execute(
-        select(
-            Image.segment_id,
-            Image.date,
-            # pgvector supports avg() aggregate
-            ImageEmbedding.embedding,
-        )
-        .join(Image, Image.id == ImageEmbedding.image_id)
-        .where(
-            Image.device == device,
-            Image.date >= cutoff,
-            Image.date < date,
-            Image.deleted == False,
-            Image.segment_id.isnot(None),
-        )
-    ).all()
-
-    if not rows:
-        return np.empty((0, 768), dtype=np.float32)
-
-    # Group by (date, segment_id) and compute centroid in Python
-    groups: dict[tuple, list] = {}
-    for seg_id, seg_date, emb in rows:
-        key = (seg_date, seg_id)
-        groups.setdefault(key, []).append(np.array(emb, dtype=np.float32))
-
-    centroids = []
-    for vecs in groups.values():
-        c = np.mean(vecs, axis=0)
-        n = np.linalg.norm(c)
-        if n > 1e-8:
-            centroids.append(c / n)
-
-    return np.array(centroids, dtype=np.float32) if centroids else np.empty((0, 768), dtype=np.float32)
+    c = mat.mean(axis=0)
+    norm = np.linalg.norm(c)
+    return c / norm if norm > 1e-8 else None
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 def compute_segment_novelty(
     session: Session,
     device: str,
     date: str,
 ) -> list[dict]:
     """
-    Returns a list of dicts sorted by novelty (descending):
-      {segment_id, novelty, activity, representative_thumbnail}
-
-    novelty = 1 - max cosine similarity to any historical segment centroid.
-    A segment never seen before scores close to 1.0.
+    Returns a list of dicts sorted by novelty score (descending):
+      {segment_id, novelty, clip_novelty, freq_novelty, location_novelty,
+       activity, activity_group, location_name, representative_thumbnail}
     """
-    # Get today's distinct segment IDs
-    seg_ids = session.execute(
-        select(Image.segment_id, Image.activity)
+    seg_rows = session.execute(
+        select(Image.segment_id, Image.activity, Image.activity_group, Image.location_id)
         .where(
             Image.device == device,
             Image.date == date,
@@ -143,25 +178,53 @@ def compute_segment_novelty(
         .distinct(Image.segment_id)
     ).all()
 
-    if not seg_ids:
+    if not seg_rows:
         return []
 
-    history = _historical_centroids(session, device, date)
+    history, activity_counts, location_counts, total_hist = _historical_stats(
+        session, device, date
+    )
+
+    # Batch-fetch location names for all location_ids seen today
+    location_ids = {r.location_id for r in seg_rows if r.location_id is not None}
+    loc_map: dict[int, str] = {}
+    if location_ids:
+        loc_rows = session.execute(
+            select(Location.id, Location.name, Location.suburb, Location.city)
+            .where(Location.id.in_(location_ids))
+        ).all()
+        for lr in loc_rows:
+            loc_map[lr.id] = lr.name or lr.suburb or lr.city or ""
 
     results = []
-    for seg_id, activity in seg_ids:
+    for seg_id, activity, activity_group, location_id in seg_rows:
         centroid = _segment_centroid(session, device, seg_id, date)
         if centroid is None:
             continue
 
+        # 1. CLIP novelty
         if history.shape[0] > 0:
-            sims = history @ centroid   # (S,)
-            novelty = float(1.0 - sims.max())
+            clip_novelty = float(1.0 - (history @ centroid).max())
         else:
-            novelty = 1.0  # no history → everything is novel
+            clip_novelty = 1.0
 
-        # Pick a representative thumbnail (first image in segment)
-        thumb_row = session.execute(
+        # 2. Frequency novelty — rare activity_groups score higher
+        if total_hist > 0 and activity_group:
+            freq = activity_counts.get(activity_group, 0)
+            freq_novelty = 1.0 - min(freq / total_hist, 1.0)
+        else:
+            freq_novelty = 0.5  # no data → neutral
+
+        # 3. Location novelty — rarely-visited locations score higher
+        if total_hist > 0 and location_id is not None:
+            loc_freq = location_counts.get(location_id, 0)
+            location_novelty = 1.0 - min(loc_freq / total_hist, 1.0)
+        else:
+            location_novelty = 0.5  # unknown location → neutral
+
+        novelty = W_CLIP * clip_novelty + W_FREQ * freq_novelty + W_LOCATION * location_novelty
+
+        thumb = session.execute(
             select(Image.thumbnail)
             .where(
                 Image.device == device,
@@ -176,8 +239,13 @@ def compute_segment_novelty(
         results.append({
             "segment_id": seg_id,
             "novelty": novelty,
+            "clip_novelty": clip_novelty,
+            "freq_novelty": freq_novelty,
+            "location_novelty": location_novelty,
             "activity": activity or "Unknown",
-            "representative_thumbnail": thumb_row,
+            "activity_group": activity_group or "",
+            "location_name": loc_map.get(location_id, "") if location_id else "",
+            "representative_thumbnail": thumb,
         })
 
     results.sort(key=lambda x: x["novelty"], reverse=True)
@@ -190,8 +258,8 @@ def generate_unique_day_highlight(
     date: str,
 ) -> tuple[str, list[int]]:
     """
-    Compute novelty scores for all segments on `date`, then ask the LLM
-    to describe what made the day unusual based on the top-N novel segments.
+    Compute novelty scores, then ask the LLM to describe what made the day
+    unusual based on the top-N novel segments.
 
     Returns (highlight_text, [novel_segment_ids]).
     """
@@ -202,14 +270,16 @@ def generate_unique_day_highlight(
     top_novel = scored[:TOP_N]
     novel_ids = [s["segment_id"] for s in top_novel]
 
-    # Collect images for the LLM
     image_bytes: list[bytes] = []
     segment_labels: list[str] = []
 
     for entry in top_novel:
-        seg_id = entry["segment_id"]
-        activity = entry["activity"]
-        novelty_pct = int(entry["novelty"] * 100)
+        seg_id       = entry["segment_id"]
+        activity     = entry["activity"]
+        location     = entry["location_name"]
+        novelty_pct  = int(entry["novelty"] * 100)
+        freq_pct     = int(entry["freq_novelty"] * 100)
+        loc_pct      = int(entry["location_novelty"] * 100)
 
         thumbs = session.execute(
             select(Image.thumbnail)
@@ -222,7 +292,6 @@ def generate_unique_day_highlight(
             .order_by(Image.timestamp.asc())
         ).scalars().all()
 
-        # Down-sample to at most MAX_IMAGES_PER_SEG
         if len(thumbs) > MAX_IMAGES_PER_SEG:
             thumbs = random.sample(list(thumbs), MAX_IMAGES_PER_SEG)
 
@@ -237,34 +306,47 @@ def generate_unique_day_highlight(
             except Exception as e:
                 logger.debug("Could not open thumbnail %s: %s", path, e)
 
-        segment_labels.append(
-            f"Segment: {activity} (novelty {novelty_pct}%)"
+        label = f"Activity: {activity}"
+        if location:
+            label += f" @ {location}"
+        label += (
+            f" — novelty {novelty_pct}%"
+            f" (visual: {int(entry['clip_novelty']*100)}%,"
+            f" rarity: {freq_pct}%,"
+            f" new location: {loc_pct}%)"
         )
+        segment_labels.append(label)
+
+    activity_list = "; ".join(
+        f"{s['activity']}{' at ' + s['location_name'] if s['location_name'] else ''}"
+        for s in top_novel
+    )
 
     if not image_bytes:
-        # Fallback: text-only
-        activity_list = ", ".join(s["activity"] for s in top_novel)
         try:
             text = llm.generate_from_text(
-                f"On {date}, the following activities were unusual compared to the past two weeks: "
-                f"{activity_list}. In 2-3 sentences, describe what made this day unique."
+                f"On {date}, the following moments stood out as unusual compared to "
+                f"the past {HISTORY_DAYS} days (considering both activity rarity and "
+                f"location): {activity_list}. "
+                f"In 2-3 sentences in first person, describe what made this day unique."
             )
             return str(text).strip(), novel_ids
         except Exception as e:
             logger.error("Novelty LLM (text-only) failed: %s", e)
             return "", novel_ids
 
-    # Build interleaved [label, image, label, image, ...] content
     visual_contents = get_visual_content(image_bytes)
     mixed: list[MixedContent] = [
         MixedContent(
             type="text",
             content=(
-                f"These images are from {date}. The highlighted moments were unusual "
-                f"compared to the past {HISTORY_DAYS} days based on visual similarity analysis.\n"
+                f"These images are from {date}. The moments below stood out as unusual "
+                f"compared to the past {HISTORY_DAYS} days — scored by visual similarity, "
+                f"activity rarity, and location novelty.\n\n"
                 + "\n".join(segment_labels)
-                + "\n\nIn 2-3 sentences, describe in first person what made this day unique "
-                  "or different from your usual routine. Focus on the novel moments."
+                + "\n\nIn 2-3 sentences in first person, describe what made this day "
+                  "unique or different from your usual routine. Mention specific activities "
+                  "and locations where relevant."
             ),
         )
     ] + visual_contents

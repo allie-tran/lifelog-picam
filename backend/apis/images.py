@@ -9,7 +9,7 @@ from fastapi.params import Form
 from joblib.memory import traceback
 from nacl.public import Box, PrivateKey, PublicKey
 from pydantic import BaseModel
-from sqlalchemy import  select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 
@@ -28,7 +28,6 @@ from database.models import Device, SensorDevice
 from datetime import datetime, timedelta, timezone
 
 from scripts.face_recognition import delete_old_faces
-from scripts.segmentation import load_all_segments
 
 
 class FastAPIWithTime(FastAPI):
@@ -89,6 +88,13 @@ async def upload_image(
     user = verify_device_and_user(session, device, "camera")
     username = str(user.device_id)
 
+    session.execute(
+        update(SensorDevice)
+        .where(SensorDevice.device_id == device, SensorDevice.sensor_type == "camera")
+        .values(last_seen=datetime.now(timezone.utc))
+    )
+    session.commit()
+
     file_name = file.filename
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
@@ -136,22 +142,10 @@ async def upload_image(
     now = datetime.now()
 
     last_updated = app.last_update.get(username)
-
     if last_updated is None or (now - last_updated) > timedelta(minutes=10):
         app.last_update[username] = now
-
-        # Delete faces older than 1 hour
         an_hour_ago = datetime.now() - timedelta(hours=1)
         delete_old_faces(session, username, an_hour_ago)
-
-        # Annotate
-        load_all_segments(
-            session,
-            username,
-            date,
-            skip_annotations=False,
-            job_id=None,
-        )
 
     return {"status": "success", "timestamp": now.isoformat()}
 

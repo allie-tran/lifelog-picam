@@ -23,7 +23,7 @@ import {
 import { CustomGoal, DaySummary, SummarySegment } from '@utils/types';
 import { updateUserGoals } from 'apis/browsing';
 import { getDaySummary, processDate } from 'apis/process';
-import { CATEGORIES } from 'constants/activityColors';
+import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
@@ -178,6 +178,8 @@ const DaySummaryComponent = () => {
                     <OverviewSummary
                         totalMinutes={daySummary.totalMinutes}
                         totalImages={daySummary.totalImages}
+                        startTime={daySummary.segments[0]?.startTime}
+                        endTime={daySummary.segments[daySummary.segments.length - 1]?.endTime}
                     />
                 </Grid>
                 <Grid size={8}>
@@ -577,9 +579,13 @@ function SummaryText({ summaryText }: { summaryText: string }) {
 const OverviewSummary = ({
     totalMinutes,
     totalImages,
+    startTime,
+    endTime,
 }: {
     totalMinutes: number;
     totalImages: number;
+    startTime?: string;
+    endTime?: string;
 }) => {
     return (
         <Card variant="outlined">
@@ -599,7 +605,15 @@ const OverviewSummary = ({
                     Total captured time
                 </Typography>
 
-                <Box mt={2}>
+                {startTime && endTime && (
+                    <Box mt={1}>
+                        <Typography variant="body2" color="text.secondary">
+                            {dayjs(startTime).format('HH:mm')} – {dayjs(endTime).format('HH:mm')}
+                        </Typography>
+                    </Box>
+                )}
+
+                <Box mt={1}>
                     <Typography variant="body2">
                         Images: <strong>{totalImages}</strong>
                     </Typography>
@@ -610,6 +624,28 @@ const OverviewSummary = ({
 };
 
 function Timeline({ daySummary }: { daySummary: DaySummary }) {
+    const segments = daySummary?.segments ?? [];
+
+    const firstStart = segments.length > 0 ? dayjs(segments[0].startTime).valueOf() : null;
+    const lastEnd = segments.length > 0 ? dayjs(segments[segments.length - 1].endTime).valueOf() : null;
+    const totalSpanMs = firstStart != null && lastEnd != null ? lastEnd - firstStart : 0;
+
+    // Hourly tick marks within the span
+    const ticks = React.useMemo(() => {
+        if (!firstStart || !totalSpanMs) return [];
+        const result: { pct: number; label: string }[] = [];
+        // Start at the next whole hour after firstStart
+        let t = dayjs(firstStart).startOf('hour').add(1, 'hour').valueOf();
+        while (t < lastEnd!) {
+            result.push({
+                pct: ((t - firstStart) / totalSpanMs) * 100,
+                label: dayjs(t).format('HH:mm'),
+            });
+            t = dayjs(t).add(1, 'hour').valueOf();
+        }
+        return result;
+    }, [firstStart, lastEnd, totalSpanMs]);
+
     return (
         <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
@@ -620,40 +656,68 @@ function Timeline({ daySummary }: { daySummary: DaySummary }) {
                 >
                     Timeline
                 </Typography>
-                {daySummary && (
-                    <Stack
-                        direction="row"
-                        spacing={0}
-                        sx={{
-                            overflowX: 'auto',
-                            maxWidth: '100%',
-                            minWidth: '400px',
-                            pt: 1,
-                            justifyContent: 'center',
-                        }}
-                        flexWrap="wrap"
-                    >
-                        {daySummary.segments.map(
-                            (segment: SummarySegment, index: number) => (
-                                <Tooltip
-                                    title={`${segment.activity}: ${dayjs(segment.startTime).format('HH:mm')} - ${dayjs(segment.endTime).format('HH:mm')} (${minutesToHM(segment.duration / 60)})`}
-                                    key={index}
-                                    followCursor
+                {segments.length > 0 && totalSpanMs > 0 && (
+                    <Box sx={{ position: 'relative', width: '100%', pt: 1 }}>
+                        {/* Segment bars */}
+                        <Box sx={{ display: 'flex', flexDirection: 'row', width: '100%' }}>
+                            {segments.map((segment: SummarySegment, index: number) => {
+                                const segStartMs = dayjs(segment.startTime).valueOf();
+                                const segEndMs = dayjs(segment.endTime).valueOf();
+                                const prevEndMs = index === 0
+                                    ? firstStart!
+                                    : dayjs(segments[index - 1].endTime).valueOf();
+
+                                const gapPct = ((segStartMs - prevEndMs) / totalSpanMs) * 100;
+                                const widthPct = ((segEndMs - segStartMs) / totalSpanMs) * 100;
+
+                                return (
+                                    <React.Fragment key={index}>
+                                        {gapPct > 0 && (
+                                            <Box sx={{ width: `${gapPct}%`, height: 48, backgroundColor: 'transparent' }} />
+                                        )}
+                                        <Tooltip
+                                            title={`${segment.activity}: ${dayjs(segment.startTime).format('HH:mm')} – ${dayjs(segment.endTime).format('HH:mm')} (${minutesToHM(segment.duration / 60)})`}
+                                            followCursor
+                                        >
+                                            <Box
+                                                sx={{
+                                                    height: 48,
+                                                    width: `${widthPct}%`,
+                                                    minWidth: 2,
+                                                    backgroundColor:
+                                                        THEME_COLORS[segment.activityGroup] ||
+                                                        CATEGORIES[segment.activity] ||
+                                                        '#bdc3c7',
+                                                }}
+                                            />
+                                        </Tooltip>
+                                    </React.Fragment>
+                                );
+                            })}
+                        </Box>
+
+                        {/* X-axis tick marks */}
+                        <Box sx={{ position: 'relative', width: '100%', height: 20, mt: '2px' }}>
+                            {ticks.map(({ pct, label }) => (
+                                <Box
+                                    key={label}
+                                    sx={{
+                                        position: 'absolute',
+                                        left: `${pct}%`,
+                                        transform: 'translateX(-50%)',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                    }}
                                 >
-                                    <Box
-                                        sx={{
-                                            height: 48,
-                                            width: segment.duration / 3600 / 15,
-                                            backgroundColor:
-                                                CATEGORIES[segment.activity] ||
-                                                '#bdc3c7',
-                                        }}
-                                        key={index}
-                                    ></Box>
-                                </Tooltip>
-                            )
-                        )}
-                    </Stack>
+                                    <Box sx={{ width: '1px', height: 4, backgroundColor: 'text.disabled' }} />
+                                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10, lineHeight: 1 }}>
+                                        {label}
+                                    </Typography>
+                                </Box>
+                            ))}
+                        </Box>
+                    </Box>
                 )}
             </CardContent>
         </Card>

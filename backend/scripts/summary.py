@@ -37,12 +37,47 @@ encoded_activities_dict = {
 }
 
 encoded_prompts = {}
+_raw_text_cache: dict[str, np.ndarray] = {}
+
+# Minimum cosine similarity for period target semantic matching via CLIP text.
+_PERIOD_TEXT_SIM_THRESHOLD = 0.80
+
+# Activity labels that indicate the segment is not yet annotated / has no content.
+_SKIP_ACTIVITIES = {"no activity", "unclear", "unclear activity", ""}
 
 def encode_with_cache(session: Session, prompt: str, device: str):
     if prompt not in encoded_prompts:
         encoded = clip_model.encode_text(prompt, normalize=True)
         encoded_prompts[prompt] = apply_transformation(encoded, get_matrix(session, device))
     return encoded_prompts[prompt]
+
+
+def _text_vec(text: str) -> np.ndarray:
+    """Raw (no device transformation) CLIP text encoding, cached."""
+    if text not in _raw_text_cache:
+        _raw_text_cache[text] = clip_model.encode_text(text, normalize=True)
+    return _raw_text_cache[text]
+
+
+def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
+    """
+    Returns True when a segment should count toward a period target.
+
+    Priority:
+      1. activity_group exact match (the LLM's fixed-group pick)
+      2. activity exact match (case-insensitive)
+      3. CLIP text cosine similarity >= _PERIOD_TEXT_SIM_THRESHOLD
+         so free-form labels like "writing code" match "Coding"
+    """
+    if seg.activity_group == target_name:
+        return True
+    activity = seg.activity or ""
+    if not activity or activity.lower() in _SKIP_ACTIVITIES:
+        return False
+    if activity.lower() == target_name.lower():
+        return True
+    sim = float(np.dot(_text_vec(activity), _text_vec(target_name)))
+    return sim >= _PERIOD_TEXT_SIM_THRESHOLD
 
 
 def summarize_lifelog_by_day(
@@ -52,73 +87,35 @@ def summarize_lifelog_by_day(
 ) -> DaySummary:
     """
     Summarize lifelog with custom targets: Bursts, Periods, and Binary.
+
+    Incremental: binary/burst CLIP metrics are accumulated from the last
+    analysis_checkpoint instead of reprocessing all images every call.
+    Segment-based metrics (category_minutes, period_metrics) are always
+    recomputed from the current segments list (O(segments), not O(images)).
     """
-    paths = [
-        record.image_path
-        for record in ImageRecord.find(
-            session,
-            filter={"device": summary.device, "date": summary.date, "deleted": False}
+    # ── Segment-based metrics: always fresh to avoid double-counting ──────────
+    summary.total_minutes = sum(seg.duration / 60.0 for seg in summary.segments)
+    summary.category_minutes = {}
+    for seg in summary.segments:
+        category = seg.activity_group or GROUPED_CATEGORIES.get(seg.activity, "Unclear")
+        summary.category_minutes[category] = (
+            summary.category_minutes.get(category, 0) + seg.duration / 60.0
         )
-    ]
-    paths, feats = fetch_embeddings(session, summary.device, paths)
 
-    target_configs = []
-    for target in targets:
-        logger.debug("Encoding target: %s (%s)", target.name, target.action_type)
-        name = target.name
-        action_type = target.action_type
-        encoded_query = encode_with_cache(session, f"a photo of {name}", summary.device)
-        encoded_negative_query = encode_with_cache(session, f"a photo without {name}", summary.device)
-
-        target_configs.append((name, action_type, encoded_query, encoded_negative_query))
-
-        if action_type == ActionType.BINARY:
-            summary.binary_metrics[name] = 0.0
-        elif action_type == ActionType.BURST:
-            summary.burst_metrics[name] = []
-
-    if len(feats) == 0:
-        logger.warning("No embeddings for %s on %s.", summary.device, summary.date)
-        return summary
-    all_feats = feats / np.linalg.norm(feats, axis=1, keepdims=True)
-    summary.total_images = len(paths)
-
-    for name, action_type, query_vec, neg_query_vec in target_configs:
-        all_pos_sim = all_feats @ query_vec
-        all_neg_sim = all_feats @ neg_query_vec
-        is_present_array = all_pos_sim > all_neg_sim
-
-        for idx, is_present in enumerate(is_present_array):
-            if is_present:
-                if action_type == ActionType.BINARY:
-                    summary.binary_metrics[name] += 1
-                elif action_type == ActionType.BURST:
-                    basename = os.path.basename(paths[idx]).split(".")[0]
-                    timestamp = parse_date(basename).timestamp()
-                    if summary.burst_metrics[name] and timestamp - summary.burst_metrics[name][-1] < 30:
-                        summary.burst_metrics[name][-1] = timestamp
-                    else:
-                        summary.burst_metrics[name].append(timestamp)
-
+    # ── Period targets: segment-based matching + representative image lookup ──
     period_targets = [
         target.name for target in targets if target.action_type == ActionType.PERIOD
     ]
-
     for target_name in period_targets:
         target_segments = [
-            seg
-            for seg in summary.segments
-            if seg.activity.lower() == target_name.lower()
-            or GROUPED_CATEGORIES.get(seg.activity) == target_name
+            seg for seg in summary.segments if _period_matches(seg, target_name)
         ]
-
         if not target_segments:
             continue
 
         target_segments.sort(key=lambda seg: seg.start_time)
         merged = []
         current_seg = target_segments[0]
-
         for next_seg in target_segments[1:]:
             if (next_seg.start_time - current_seg.end_time) <= timedelta(minutes=30):
                 current_seg.end_time = next_seg.end_time
@@ -131,31 +128,101 @@ def summarize_lifelog_by_day(
         query_vec = encode_with_cache(session, f"a photo of {target_name}", summary.device)
         for seg in merged:
             seg_paths, seg_feats = get_segment_data(session, summary, seg)
-            rep_indices = pick_representative_index_for_segment(
-                seg_paths, seg_feats, query_vec
-            )
-            seg.representative_images = [_orm_to_lifelog(img) for img in
-                                         session.execute(
+            rep_indices = pick_representative_index_for_segment(seg_paths, seg_feats, query_vec)
+            seg.representative_images = [
+                _orm_to_lifelog(img)
+                for img in session.execute(
                     select(Image).where(
                         Image.device == summary.device,
                         Image.image_path.in_(rep_indices),
                     )
-                ).scalars().all()]
-
+                ).scalars().all()
+            ]
             seg.representative_image = (
                 seg.representative_images[0] if seg.representative_images else None
             )
-
         summary.period_metrics[target_name] = merged
         summary.custom_summaries[target_name] = generate_period_description(
             target_name, merged, summary.device
         )
 
-    summary.total_minutes = sum(seg.duration / 60.0 for seg in summary.segments)
-    for seg in summary.segments:
-        category = GROUPED_CATEGORIES.get(seg.activity, "Unclear")
-        summary.category_minutes[category] = summary.category_minutes.get(category, 0) + seg.duration / 60.0
+    # ── CLIP-based metrics: incremental from analysis_checkpoint ─────────────
+    # Images sorted ascending by path (YYYYMMDD_HHMMSS.jpg = chronological).
+    all_paths = sorted(
+        record.image_path
+        for record in ImageRecord.find(
+            session,
+            filter={"device": summary.device, "date": summary.date, "deleted": False},
+        )
+    )
+    summary.total_images = len(all_paths)
 
+    checkpoint = summary.analysis_checkpoint
+    if checkpoint:
+        new_paths = [p for p in all_paths if p > checkpoint]
+        logger.debug(
+            "Incremental CLIP: %d new images since checkpoint %s (total %d)",
+            len(new_paths), checkpoint, len(all_paths),
+        )
+    else:
+        new_paths = all_paths
+        # First run: reset aggregates so we start clean
+        for target in targets:
+            if target.action_type == ActionType.BINARY:
+                summary.binary_metrics[target.name] = 0.0
+            elif target.action_type == ActionType.BURST:
+                summary.burst_metrics[target.name] = []
+
+    if not new_paths:
+        # Nothing new — checkpoint already at the end
+        if all_paths:
+            summary.analysis_checkpoint = all_paths[-1]
+        return summary
+
+    new_paths, new_feats = fetch_embeddings(session, summary.device, new_paths)
+    if len(new_feats) == 0:
+        logger.warning("No embeddings for new images on %s/%s.", summary.device, summary.date)
+        return summary
+
+    norm_feats = new_feats / np.linalg.norm(new_feats, axis=1, keepdims=True)
+
+    clip_targets = [
+        (
+            target.name,
+            target.action_type,
+            encode_with_cache(session, f"a photo of {target.name}", summary.device),
+            encode_with_cache(session, f"a photo without {target.name}", summary.device),
+        )
+        for target in targets
+        if target.action_type in (ActionType.BINARY, ActionType.BURST)
+    ]
+
+    for name, action_type, query_vec, neg_query_vec in clip_targets:
+        # Ensure keys exist when a new target is added after first checkpoint
+        if action_type == ActionType.BINARY:
+            summary.binary_metrics.setdefault(name, 0.0)
+        elif action_type == ActionType.BURST:
+            summary.burst_metrics.setdefault(name, [])
+
+        pos_sim = norm_feats @ query_vec
+        neg_sim = norm_feats @ neg_query_vec
+        present = pos_sim > neg_sim
+
+        for idx, is_present in enumerate(present):
+            if not is_present:
+                continue
+            if action_type == ActionType.BINARY:
+                summary.binary_metrics[name] += 1
+            elif action_type == ActionType.BURST:
+                basename = os.path.basename(new_paths[idx]).split(".")[0]
+                timestamp = parse_date(basename).timestamp()
+                existing = summary.burst_metrics[name]
+                if existing and timestamp - existing[-1] < 30:
+                    existing[-1] = timestamp
+                else:
+                    existing.append(timestamp)
+
+    summary.analysis_checkpoint = new_paths[-1]
     return summary
 
 
@@ -283,6 +350,7 @@ def _build_segment_entry(
         return None
     images_sorted = sorted(images, key=lambda img: img.timestamp)
     activity = images_sorted[0].activity or "Unclear"
+    activity_group = images_sorted[0].activity_group or None
     start_time = images_sorted[0].timestamp
     end_time = images_sorted[-1].timestamp
     duration = max(int((end_time - start_time).total_seconds()), 10)
@@ -290,6 +358,7 @@ def _build_segment_entry(
         segment_id=segment_id,
         segment_index=None,
         activity=activity,
+        activity_group=activity_group,
         start_time=start_time,
         end_time=end_time,
         duration=duration,
@@ -479,7 +548,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
 
         activity_lines = []
         for seg in raw_activities:
-            if seg["activity"] == "No Activity":
+            if (seg["activity"] or "").lower() in _SKIP_ACTIVITIES:
                 continue
             line = f'{seg["start_time"].strftime("%H:%M")}–{seg["end_time"].strftime("%H:%M")}: {seg["activity_description"] or seg["activity"]}'
             if seg["location"]:

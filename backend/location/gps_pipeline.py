@@ -407,7 +407,6 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
         closest = closest.copy()  # avoid mutating original point
         gap_s = abs(closest["timestamp"] - img_ts)
         gaps.append(gap_s)
-        print(f"Image {image.image_path} at {img_ts} assigned to GPS point at {closest['timestamp']} with gap {gap_s}")
 
         if gap_s <= timedelta(seconds=30):
             stats["within_30s"] += 1
@@ -536,7 +535,7 @@ def enrich_and_index_segments(
         tz = find_timezone(float(lon), float(lat))
 
         # ── Map geo dict → Location columns ──────────────────────────────────
-        name = geo.get("name") or geo.get("city") or "Unknown"
+        name = geo.get("name") or geo.get("suburb") or geo.get("city") or "Unknown"
         cats = geo.get("categories", [])
         categories_str = "; ".join(cats[:5]) if cats else ""
         address = geo.get("address", "") or name

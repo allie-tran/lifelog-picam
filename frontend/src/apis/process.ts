@@ -1,4 +1,4 @@
-import { DaySummary, GPSData } from '@utils/types';
+import { CurrentStatus, DaySummary, GPSData } from '@utils/types';
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
 
@@ -34,4 +34,11 @@ export const getGPSByDate = async (deviceId: string, dateString: string) => {
         `${BACKEND_URL}/location/get-gps-by-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(deviceId)}`
     );
     return response.data as GPSData[];
+}
+
+export const getCurrentStatus = async (deviceId: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/status/current?device=${encodeURIComponent(deviceId)}`
+    );
+    return response.data as CurrentStatus;
 }

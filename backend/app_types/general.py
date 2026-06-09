@@ -197,6 +197,7 @@ class LifelogImage(CamelCaseModel):
 
     segment_id: Optional[int] = None
     activity: Optional[str] = None
+    activity_group: Optional[str] = None
     activity_description: Optional[str] = None
     activity_confidence: Optional[str] = None
 
@@ -212,7 +213,8 @@ class ResultSegment(CamelCaseModel):
 class SummarySegment(CamelCaseModel):
     segment_id: Optional[int] = None   # DB segment_id — used for incremental cache updates
     segment_index: int | None = None
-    activity: str
+    activity: str = "Unclear"
+    activity_group: Optional[str] = None
     start_time: datetime
     end_time: datetime
     duration: int
@@ -280,3 +282,4 @@ class DaySummary(CamelCaseModel):
     category_minutes: Dict[str, float] = {}
     total_images: int = 0
     total_minutes: float = 0.0
+    analysis_checkpoint: Optional[str] = None  # image_path of last CLIP-analyzed image

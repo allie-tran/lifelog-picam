@@ -7,6 +7,7 @@ import {
 } from '@mui/material';
 import { GPSData } from '@utils/types';
 import { getGPSByDate } from 'apis/process';
+import CurrentStatus from 'components/CurrentStatus';
 import CustomDatePicker from 'components/CustomDatePicker';
 import DeleteRange from 'components/DeleteRange';
 import GpsTrack from 'components/GpsTrack';
@@ -145,9 +146,9 @@ function MainPage() {
                             allDates={allDates}
                         />
                     </Stack>
-                    {/* <Settings /> */}
-                    {/* <DaySummaryComponent /> */}
-                    {/* <SensorHistory /> */}
+                    {(!date || date === today) && (
+                        <CurrentStatus deviceId={deviceId} />
+                    )}
                 </Container>
                 {availableHours.length > 0 && (
                     <Typography

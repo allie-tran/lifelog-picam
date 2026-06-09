@@ -18,6 +18,8 @@ from app_types import CamelCaseModel
 from location.gps_pipeline import run_pipeline
 from database.models import Image, RawGPS, ImageGPS, SensorDevice
 from datetime import datetime, timezone as py_timezone
+from sqlalchemy import update as sa_update
+from sessions.redis import redis_client as _redis_client
 from timezonefinder import TimezoneFinder
 
 from location.utils import find_timezone
@@ -37,6 +39,8 @@ class GPSUploadRequest(CamelCaseModel):
     device_id: str
 
 tf = TimezoneFinder()
+_GPS_PIPELINE_GATE_MINUTES = 10
+
 @app.put("/upload-gps")
 async def upload_gps(
     request: GPSUploadRequest,
@@ -45,6 +49,13 @@ async def upload_gps(
     # find device
     device_id = request.device_id
     user = verify_device_and_user(session, device_id, "location")
+
+    session.execute(
+        sa_update(SensorDevice)
+        .where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == "location")
+        .values(last_seen=datetime.now(py_timezone.utc))
+    )
+
     timezone = find_timezone(request.longitude, request.latitude)
     timestamp = datetime.fromisoformat(request.timestamp).astimezone(py_timezone.utc).replace(tzinfo=None)
 
@@ -75,6 +86,16 @@ async def upload_gps(
     stmt = stmt.returning(RawGPS.id)
     result = session.execute(stmt)
     session.commit()
+
+    # Trigger GPS pipeline (→ location enrichment → segmentation) at most every
+    # _GPS_PIPELINE_GATE_MINUTES minutes per device.  The gate lives in Redis so
+    # it's shared across API workers and survives restarts within the TTL window.
+    gate_key = f"gps_pipeline_gate:{user.device_id}"
+    if not _redis_client.get_value(gate_key):
+        _redis_client.set_with_ttl(gate_key, "1", _GPS_PIPELINE_GATE_MINUTES * 60)
+        date = timestamp.strftime("%Y-%m-%d")
+        from tasks import run_gps_pipeline_task
+        run_gps_pipeline_task.delay(user.device_id, date)
 
     return {"status": "success", "raw_gps_id": result.scalar()}
 
@@ -119,6 +140,9 @@ async def last_gps(
         "timezone": last_gps.timezone
     }
 
+_GPS_TRACK_CACHE_TTL_TODAY = 60
+_GPS_TRACK_CACHE_TTL_PAST = 600
+
 @app.get("/get-gps-by-date")
 def get_gps_by_date(
     date: str,
@@ -128,6 +152,15 @@ def get_gps_by_date(
     nested=False,
 ):
     _require_owner(access_level)
+
+    from datetime import date as _date_cls
+    is_today = (date == _date_cls.today().isoformat())
+
+    if not nested:
+        cached = _redis_client.get_json(f"gps_track:{device}:{date}")
+        if cached is not None:
+            return cached
+
     gps = session.execute(
         select(ImageGPS)
         .where(Image.date == date)
@@ -141,4 +174,12 @@ def get_gps_by_date(
     if len(res) == 0 and not nested and date:
         run_pipeline(session, device, date)
         return get_gps_by_date(date, device, access_level, session, nested=True)
+
+    if not nested and res:
+        ttl = _GPS_TRACK_CACHE_TTL_TODAY if is_today else _GPS_TRACK_CACHE_TTL_PAST
+        _redis_client.set_json_with_ttl(
+            f"gps_track:{device}:{date}",
+            [r.model_dump(mode="json") for r in res],
+            ttl,
+        )
     return res

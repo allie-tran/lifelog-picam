@@ -51,6 +51,7 @@ type ImageObject = {
     timezone: string;
     isVideo: boolean;
     activity?: string;
+    activityGroup?: string;
     activityConfidence?: number;
     activityDescription?: string;
     segmentId?: string;
@@ -90,6 +91,7 @@ type SummarySegment = {
     representativeImages: ImageObject[];
     segmentIndex: number;
     activity: string;
+    activityGroup: string;
     startTime: string;
     endTime: string;
     duration: number;
@@ -138,6 +140,29 @@ interface Point {
 }
 
 export type { ImageObject, SummarySegment, DaySummary, Point };
+
+export type SensorStatus = {
+    deviceId: string;
+    sensorType: string;
+    nickname?: string;
+    lastSeen?: string;
+    online: boolean;
+};
+
+export type CurrentStatus = {
+    cameraLastSeen?: string;
+    cameraOnline: boolean;
+    currentActivity?: string;
+    currentActivityDescription?: string;
+    currentLocation?: LocationData;
+    currentThumbnail?: string;
+    segmentSince?: string;
+    currentLat?: number;
+    currentLon?: number;
+    sensors: SensorStatus[];
+    summary?: string;
+    summaryUpdatedAt?: string;
+};
 
 export type SearchQuery = {
     text: string;

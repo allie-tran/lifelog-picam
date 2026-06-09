@@ -10,7 +10,8 @@ from database.models import Image, ImageEmbedding
 from database.types import DaySummaryRecord
 from sessions.redis import RedisClient
 from tqdm.auto import tqdm
-from tasks import describe_segment_task
+# describe_segment_task imported lazily in load_all_segments to break the
+# tasks → location.gps_pipeline → segmentation → tasks circular import.
 from scripts.utils import compress_image
 from database.types import _orm_to_lifelog
 
@@ -357,6 +358,7 @@ def load_all_segments(
 
         if not skip_annotations:
             try:
+                from tasks import describe_segment_task  # noqa: PLC0415
                 describe_segment_task.delay(
                     device_id,
                     date,
