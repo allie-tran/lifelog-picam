@@ -143,12 +143,24 @@ class GPSInfo(BaseModel):
 class LocationInfo(CamelCaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
-    info: Optional[str] = None
-    address: Optional[str] = None
+    stop: Optional[bool] = None
+    # admin hierarchy
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
     country: str
+    postcode: Optional[str] = None
+    # geocoder output
+    address: Optional[str] = None
     timezone: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    # enrichment
+    wikidata_id: Optional[str] = None
+    description: Optional[str] = None
+    categories: Optional[str] = None
+    # legacy (may be null on new records)
+    info: Optional[str] = None
 
     @field_validator("id", mode="before")
     @classmethod

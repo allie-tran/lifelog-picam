@@ -12,7 +12,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
 from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image, Location
-from location.enrich_stops import enrich_segment
+from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
 import pytz
 
@@ -485,6 +485,125 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
 
     return rows
 
+# ─── Step 8: Geocode segments → Location table ───────────────────────────────
+
+def enrich_and_index_segments(
+    session: Session,
+    segments: list[dict],
+    df: pd.DataFrame,
+    device: str,
+) -> None:
+    """
+    For every segment:
+      - Stop  → enrich_stop(centroid) via Nominatim zoom=18 + Wikidata
+      - Move  → enrich_move(gps_pts) builds "City A → City B" from track points
+
+    Upserts a Location row (keyed on OSM element id or rounded coords) and
+    bulk-updates Image.location_id for all images in the segment's time window.
+    """
+    for seg in tqdm(segments, desc="   Geocoding"):
+        lat = seg.get("centroid_lat")
+        lon = seg.get("centroid_lon")
+        if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
+            continue
+
+        is_stop = bool(seg.get("is_stop"))
+        start_ts = seg.get("start_ts")
+        end_ts = seg.get("end_ts")
+
+        if is_stop:
+            geo = enrich_stop(float(lat), float(lon))
+        else:
+            seg_df = df[
+                (df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)
+            ] if start_ts is not None and end_ts is not None else pd.DataFrame()
+            gps_pts = (
+                list(zip(seg_df["latitude"].tolist(), seg_df["longitude"].tolist()))
+                if not seg_df.empty else []
+            )
+            geo = enrich_move(gps_pts, fallback_lat=float(lat), fallback_lon=float(lon))
+
+        # Dedup key — in priority: OSM element id → Wikidata QID → 5-decimal coords
+        # 5 decimal places ≈ 1 m precision, preventing false merges of nearby places
+        if geo.get("osm_id"):
+            raw_key = f"osm_{geo['osm_type']}{geo['osm_id']}"
+        elif geo.get("wikidata_id"):
+            raw_key = f"wikidata_{geo['wikidata_id']}"
+        else:
+            raw_key = f"nominatim_{lat:.5f}_{lon:.5f}"
+        key = f"stop={is_stop},{raw_key}"
+
+        tz = find_timezone(float(lon), float(lat))
+
+        # ── Map geo dict → Location columns ──────────────────────────────────
+        name = geo.get("name") or geo.get("city") or "Unknown"
+        cats = geo.get("categories", [])
+        categories_str = "; ".join(cats[:5]) if cats else ""
+        address = geo.get("address", "") or name
+
+        stmt = insert(Location).values(
+            id=uuid.uuid4(),
+            key=key,
+            name=name,
+            stop=is_stop,
+            # admin hierarchy
+            suburb=geo.get("suburb") or None,
+            city=geo.get("city") or None,
+            region=geo.get("region") or None,
+            country=geo.get("country", ""),
+            postcode=geo.get("postcode") or None,
+            # geocoder output
+            address=address,
+            timezone=tz,
+            latitude=float(lat),
+            longitude=float(lon),
+            # OSM provenance
+            osm_type=geo.get("osm_type") or None,
+            osm_id=geo.get("osm_id") or None,
+            # Wikidata
+            wikidata_id=geo.get("wikidata_id") or None,
+            description=geo.get("description") or None,
+            categories=categories_str or None,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["key"],
+            set_={
+                "name": stmt.excluded.name,
+                "suburb": stmt.excluded.suburb,
+                "city": stmt.excluded.city,
+                "region": stmt.excluded.region,
+                "country": stmt.excluded.country,
+                "postcode": stmt.excluded.postcode,
+                "address": stmt.excluded.address,
+                "timezone": stmt.excluded.timezone,
+                "latitude": stmt.excluded.latitude,
+                "longitude": stmt.excluded.longitude,
+                "osm_type": stmt.excluded.osm_type,
+                "osm_id": stmt.excluded.osm_id,
+                "wikidata_id": stmt.excluded.wikidata_id,
+                "description": stmt.excluded.description,
+                "categories": stmt.excluded.categories,
+            },
+        ).returning(Location.id)
+
+        location_id = session.execute(stmt).scalar()
+        session.flush()
+
+        if location_id and start_ts is not None and end_ts is not None:
+            start_dt = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else start_ts
+            end_dt = end_ts.to_pydatetime() if hasattr(end_ts, "to_pydatetime") else end_ts
+            result = session.execute(
+                update(Image)
+                .where(Image.device == device)
+                .where(Image.timestamp.between(start_dt, end_dt))
+                .values(location_id=location_id)
+            )
+
+            print(
+                f"   Linked {result.rowcount} images to location '{name}' (stop={is_stop})"
+            )
+    session.commit()
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def run_pipeline(session: Session, device: str, date: str):
@@ -583,33 +702,9 @@ def run_pipeline(session: Session, device: str, date: str):
     session.commit()
 
     print(f"   GPS assignment to images complete with {len(image_data)} matches")
-    print("8. Enrich stops.")
-    for segment in segments:
-        data = enrich_segment(segment["centroid_lat"], segment["centroid_lon"], segment["is_stop"])
-        track_id = segment["track_id"]
-        print("-" * 40)
-        if data and data["key"]:
-            print(data)
-            data["timezone"] = find_timezone(segment["centroid_lat"], segment["centroid_lon"])
-            stmt = insert(Location).values(**data)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["key"],
-                set_={
-                    "key": stmt.excluded.key,
-                    "name": stmt.excluded.name,
-                    "timezone": stmt.excluded.timezone,
-                }
-            )
-            stmt = stmt.returning(Location.id)
-            id = session.execute(stmt).scalar_one_or_none()
-            if id:
-                print(f"Enriched track '{track_id}' with location '{data['name']}' ({data['key']})")
-                images_in_track = [d["image_id"] for d in image_data if d.get("track_id") == track_id]
-                image_paths = [d["image_path"] for d in image_data if d.get("track_id") == track_id]
-                print(f"   {len(images_in_track)} images in this track: {image_paths[-10:]}")
-                stmt = update(Image).where(Image.id.in_(images_in_track)).values(location_id=id)
-                session.execute(stmt)
 
+    print("8. Enriching segments and indexing locations…")
+    enrich_and_index_segments(session, segments, df, device)
     session.commit()
     # session.execute(
     #     update(Image)

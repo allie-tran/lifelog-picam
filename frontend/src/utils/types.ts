@@ -24,10 +24,24 @@ export type GPSData = {
 export type LocationData = {
     id?: string;
     name?: string;
-    address?: string;
+    stop?: boolean;
+    // admin hierarchy
+    suburb?: string;
+    city?: string;
+    region?: string;
     country?: string;
-    info?: string;
+    postcode?: string;
+    // geocoder output
+    address?: string;
     timezone?: string;
+    latitude?: number;
+    longitude?: number;
+    // enrichment
+    wikidataId?: string;
+    description?: string;
+    categories?: string;
+    // legacy
+    info?: string;
 };
 
 type ImageObject = {

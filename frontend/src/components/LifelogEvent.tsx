@@ -1,10 +1,14 @@
 import {
     Button,
+    Chip,
     Divider,
     Stack,
     TextField,
+    Tooltip,
     Typography,
 } from '@mui/material';
+import DirectionsWalkIcon from '@mui/icons-material/DirectionsWalk';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { GPSData, ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
@@ -74,23 +78,68 @@ const LifelogEvent = ({
                 }}
             >
                 <Divider />
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction="row" spacing={1} alignItems="flex-start">
                     {location ? (
-                        <Stack spacing={1}>
-                            <Typography
-                                variant="subtitle2"
-                                color="textSecondary"
-                            >
-                                {location.name}, {location.country} (
-                                {location.info})
-                            </Typography>
-                            <Typography
-                                variant="subtitle2"
-                                color="textSecondary"
-                            >
-                                {location.address}
-                            </Typography>
-                        </Stack>
+                        location.stop === false ? (
+                            // ── Move segment ──────────────────────────────
+                            <Stack direction="row" spacing={1} alignItems="center">
+                                <DirectionsWalkIcon fontSize="small" color="action" />
+                                <Stack>
+                                    <Typography variant="subtitle2" fontWeight="medium">
+                                        {location.name || 'Moving'}
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary">
+                                        {[location.city, location.region, location.country]
+                                            .filter(Boolean)
+                                            .join(', ')}
+                                    </Typography>
+                                </Stack>
+                            </Stack>
+                        ) : (
+                            // ── Stop segment ──────────────────────────────
+                            <Stack direction="row" spacing={1} alignItems="flex-start">
+                                <LocationOnIcon fontSize="small" color="primary" sx={{ mt: 0.3 }} />
+                                <Stack spacing={0.5}>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                        <Typography variant="subtitle2" fontWeight="medium">
+                                            {location.name || location.suburb || location.city || 'Unknown place'}
+                                        </Typography>
+                                        {location.categories && (
+                                            <Chip
+                                                label={location.categories.split(';')[0].trim()}
+                                                size="small"
+                                                variant="outlined"
+                                                sx={{ height: 18, fontSize: '0.65rem' }}
+                                            />
+                                        )}
+                                    </Stack>
+                                    <Typography variant="caption" color="textSecondary">
+                                        {[location.suburb, location.city, location.country]
+                                            .filter(Boolean)
+                                            .join(', ')}
+                                        {location.postcode ? ` · ${location.postcode}` : ''}
+                                    </Typography>
+                                    {location.description && (
+                                        <Tooltip title={location.description} arrow>
+                                            <Typography
+                                                variant="caption"
+                                                color="textSecondary"
+                                                sx={{
+                                                    fontStyle: 'italic',
+                                                    maxWidth: 400,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                    cursor: 'default',
+                                                }}
+                                            >
+                                                {location.description}
+                                            </Typography>
+                                        </Tooltip>
+                                    )}
+                                </Stack>
+                            </Stack>
+                        )
                     ) : (
                         <Typography variant="subtitle2" color="textSecondary">
                             No location data

@@ -51,18 +51,37 @@ class Location(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    key = Column(
-        Text, nullable=False, unique=True
-    )
-    name = Column(Text)
+    key = Column(Text, nullable=False, unique=True)
+
+    # Core identity
+    name = Column(Text)          # POI name for stops; "City A → City B" for moves
+    stop = Column(Boolean)       # True = stop, False = move
+
+    # Admin hierarchy (from Nominatim)
+    suburb = Column(Text, nullable=True)   # neighbourhood / suburb / district
+    city = Column(Text, nullable=True)     # city / town / village
+    region = Column(Text, nullable=True)   # state / province / county
     country = Column(Text)
-    fsq_id = Column(Text, nullable=True)
-    info = Column(Text)
-    stop = Column(Boolean)
+    postcode = Column(Text, nullable=True)
+
+    # Geocoder output
+    address = Column(Text)                 # full Nominatim display_name
     timezone = Column(Text)
-    address = Column(Text)
     latitude = Column(Float)
     longitude = Column(Float)
+
+    # OSM provenance
+    osm_type = Column(Text, nullable=True)     # node / way / relation
+    osm_id = Column(Text, nullable=True)       # OSM element id
+
+    # Wikidata enrichment
+    wikidata_id = Column(Text, nullable=True)  # Wikidata QID (e.g. Q37158)
+    description = Column(Text, nullable=True)  # Wikidata short description
+    categories = Column(Text, nullable=True)   # semicolon-separated type list
+
+    # Legacy — kept for backwards compatibility, no longer populated
+    fsq_id = Column(Text, nullable=True)
+    info = Column(Text, nullable=True)
 
     images = relationship("Image", back_populates="location")
 

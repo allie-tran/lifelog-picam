@@ -1,24 +1,28 @@
 """
 enrich_stops.py
 ---------------
-Geocode GPS segments using three open data sources:
-  1. Overpass API  — find nearby OSM POIs within a radius (stop segments only)
-  2. Wikidata      — enrich OSM elements that carry a `wikidata=Q...` tag
-  3. Nominatim     — resolve admin hierarchy (city / region / country)
+Geocode GPS segments using:
+  1. Nominatim (zoom=18 + extratags)  — POI name + Wikidata QID for stop segments
+  2. Wikidata                          — description + P31 type labels
+  3. Nominatim (zoom=10)               — city-level clusters for move "A → B" names
 
-Called from Step 8 of gps_pipeline.run_pipeline().
+Public API:
+    enrich_stop(lat, lon)                       → dict
+    enrich_move(gps_pts, fallback_lat, fallback_lon) → dict
 """
 
 import logging
 import time
 
+import numpy as np
 import requests
+from sklearn.cluster import DBSCAN
 
 logger = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "lifelog-picam/1.0"}
 
-# ─── Country code → name ──────────────────────────────────────────────────────
+# ─── Country code table ───────────────────────────────────────────────────────
 
 _CC = {
     "IE": "Ireland", "GB": "United Kingdom", "US": "United States",
@@ -33,79 +37,90 @@ _CC = {
     "VN": "Vietnam", "TH": "Thailand", "SG": "Singapore",
 }
 
-# OSM tag keys checked for POI type, in priority order
-_OSM_POI_KEYS = [
+# In Nominatim's address dict, the value under these keys IS the place name
+# (e.g. address.amenity = "Starbucks", not "cafe")
+_POI_ADDR_KEYS = [
     "amenity", "shop", "tourism", "leisure", "office",
     "historic", "healthcare", "public_transport",
 ]
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# Sub-city fields checked in priority order for suburb/neighbourhood extraction
+_SUBURB_KEYS = (
+    "suburb", "neighbourhood", "neighborhood",
+    "quarter", "city_district", "district", "borough",
+)
 
-def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in metres."""
-    import math
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
+# ─── Nominatim ────────────────────────────────────────────────────────────────
+
+_NOM_URL = "https://nominatim.openstreetmap.org/reverse"
+_NOM_RATE = 1.1   # seconds between requests (Nominatim policy: max 1 req/s)
+_last_nom: float = 0.0
+_nom_cache: dict = {}
 
 
-# ─── Overpass API ─────────────────────────────────────────────────────────────
+def nominatim_reverse(lat: float, lon: float, zoom: int = 14, extratags: bool = False) -> dict:
+    """Rate-limited Nominatim reverse geocode. Returns raw JSON dict or {}."""
+    global _last_nom
+    cache_key = (round(lat, 2), round(lon, 2), zoom, extratags)
+    if cache_key in _nom_cache:
+        return _nom_cache[cache_key]
 
-_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-_STOP_RADIUS = 200  # metres
+    wait = _NOM_RATE - (time.monotonic() - _last_nom)
+    if wait > 0:
+        time.sleep(wait)
 
-def overpass_nearby(lat: float, lon: float, radius: int = _STOP_RADIUS) -> list[dict]:
-    """
-    Query OSM for POIs within `radius` metres of (lat, lon).
-    Returns a list of dicts sorted by distance (closest first), each with:
-        osm_type, osm_id, name, tags, distance, wikidata_id
-    """
-    filters = "\n  ".join(
-        f'node["{k}"](around:{radius},{lat:.6f},{lon:.6f});\n  way["{k}"](around:{radius},{lat:.6f},{lon:.6f});'
-        for k in _OSM_POI_KEYS
-    )
-    query = f"[out:json][timeout:20];\n(\n  {filters}\n);\nout center tags;"
+    params: dict = {
+        "lat": lat, "lon": lon, "format": "json",
+        "zoom": zoom, "addressdetails": 1,
+    }
+    if extratags:
+        params["extratags"] = 1
+
     try:
-        r = requests.post(_OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=25)
+        r = requests.get(_NOM_URL, params=params, headers=_HEADERS, timeout=10)
         r.raise_for_status()
-        elements = r.json().get("elements", [])
+        raw = r.json()
+        _last_nom = time.monotonic()
     except Exception as exc:
-        logger.warning("Overpass error at (%.5f, %.5f): %s", lat, lon, exc)
-        return []
+        logger.warning("Nominatim error at (%.5f, %.5f): %s", lat, lon, exc)
+        return {}
 
-    results = []
-    for el in elements:
-        tags = el.get("tags", {})
-        if not tags.get("name"):
-            continue  # unnamed elements aren't useful as stop labels
-        if el["type"] == "way":
-            c = el.get("center", {})
-            elat, elon = c.get("lat", lat), c.get("lon", lon)
-        else:
-            elat, elon = el.get("lat", lat), el.get("lon", lon)
-        results.append({
-            "osm_type": el["type"],
-            "osm_id": str(el["id"]),
-            "name": tags["name"],
-            "tags": tags,
-            "distance": _haversine(lat, lon, elat, elon),
-            "wikidata_id": tags.get("wikidata", ""),
-        })
-
-    results.sort(key=lambda x: x["distance"])
-    return results
+    _nom_cache[cache_key] = raw
+    return raw
 
 
-# ─── Wikidata API ─────────────────────────────────────────────────────────────
+def _parse_admin(raw: dict) -> dict:
+    """Extract full admin hierarchy from a Nominatim response."""
+    addr = raw.get("address", {})
+    cc = addr.get("country_code", "").upper()
+    country = _CC.get(cc, addr.get("country", cc))
+    city = next(
+        (addr[k] for k in ("city", "town", "village", "municipality", "county") if addr.get(k)),
+        "",
+    )
+    state = next(
+        (addr[k] for k in ("state", "region", "province", "state_district") if addr.get(k)),
+        "",
+    )
+    suburb = next((addr[k] for k in _SUBURB_KEYS if addr.get(k)), "")
+    postcode = addr.get("postcode", "")
+    return {
+        "city": city,
+        "suburb": suburb,
+        "state": state,    # state/province, stored as Location.region
+        "region": [v for v in [city, state, country] if v],  # breadcrumb list (internal)
+        "country": country,
+        "postcode": postcode,
+    }
+
+
+# ─── Wikidata ─────────────────────────────────────────────────────────────────
 
 _WD_API = "https://www.wikidata.org/w/api.php"
 _wd_cache: dict[str, dict] = {}
 
-# P31 QID → human-readable category (common values; others fall through as QIDs)
-_P31_LABELS = {
+# Common P31 (instance-of) QIDs → human label; unknown QIDs pass through as-is
+_P31_LABELS: dict[str, str] = {
     "Q11707": "restaurant", "Q965747": "cafe", "Q187456": "bar",
     "Q570116": "tourist attraction", "Q33506": "museum",
     "Q16917": "hospital", "Q3914": "school", "Q3918": "university",
@@ -113,14 +128,13 @@ _P31_LABELS = {
     "Q8187769": "gym", "Q27686": "hotel", "Q2360219": "hostel",
     "Q105837": "pharmacy", "Q1616075": "train station",
     "Q928830": "metro station", "Q1078765": "airport terminal",
-    "Q44665": "airport", "Q490": "subway", "Q12280": "bridge",
-    "Q35127": "website", "Q2516866": "park", "Q22698": "park",
+    "Q44665": "airport", "Q22698": "park",
 }
 
 
 def wikidata_fetch(qid: str) -> dict:
     """
-    Fetch the English label, description, and P31 (instance-of) types for a QID.
+    Fetch English label, description, and P31 (instance-of) types for a QID.
     Returns {} on error.
     """
     if qid in _wd_cache:
@@ -129,11 +143,9 @@ def wikidata_fetch(qid: str) -> dict:
         r = requests.get(
             _WD_API,
             params={
-                "action": "wbgetentities",
-                "ids": qid,
+                "action": "wbgetentities", "ids": qid,
                 "props": "labels|descriptions|claims",
-                "languages": "en",
-                "format": "json",
+                "languages": "en", "format": "json",
             },
             headers=_HEADERS,
             timeout=10,
@@ -147,156 +159,100 @@ def wikidata_fetch(qid: str) -> dict:
 
     label = entity.get("labels", {}).get("en", {}).get("value", "")
     description = entity.get("descriptions", {}).get("en", {}).get("value", "")
-    p31_claims = entity.get("claims", {}).get("P31", [])
-    instance_of_qids = [
+    p31_qids = [
         c["mainsnak"]["datavalue"]["value"]["id"]
-        for c in p31_claims
+        for c in entity.get("claims", {}).get("P31", [])
         if c.get("mainsnak", {}).get("datavalue")
     ]
-    instance_of = [_P31_LABELS.get(q, q) for q in instance_of_qids]
+    instance_of = [_P31_LABELS.get(q, q) for q in p31_qids]
 
     result = {"label": label, "description": description, "instance_of": instance_of}
     _wd_cache[qid] = result
     return result
 
 
-# ─── Nominatim ────────────────────────────────────────────────────────────────
+# ─── Move segment helpers ─────────────────────────────────────────────────────
 
-_NOM_URL = "https://nominatim.openstreetmap.org/reverse"
-_NOM_RATE = 1.1  # seconds between requests (policy: max 1 req/s)
-_last_nom: float = 0.0
-_nom_cache: dict[tuple, dict] = {}
+_MOVE_EPS = 5.0 / 6371.0   # ~5 km in radians
+_MOVE_MIN_PTS = 3
 
 
-def nominatim_reverse(lat: float, lon: float, zoom: int = 14) -> dict:
+def _cluster_points_by_city(
+    points: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
     """
-    Reverse geocode for admin hierarchy. Rate-limited to Nominatim policy.
-    zoom=14 = city level; zoom=18 = building level.
-    Returns the raw Nominatim JSON dict, or {} on error.
+    DBSCAN over GPS points with a ~5 km radius.
+    Returns one median representative per cluster, in order.
     """
-    global _last_nom
-    key = (round(lat, 2), round(lon, 2), zoom)
-    if key in _nom_cache:
-        return _nom_cache[key]
+    if not points:
+        return []
+    if len(points) < _MOVE_MIN_PTS:
+        arr = np.array(points)
+        med = np.median(arr, axis=0)
+        return [(float(med[0]), float(med[1]))]
 
-    wait = _NOM_RATE - (time.monotonic() - _last_nom)
-    if wait > 0:
-        time.sleep(wait)
-    try:
-        r = requests.get(
-            _NOM_URL,
-            params={"lat": lat, "lon": lon, "format": "json", "zoom": zoom, "addressdetails": 1},
-            headers=_HEADERS,
-            timeout=10,
-        )
-        r.raise_for_status()
-        raw = r.json()
-        _last_nom = time.monotonic()
-    except Exception as exc:
-        logger.warning("Nominatim error at (%.5f, %.5f): %s", lat, lon, exc)
-        return {}
+    arr = np.radians(np.array(points))
+    labels = DBSCAN(
+        eps=_MOVE_EPS, min_samples=_MOVE_MIN_PTS,
+        algorithm="ball_tree", metric="haversine",
+    ).fit_predict(arr)
 
-    _nom_cache[key] = raw
-    return raw
+    pts_arr = np.array(points)
+    representatives = []
+    for cl in sorted(set(labels)):
+        mask = labels == cl
+        med = np.median(pts_arr[mask], axis=0)
+        representatives.append((float(med[0]), float(med[1])))
+    return representatives
 
 
-def _parse_admin(raw: dict) -> dict:
-    """Extract city / region / country from a Nominatim response."""
+def _extract_suburb(raw: dict) -> str:
+    """Return the most specific sub-city area name from a Nominatim response."""
     addr = raw.get("address", {})
-    cc = addr.get("country_code", "").upper()
-    country = _CC.get(cc, addr.get("country", cc))
-    city = next(
-        (addr[k] for k in ("city", "town", "village", "municipality", "county") if addr.get(k)),
-        "",
-    )
-    state = next(
-        (addr[k] for k in ("state", "region", "province", "state_district") if addr.get(k)),
-        "",
-    )
-    region = [v for v in [city, state, country] if v]
-    return {"city": city, "region": region, "country": country}
+    return next((addr[k] for k in _SUBURB_KEYS if addr.get(k)), "")
 
 
-# ─── Main entry point ─────────────────────────────────────────────────────────
-
-# _EMPTY: dict = {
-#     "name": "", "wikidata_id": "", "osm_type": "", "osm_id": "",
-#     "description": "", "categories": [],
-#     "city": "", "region": [], "country": "", "address": "",
-# }
+# ─── Shared empty result ──────────────────────────────────────────────────────
 
 _EMPTY: dict = {
-    "name": "",
-    "fsq_id": "",
-    "info": "",
-    "country": "",
-    "address": "",
-    "latitude": None,
-    "longitude": None,
+    "name": "", "wikidata_id": "", "osm_type": "", "osm_id": "",
+    "description": "", "categories": [],
+    "city": "", "suburb": "", "region": "", "country": "",
+    "postcode": "", "address": "",
 }
 
+# ─── Public API ───────────────────────────────────────────────────────────────
 
-def enrich_segment(lat: float, lon: float, is_stop: bool) -> dict | None:
+
+def enrich_stop(lat: float, lon: float) -> dict:
     """
-    Enrich a segment centroid.
+    Reverse-geocode a stop centroid.
 
-    For stops:
-      - Overpass → ranked list of nearby named OSM POIs
-      - Wikidata → label, description, type (if the best OSM match has a wikidata tag)
-      - Nominatim → city / region / country
+    Uses Nominatim at zoom=18 with extratags to get:
+      - POI name from address components (e.g. address.amenity = "Starbucks")
+      - Wikidata QID from extratags.wikidata (if tagged in OSM)
+      - OSM category from extratags (e.g. extratags.amenity = "cafe")
+      - Admin hierarchy (city / region / country)
 
-    For moves:
-      - Nominatim only (city zoom)
-
-    Returns dict with keys:
-        name, wikidata_id, osm_type, osm_id, description, categories,
-        city, region, country, address
+    If a Wikidata QID is found, enriches with P31 types and description.
     """
-    # Admin hierarchy: always Nominatim
-    nom = nominatim_reverse(lat, lon, zoom=18)
-    admin = _parse_admin(nom)
-    address = nom.get("display_name", "")
+    raw = nominatim_reverse(lat, lon, zoom=18, extratags=True)
+    if not raw:
+        return _EMPTY.copy()
 
-    return {
-        **_EMPTY,
-        "name": address.split(",")[0] if address else "",
-        "country": admin["country"],
-        "address": address,
-        "latitude": float(lat),
-        "longitude": float(lon),
-        "key": f"stop={is_stop},{address}",
-    }
+    addr = raw.get("address", {})
+    extratags = raw.get("extratags", {}) or {}
 
-    if not is_stop:
-        return {
-            **_EMPTY,
-            "country": admin["country"],
-            "address": address,
-            "latitude": float(lat),
-            "longitude": float(lon),
-            "key": f"{admin['country']}|{admin['region']}|{admin['city']}",
-        }
-        # return {**_EMPTY, **admin, "address": address}
+    # POI name: Nominatim puts the place name as the value under the category key
+    name = next((addr[k] for k in _POI_ADDR_KEYS if addr.get(k)), "")
 
-    # Stop: find nearby POIs via Overpass
-    candidates = overpass_nearby(lat, lon)
-    if not candidates:
-        return {
-            **_EMPTY,
-            "country": admin["country"],
-            "address": address,
-            "latitude": float(lat),
-            "longitude": float(lon),
-            "key": f"{admin['country']}|{admin['region']}|{admin['city']}",
-        }
+    # OSM category types (the type string, e.g. "cafe", "supermarket")
+    osm_cats = [extratags[k] for k in _POI_ADDR_KEYS if extratags.get(k)]
 
-    best = candidates[0]  # closest named POI
-    name = best["name"]
-    wikidata_id = best["wikidata_id"]
+    wikidata_id = extratags.get("wikidata", "")
     description = ""
     instance_of: list[str] = []
 
-    # Enrich with Wikidata when we have a QID
     if wikidata_id:
         wd = wikidata_fetch(wikidata_id)
         if not name and wd.get("label"):
@@ -304,18 +260,98 @@ def enrich_segment(lat: float, lon: float, is_stop: bool) -> dict | None:
         description = wd.get("description", "")
         instance_of = wd.get("instance_of", [])
 
-    # Build category list: OSM tag values + Wikidata P31 types
-    tags = best["tags"]
-    osm_cats = [tags[k] for k in _OSM_POI_KEYS if k in tags]
-    categories = list(dict.fromkeys(osm_cats + instance_of))  # deduped, order-preserving
+    categories = list(dict.fromkeys(osm_cats + instance_of))
+    admin = _parse_admin(raw)
 
     return {
         "name": name,
-        "fsq_id": f"wiki_{wikidata_id}" if wikidata_id else f"osm_{best['osm_type'][0]}{best['osm_id']}",
-        "info": f"{categories}, {description}".strip(", "),
+        "wikidata_id": wikidata_id,
+        "osm_type": raw.get("osm_type", ""),
+        "osm_id": str(raw.get("osm_id", "")),
+        "description": description,
+        "categories": categories,
+        "city": admin["city"],
+        "suburb": admin["suburb"],
+        "region": admin["state"],      # state/province as a string
         "country": admin["country"],
-        "address": address,
-        "latitude": float(lat),
-        "longitude": float(lon),
-        "key": f"{name}|{admin['country']}|{address}",
+        "postcode": admin["postcode"],
+        "address": raw.get("display_name", ""),
+    }
+
+
+def enrich_move(
+    gps_pts: list[tuple[float, float]],
+    fallback_lat: float | None = None,
+    fallback_lon: float | None = None,
+) -> dict:
+    """
+    Reverse-geocode a move segment.
+
+    1. Clusters GPS track points into ~5 km city-groups (Nominatim zoom=10).
+    2. Multi-city move  → "City A → City B"
+    3. Single-city move → suburb/neighbourhood of start and end points at zoom=14,
+                          giving "Rathmines → City Centre" instead of "Dublin → Dublin".
+    """
+    if not gps_pts:
+        if fallback_lat is not None and fallback_lon is not None:
+            gps_pts = [(fallback_lat, fallback_lon)]
+        else:
+            return _EMPTY.copy()
+
+    representatives = _cluster_points_by_city(gps_pts)
+
+    city_entries: list[dict] = []
+    seen_cities: set[tuple] = set()
+    for rlat, rlon in representatives:
+        raw = nominatim_reverse(rlat, rlon, zoom=10)
+        admin = _parse_admin(raw)
+        city = admin.get("city", "")
+        country = admin.get("country", "")
+        dedup_key = (city.lower(), country.lower())
+        if city and dedup_key not in seen_cities:
+            seen_cities.add(dedup_key)
+            city_entries.append(admin)
+
+    if not city_entries:
+        return _EMPTY.copy()
+
+    all_states = list(dict.fromkeys(e["state"] for e in city_entries if e.get("state")))
+    all_countries = list(dict.fromkeys(e["country"] for e in city_entries if e.get("country")))
+    country_val = all_countries[0] if len(all_countries) == 1 else ", ".join(all_countries)
+    region_val = all_states[0] if len(all_states) == 1 else ", ".join(all_states)
+
+    if len(city_entries) > 1:
+        # Multi-city move: "Dublin → Galway"
+        name = " → ".join(e["city"] for e in city_entries if e.get("city"))
+        city_val = name
+        suburb_val = ""
+    else:
+        # Single-city move: try suburb-level for start and end points
+        city_val = city_entries[0]["city"]
+        start_raw = nominatim_reverse(gps_pts[0][0], gps_pts[0][1], zoom=14)
+        end_raw = nominatim_reverse(gps_pts[-1][0], gps_pts[-1][1], zoom=14)
+        start_sub = _extract_suburb(start_raw)
+        end_sub = _extract_suburb(end_raw)
+        suburb_val = start_sub or end_sub
+
+        if start_sub and end_sub and start_sub != end_sub:
+            name = f"{start_sub} → {end_sub}"
+        elif start_sub or end_sub:
+            name = start_sub or end_sub
+        else:
+            name = city_val  # last resort: just the city name
+
+    return {
+        "name": name,
+        "wikidata_id": "",
+        "osm_type": "",
+        "osm_id": "",
+        "description": "",
+        "categories": [],
+        "city": city_val,
+        "suburb": suburb_val,
+        "region": region_val,
+        "country": country_val,
+        "postcode": "",
+        "address": "",
     }

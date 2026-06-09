@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
     MapContainer,
     TileLayer,
@@ -56,14 +56,29 @@ function getGradientColor(t: number): string {
     return lerpColor(GRADIENT_STOPS[idx], GRADIENT_STOPS[idx + 1], localT);
 }
 
-function FitBounds({ positions }: { positions: L.LatLngExpression[] }) {
+function FitBounds({
+    positions,
+    trackKey,
+}: {
+    positions: L.LatLngExpression[];
+    trackKey: string;
+}) {
     const map = useMap();
+    // Keep a ref so the effect always sees the latest positions without
+    // needing them in the dependency array (which would re-fit on every render).
+    const positionsRef = useRef(positions);
+    positionsRef.current = positions;
+
+    // Only fit when the track itself changes (trackKey), not on re-renders.
+    // This means the user can freely pan/zoom without being snapped back.
     useEffect(() => {
-        if (positions.length > 0) {
-            const bounds = L.latLngBounds(positions);
-            map.fitBounds(bounds, { padding: [40, 40] });
+        if (positionsRef.current.length > 0) {
+            map.fitBounds(L.latLngBounds(positionsRef.current), {
+                padding: [40, 40],
+            });
         }
-    }, [map, positions]);
+    }, [map, trackKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
     return null;
 }
 
@@ -92,11 +107,24 @@ export function GpsTrackMap({
         });
     }, [gpsTrack]);
 
-    const allPositions: L.LatLngExpression[] =
-        gpsTrack?.map((point) => [point.latitude, point.longitude]) || [];
+    const allPositions = useMemo<L.LatLngExpression[]>(
+        () => gpsTrack?.map((p) => [p.latitude, p.longitude]) ?? [],
+        [gpsTrack]
+    );
+    const currentPositions = useMemo<L.LatLngExpression[]>(
+        () => currentTrack?.map((p) => [p.latitude, p.longitude]) ?? [],
+        [currentTrack]
+    );
 
-    const currentPositions: L.LatLngExpression[] =
-        currentTrack?.map((point) => [point.latitude, point.longitude]) || [];
+    // Stable string key that changes only when the loaded track changes.
+    // Derived from the active track's first + last timestamp so navigating
+    // to a different day triggers a re-fit, but re-renders from
+    // highlightedTrack / scroll events do not.
+    const trackKey = useMemo(() => {
+        const active = currentTrack?.length ? currentTrack : gpsTrack;
+        if (!active?.length) return '';
+        return `${active[0].timestamp}_${active[active.length - 1].timestamp}`;
+    }, [gpsTrack, currentTrack]);
 
     let endPos: L.LatLngExpression | undefined;
     if (currentPositions.length > 0) {
@@ -150,6 +178,7 @@ export function GpsTrackMap({
                               ? allPositions
                               : [currentPos]
                     }
+                    trackKey={trackKey}
                 />
                 {/* Gradient segments */}
                 {segments.map((seg, i) => (
