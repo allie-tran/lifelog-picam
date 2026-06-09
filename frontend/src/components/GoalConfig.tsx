@@ -16,19 +16,20 @@ import {
 import { getUserGoals } from 'apis/browsing';
 import { CATEGORIES } from 'constants/activityColors';
 import { useEffect, useState } from 'react';
-import { useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 import { ActionType, CustomGoal } from 'utils/types';
 
 const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [goals, setGoals] = useState<CustomGoal[]>([]);
     const [newName, setNewName] = useState('');
     const [newType, setNewType] = useState<ActionType>(ActionType.BINARY);
     const [detail, setDetail] = useState('');
     const { data, isLoading } = useSWR(
         'get-targets',
-        () => getUserGoals(deviceId),
+        () => getUserGoals(device),
         {
             revalidateOnFocus: false,
             shouldRetryOnError: false,

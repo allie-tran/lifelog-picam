@@ -16,7 +16,8 @@ import { ImageObject } from '@utils/types';
 import { addToWhiteList, getFaces } from 'apis/browsing';
 import { useState } from 'react';
 import Webcam from 'react-webcam';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
+import { useAppDispatch } from 'reducers/hooks';
 import useFaceEnrollmentWithPose from './useFaceEnrollmentWithPose';
 import ImageWithDate from './ImageWithDate';
 import { showNotification } from 'reducers/feedback';
@@ -32,14 +33,15 @@ const FaceEnroll = ({ onUpdate }: { onUpdate: () => void }) => {
     const { webcamRef, status, capturedImages, startEnrollment, done } =
         useFaceEnrollmentWithPose();
 
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [enabled, setEnabled] = useState<boolean>(false);
     const [images, setImages] = useState<ImageObject[]>([]);
     const [name, setName] = useState<string>('');
     const [open, setOpen] = useState<boolean>(false);
 
     const handleAddToWhiteList = () => {
-        addToWhiteList(deviceId, capturedImages, name)
+        addToWhiteList(device, capturedImages, name)
             .then(() => {
                 dispatch(
                     showNotification({
@@ -64,7 +66,7 @@ const FaceEnroll = ({ onUpdate }: { onUpdate: () => void }) => {
     };
 
     const handleGetFaces = () => {
-        getFaces(deviceId, capturedImages)
+        getFaces(device, capturedImages)
             .then((faces) => {
                 setImages(faces);
             })

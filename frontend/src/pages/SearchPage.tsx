@@ -51,7 +51,7 @@ import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { setDeviceId } from 'reducers/auth';
+import { setDevice } from 'reducers/auth';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearHistory, pushToHistory, removeFromHistory, setSearchQuery } from 'reducers/search';
@@ -68,13 +68,12 @@ const PAGE_SIZE = 20;
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, _] = useSearchParams();
-    const device = searchParams.get('device');
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const device = searchParams.get('device') || '';
     const searchQuery = useAppSelector((state) => state.search.query);
     const searchHistory = useAppSelector((state) => state.search.history);
 
     useEffect(() => {
-        if (device) dispatch(setDeviceId(device));
+        if (device) dispatch(setDevice(device));
     }, [device]);
 
     // View Settings
@@ -90,7 +89,7 @@ const SearchPage = () => {
     useEffect(() => {
         if (!textQuery.trim()) return;
         const timer = setTimeout(() => {
-            parseQueryFilters(textQuery, deviceId)
+            parseQueryFilters(textQuery, device)
                 .then((parsed) => {
                     dispatch(setSearchQuery(parsed));
                     const hasTemporalFilter =
@@ -139,9 +138,9 @@ const SearchPage = () => {
         isLoading,
         mutate,
     } = useSWR(
-        ['search', deviceId, sortBy, searchQuery],
+        ['search', device, sortBy, searchQuery],
         () =>
-            searchImages(deviceId, searchQuery, sortBy).then(
+            searchImages(device, searchQuery, sortBy).then(
                 ({ segments, topLocations, topCountries, topPeople }) => {
                     dispatch(setLoading(false));
                     setPage(1);
@@ -274,7 +273,7 @@ const SearchPage = () => {
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
-        deleteImages(deviceId, imagePaths).then(() => {
+        deleteImages(device, imagePaths).then(() => {
             setDeleted((prev) => [...prev, ...imagePaths]);
             dispatch(setLoading(false));
         });

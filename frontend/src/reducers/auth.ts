@@ -6,7 +6,7 @@ interface AuthState {
     isAuthenticated: boolean;
     username: string | null;
     devices: DeviceAccess[];
-    deviceId: string;
+    device: string;
     deviceAccess: AccessLevel;
     sensors: SensorDevice[];
 }
@@ -15,7 +15,7 @@ const initialState: AuthState = {
     isAuthenticated: false,
     username: null,
     devices: [],
-    deviceId: "",
+    device: "",
     deviceAccess: AccessLevel.NONE,
     sensors: [],
 };
@@ -28,7 +28,7 @@ const authSlice = createSlice({
             state.isAuthenticated = true;
             state.username = action.payload.username;
             state.devices = action.payload.devices;
-            state.deviceAccess = action.payload.devices?.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE
+            state.deviceAccess = action.payload.devices?.find(d => d.deviceId === state.device)?.accessLevel || AccessLevel.NONE
             state.sensors = action.payload.sensors;
         },
         logout(state) {
@@ -36,12 +36,12 @@ const authSlice = createSlice({
             state.username = null;
             state.devices = [];
         },
-        setDeviceId(state, action: PayloadAction<string>) {
-            state.deviceId = action.payload;
-            state.deviceAccess = state.devices?.find(device => device.deviceId === state.deviceId)?.accessLevel || AccessLevel.NONE;
+        setDevice(state, action: PayloadAction<string>) {
+            state.device = action.payload;
+            state.deviceAccess = state.devices?.find(d => d.deviceId === state.device)?.accessLevel || AccessLevel.NONE;
         }
     },
 });
 
-export const { login, logout, setDeviceId } = authSlice.actions;
+export const { login, logout, setDevice } = authSlice.actions;
 export default authSlice.reducer;

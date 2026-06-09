@@ -15,7 +15,7 @@ import LifelogEvent from 'components/LifelogEvent';
 import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { setDeviceId } from 'reducers/auth';
+import { setDevice } from 'reducers/auth';
 import { setLoading } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
@@ -28,20 +28,20 @@ function MainPage() {
     const [searchParams, _] = useSearchParams();
     const today = dayjs().format('YYYY-MM-DD');
     const date = searchParams.get('date');
-    const device = searchParams.get('device');
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const device = searchParams.get('device') || '';
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
     const [hour, setHour] = React.useState<number | null>(null);
 
+    const dispatch = useAppDispatch();
+
     useEffect(() => {
-        if (device) dispatch(setDeviceId(device));
+        if (device) dispatch(setDevice(device));
     }, [device]);
 
-    const dispatch = useAppDispatch();
     const { data, mutate } = useSWR(
-        [page, date, hour, deviceId, deviceAccess],
+        [page, date, hour, device, deviceAccess],
         async () => {
             if (
                 deviceAccess === AccessLevel.ADMIN ||
@@ -49,7 +49,7 @@ function MainPage() {
             ) {
                 setHour(hour || 0);
                 return await getImagesByHour(
-                    deviceId,
+                    device,
                     date || '',
                     hour || 0,
                     page
@@ -72,9 +72,9 @@ function MainPage() {
     );
 
     const { data: allDates } = useSWR(
-        ['all-dates', deviceId, date],
+        ['all-dates', device, date],
         async () => {
-            const allDates = await getAllDates(deviceId);
+            const allDates = await getAllDates(device);
             return allDates;
         },
         {
@@ -83,13 +83,13 @@ function MainPage() {
     );
 
     const { data: gpsTrack } = useSWR(
-        ['gps-track', deviceId, date, deviceAccess],
+        ['gps-track', device, date, deviceAccess],
         async () => {
             if (
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
-                const data = await getGPSByDate(deviceId, date || '');
+                const data = await getGPSByDate(device, date || '');
                 console.log('GPS data:', data);
                 return data;
             } else {
@@ -111,7 +111,7 @@ function MainPage() {
 
     useEffect(() => {
         setPage(1);
-    }, [date, deviceId]);
+    }, [date, device]);
 
     useEffect(() => {
         if (availableHours.length > 0 && !availableHours.includes(hour || 0)) {
@@ -121,7 +121,7 @@ function MainPage() {
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
-        Promise.all(imagePaths.map((path) => deleteImage(deviceId, path))).then(
+        Promise.all(imagePaths.map((path) => deleteImage(device, path))).then(
             () => {
                 mutate().then(() => dispatch(setLoading(false)));
             }
@@ -147,7 +147,7 @@ function MainPage() {
                         />
                     </Stack>
                     {(!date || date === today) && (
-                        <CurrentStatus deviceId={deviceId} />
+                        <CurrentStatus device={device} />
                     )}
                 </Container>
                 {availableHours.length > 0 && (

@@ -14,16 +14,18 @@ import {
 } from '@mui/material';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { setSearchQuery } from 'reducers/search';
+import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 
 const FaceFiltersHook = () => {
     const dispatch = useAppDispatch();
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const { peopleIds } = useAppSelector((state) => state.search.query);
 
     const { data: availableFaces } = useSWR(
-        [deviceId, 'faces'],
-        async () => getAllFaces(deviceId),
+        [device, 'faces'],
+        async () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 

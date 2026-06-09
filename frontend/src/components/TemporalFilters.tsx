@@ -26,6 +26,7 @@ import TimeHeatmap from './TimeHeatmap';
 import useSWR from 'swr';
 import { getAvailableValues } from '@apis/searchFilters';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import { setSearchQuery } from 'reducers/search';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs, { Dayjs } from 'dayjs';
@@ -47,7 +48,8 @@ const TemporalFiltersHook = ({
     onZoomImage?: (path: string, isVideo: boolean) => void;
 } = {}) => {
     const dispatch = useAppDispatch();
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [tabIndex, setTabIndex] = useState(0);
     const [currentYear, setCurrentYear] = useState<number>(
         new Date().getFullYear()
@@ -60,16 +62,16 @@ const TemporalFiltersHook = ({
     );
     const [pendingDate, setPendingDate] = useState<Dayjs | null>(null);
 
-    const { data: availableYears } = useSWR([deviceId, 'year'], async () => {
-        const years = await getAvailableValues(deviceId, 'year');
+    const { data: availableYears } = useSWR([device, 'year'], async () => {
+        const years = await getAvailableValues(device, 'year');
         setCurrentYear(
             years.length > 0 ? parseInt(years[0]) : new Date().getFullYear()
         );
         return years.map((y) => parseInt(y));
     });
 
-    const { data: availableDates } = useSWR([deviceId, 'date'], () =>
-        getAvailableValues(deviceId, 'date')
+    const { data: availableDates } = useSWR([device, 'date'], () =>
+        getAvailableValues(device, 'date')
     );
     const availableDatesSet = useMemo(
         () => new Set(availableDates ?? []),
@@ -364,13 +366,13 @@ const ListOfCheckBoxes = ({
 const PhotoStrip = ({
     images,
     currentYear,
-    deviceId,
+    device,
     onDeleteImage,
     onZoomImage,
 }: {
     images: ImageObject[];
     currentYear: number;
-    deviceId: string;
+    device: string;
     onDeleteImage?: (path: string) => void;
     onZoomImage?: (path: string, isVideo: boolean) => void;
 }) => {
@@ -404,7 +406,7 @@ const PhotoStrip = ({
             }}
         >
             {filtered.map((img) => {
-                const thumbUrl = img.thumbnail ? `${THUMBNAIL_HOST_URL}/${deviceId}/${img.thumbnail}` : '';
+                const thumbUrl = img.thumbnail ? `${THUMBNAIL_HOST_URL}/${device}/${img.thumbnail}` : '';
                 const isHovered = hoveredPath === img.imagePath;
                 const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
                 return (

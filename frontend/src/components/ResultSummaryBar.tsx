@@ -9,8 +9,8 @@ import {
 import { Box, Chip, Popover, Stack, Typography } from '@mui/material';
 import { CountItem, LocationSummaryItem } from 'apis/browsing';
 import { getAllFaces } from '@apis/searchFilters';
-import { useAppSelector } from 'reducers/hooks';
 import React, { useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import useSWR from 'swr';
@@ -176,10 +176,11 @@ const ResultSummaryBar = ({
     onAddLocationFilter,
     onAddPersonFilter,
 }: ResultSummaryBarProps) => {
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const { data: availableFaces } = useSWR(
-        [deviceId, 'faces'],
-        () => getAllFaces(deviceId),
+        [device, 'faces'],
+        () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 

@@ -4,8 +4,8 @@ import CustomDatePicker from 'components/CustomDatePicker';
 import DaySummaryComponent from 'components/DaySummary';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { setDeviceId } from 'reducers/auth';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setDevice } from 'reducers/auth';
+import { useAppDispatch } from 'reducers/hooks';
 import useSWR from 'swr';
 import '../App.css';
 import { getAllDates } from '../apis/browsing';
@@ -14,20 +14,18 @@ import DeviceSelect from './DeviceSelect';
 function Biometrics() {
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
-    const device = searchParams.get('device');
-    const deviceId =
-        useAppSelector((state) => state.auth.deviceId) || device || '';
-
-    useEffect(() => {
-        if (device) dispatch(setDeviceId(device));
-    }, [device]);
+    const device = searchParams.get('device') || '';
 
     const dispatch = useAppDispatch();
 
+    useEffect(() => {
+        if (device) dispatch(setDevice(device));
+    }, [device]);
+
     const { data: allDates } = useSWR(
-        ['all-dates', deviceId, date],
+        ['all-dates', device, date],
         async () => {
-            const allDates = await getAllDates(deviceId);
+            const allDates = await getAllDates(device);
             return allDates;
         },
         {

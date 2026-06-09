@@ -16,7 +16,8 @@ import { CONFIDENCE_COLOURS, THEME_COLORS } from 'constants/activityColors';
 import dayjs from 'dayjs';
 import React from 'react';
 import { setLoading } from 'reducers/feedback';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { useAppDispatch } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import '../App.css';
 import ImageWithDate from '../components/ImageWithDate';
@@ -41,7 +42,8 @@ const LifelogEvent = ({
     inView?: boolean;
 }) => {
     const dispatch = useAppDispatch();
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const firstImage = segment[0];
     const lastImage = segment[segment.length - 1];
     const date = dayjs(firstImage.timestamp).format('YYYY-MM-DD');
@@ -280,7 +282,7 @@ const LifelogEvent = ({
                         onClick={() => {
                             dispatch(setLoading(true));
                             changeSegmentActivity(
-                                deviceId,
+                                device,
                                 date,
                                 firstImage.segmentId as unknown as number,
                                 activityEditText

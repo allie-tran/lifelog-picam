@@ -14,6 +14,7 @@ import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
 import { submitImage } from 'apis/dres';
 import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import { useEffect, useState } from 'react';
 import { showNotification } from 'reducers/feedback';
 import Annotator from './Annotator';
@@ -46,10 +47,11 @@ const ImageWithDate = ({
     const [showAnnotator, setShowAnnotator] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const dispatch = useAppDispatch();
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const { evaluationId, sessionId, currentTask } = useAppSelector((state) => state.dres);
     const imageUrl = image.thumbnail
-        ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
+        ? `${THUMBNAIL_HOST_URL}/${device}/${image.thumbnail}`
         : '';
     const formattedDate = timeOnly
         ? dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('HH:mm z')
@@ -57,7 +59,7 @@ const ImageWithDate = ({
 
     const handleDelete = async () => {
         setDeleted(true);
-        await deleteImage(deviceId, image.imagePath);
+        await deleteImage(device, image.imagePath);
         onDelete && onDelete(image.imagePath);
     };
 
@@ -72,7 +74,7 @@ const ImageWithDate = ({
 
     const getContext = async () => {
         try {
-            const res = await getContextImages(deviceId, image.imagePath);
+            const res = await getContextImages(device, image.imagePath);
             setContext(res);
             setDeletedIndexes([]);
         } catch (err) {
@@ -276,7 +278,7 @@ const ImageWithDate = ({
                             onChange={() => {}}
                             deleteRow={() => {
                                 deleteImages(
-                                    deviceId,
+                                    device,
                                     segment.images.map((img) => img.imagePath)
                                 ).then(() => {
                                     setDeletedIndexes((prev) => [

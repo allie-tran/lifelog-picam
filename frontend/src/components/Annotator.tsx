@@ -2,6 +2,7 @@ import { addAnnotation } from 'apis/browsing';
 import { ImageObject } from '@utils/types';
 import { THUMBNAIL_HOST_URL } from 'constants/urls';
 import { useRef, useState, useEffect, MouseEvent } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 
 // Define the shape of our coordinate points
@@ -14,18 +15,19 @@ const Annotator = ({ image }: { image: ImageObject }) => {
     // Specify the HTMLCanvasElement type for the ref
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [points, setPoints] = useState<Point[]>([]);
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const user =
         useAppSelector((state) => state.auth.username) || 'unknown_user';
     const [imageUrl, setImageUrl] = useState<string>(image.thumbnail
-        ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
+        ? `${THUMBNAIL_HOST_URL}/${device}/${image.thumbnail}`
         : '');
 
     useEffect(() => {
         setImageUrl(image.thumbnail
-            ? `${THUMBNAIL_HOST_URL}/${deviceId}/${image.thumbnail}`
+            ? `${THUMBNAIL_HOST_URL}/${device}/${image.thumbnail}`
             : '');
-    }, [image.thumbnail, deviceId]);
+    }, [image.thumbnail, device]);
 
     const MAX_POINTS = 4;
 
@@ -48,6 +50,7 @@ const Annotator = ({ image }: { image: ImageObject }) => {
         img.onload = () => {
             canvas.width = img.naturalWidth;
             canvas.height = img.naturalHeight;
+
             // Clear and draw background image
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -57,8 +60,8 @@ const Annotator = ({ image }: { image: ImageObject }) => {
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 const realPoints = points.map((p) => ({
-                    x: p.x * canvas.width,
-                    y: p.y * canvas.height,
+                    x: p.x * img.width,
+                    y: p.y * img.height,
                 }));
                 ctx.moveTo(realPoints[0].x, realPoints[0].y);
 
@@ -112,7 +115,7 @@ const Annotator = ({ image }: { image: ImageObject }) => {
 
         try {
             const response = await addAnnotation(
-                deviceId,
+                device,
                 image.imagePath,
                 points,
                 user,

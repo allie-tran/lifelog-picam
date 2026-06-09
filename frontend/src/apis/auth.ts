@@ -32,10 +32,10 @@ export const getUsers = async (token: string) => {
     return response.data as UserInfo[];
 }
 
-export const changeUserAccess = async (token: string, username: string, deviceId: string, accessLevel: AccessLevel) => {
+export const changeUserAccess = async (token: string, username: string, device: string, accessLevel: AccessLevel) => {
     const response = await axios.post(`${BACKEND_URL}/auth/change-access`, {
         username,
-        deviceId,
+        deviceId: device,
         accessLevel
     }, {
         headers: {
@@ -45,9 +45,9 @@ export const changeUserAccess = async (token: string, username: string, deviceId
     return response.data;
 }
 
-export const addSensorToUser = async (deviceId: string, sensorType: string, sensorSecret: string, deviceNickname: string, associatedUsername: string) => {
+export const addSensorToUser = async (device: string, sensorType: string, sensorSecret: string, deviceNickname: string, associatedUsername: string) => {
     const response = await axios.put(`${BACKEND_URL}/auth/add-sensor`, {
-        deviceId,
+        deviceId: device,
         sensorType,
         secret: sensorSecret,
         deviceNickname,

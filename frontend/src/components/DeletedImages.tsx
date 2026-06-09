@@ -10,6 +10,7 @@ import {
 } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import React from 'react';
+import { useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
@@ -26,16 +27,17 @@ const IMAGES_PER_PAGE = 20;
 
 const DeletedImages = () => {
     const [open, setOpen] = React.useState(false);
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const deviceAccess = useAppSelector((state) => state.auth.deviceAccess);
     const [page, setPage] = React.useState(1);
 
     const { data, isLoading, mutate } = useSWR(
-        ['deleted-images', deviceId],
+        ['deleted-images', device],
         () =>
             deviceAccess === AccessLevel.OWNER ||
             deviceAccess === AccessLevel.ADMIN
-                ? getDeletedImages(deviceId)
+                ? getDeletedImages(device)
                 : Promise.resolve([]),
         {
             revalidateOnFocus: true,
@@ -82,7 +84,7 @@ const DeletedImages = () => {
                                 sx={{ mb: 2 }}
                                 onClick={() => {
                                     forceDeleteImages(
-                                        deviceId,
+                                        device,
                                         data.map(
                                             (image: ImageObject) =>
                                                 image.imagePath
@@ -99,7 +101,7 @@ const DeletedImages = () => {
                                     data.forEach(
                                         (image: ImageObject, index: number) => {
                                             restoreImage(
-                                                deviceId,
+                                                device,
                                                 image.imagePath
                                             ).then(() => {
                                                 if (index === data.length - 1) {
@@ -131,7 +133,7 @@ const DeletedImages = () => {
                                             sx={{ minWidth: 32 }}
                                             onClick={() => {
                                                 restoreImage(
-                                                    deviceId,
+                                                    device,
                                                     image.imagePath
                                                 ).then(() => mutate());
                                             }}
@@ -140,7 +142,7 @@ const DeletedImages = () => {
                                         </Button>
                                     }
                                     onDelete={(image) => {
-                                        forceDeleteImage(deviceId, image).then(
+                                        forceDeleteImage(device, image).then(
                                             () => mutate()
                                         );
                                     }}

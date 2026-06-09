@@ -26,7 +26,6 @@ import { getDaySummary, processDate } from 'apis/process';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import 'utils/animation.css';
 import { CategoryPieChart } from './CategoryChart';
@@ -47,10 +46,7 @@ const minutesToHM = (m: number): string => {
 const DaySummaryComponent = () => {
     const [searchParams] = useSearchParams();
     const date = searchParams.get('date');
-    const deviceId =
-        useAppSelector((state) => state.auth.deviceId) ||
-        searchParams.get('device') ||
-        '';
+    const device = searchParams.get('device') || '';
     const [openModal, setOpenModal] = React.useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [periodIndex, setPeriodIndex] = useState(0);
@@ -61,10 +57,10 @@ const DaySummaryComponent = () => {
         error: isError,
         mutate,
     } = useSWR(
-        { key: "day-summary", date, deviceId },
+        { key: "day-summary", date, device },
         () => {
-            if (!date || !deviceId) return null;
-            return getDaySummary(deviceId, date);
+            if (!date || !device) return null;
+            return getDaySummary(device, date);
         },
         {
             revalidateOnFocus: false,
@@ -79,7 +75,7 @@ const DaySummaryComponent = () => {
     ) => {
         setIsLoading(true);
         try {
-            await processDate(deviceId, date || '', resegment, reannotate);
+            await processDate(device, date || '', resegment, reannotate);
             mutate();
         } catch (error) {
             console.error('Error processing date:', error);
@@ -89,7 +85,7 @@ const DaySummaryComponent = () => {
 
     const handleGoalSave = async (goals: CustomGoal[]) => {
         setOpenModal(false);
-        updateUserGoals(goals, deviceId);
+        updateUserGoals(goals, device);
         handleProcess();
         mutate();
     };

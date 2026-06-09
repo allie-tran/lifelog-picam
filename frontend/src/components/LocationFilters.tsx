@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import countryBoundingBoxes from 'country-bounding-boxes.json';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
@@ -53,7 +54,8 @@ const getCountryBounds = (countries: string[]) => {
 
 const LocationFiltersHook = () => {
     const dispatch = useAppDispatch();
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const { isMoving, countries, locationIds, bounds } = useAppSelector(
         (state) => state.search.query
     );
@@ -62,27 +64,27 @@ const LocationFiltersHook = () => {
     >(null);
 
     const { data: availableCountries } = useSWR(
-        [deviceId, isMoving, 'country'],
+        [device, isMoving, 'country'],
         async () =>
             getAvailableValues(
-                deviceId,
+                device,
                 isMoving ? 'moving-cross-country' : 'country'
             ),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
     const { data: availableLocations } = useSWR(
-        [deviceId, 'location', countries, isMoving],
+        [device, 'location', countries, isMoving],
         async () =>
             isMoving
-                ? getMovingPeriods(deviceId, countries)
-                : getLocations(deviceId, countries),
+                ? getMovingPeriods(device, countries)
+                : getLocations(device, countries),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
     const { data: markersData } = useSWR(
-        [deviceId, locationIds],
-        async () => getMapMarkers(deviceId, countries),
+        [device, locationIds],
+        async () => getMapMarkers(device, countries),
         
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );

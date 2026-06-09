@@ -13,7 +13,7 @@ import { getWhiteList, removeFromWhiteList } from 'apis/browsing';
 import FaceEnroll from 'components/FaceEnroll';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React, { useEffect } from 'react';
-import { useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 
 const WhiteListedPerson = ({
@@ -39,7 +39,7 @@ const WhiteListedPerson = ({
     }, [images]);
 
     return (
-        <Stack alignItems="center" spacing={1} sx={{ width: 200 }}>
+        <Stack alignItems="center" spacing={1} sx={{ width: 200, height: 345 }}>
             <Card sx={{ margin: 1, width: '100%' }} elevation={3}>
                 <CardContent>
                     <Stack alignItems="center" spacing={2} padding={0}>
@@ -74,17 +74,18 @@ const WhiteListedPerson = ({
 };
 
 const FaceIntelligence = () => {
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [addingFace, setAddingFace] = React.useState(false);
 
     const { data, mutate } = useSWR(
         'get-white-list',
-        async () => getWhiteList(deviceId),
+        async () => getWhiteList(device),
         { refreshInterval: 5000 }
     );
 
     const handleDelete = async (name: string) => {
-        removeFromWhiteList(deviceId, name);
+        removeFromWhiteList(device, name);
         mutate();
     };
 

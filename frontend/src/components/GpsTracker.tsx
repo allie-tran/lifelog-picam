@@ -12,13 +12,15 @@ import { parseErrorResponse } from '@utils/misc';
 import { throttle } from 'lodash';
 import React, { useEffect } from 'react';
 import { useGeolocated } from 'react-geolocated';
+import { useSearchParams } from 'react-router';
 import { useAppSelector } from 'reducers/hooks';
 
 const GpsTrackerHook = () => {
-    const user = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const user = searchParams.get('device') || '';
     const sensors = useAppSelector((state) => state.auth.sensors);
     const [disableGps, setDisableGps] = React.useState(true);
-    const [secretDeviceId, setDeviceId] = React.useState<string | null>();
+    const [sensorId, setSensorId] = React.useState<string | null>();
     const [isRegisteredDevice, setIsRegisteredDevice] = React.useState(false);
     const [currentPosition, setCurrentPosition] =
         React.useState<GeolocationPosition | null>(null);
@@ -33,7 +35,7 @@ const GpsTrackerHook = () => {
         });
 
     useEffect(() => {
-        setDeviceId(navigator.userAgent);
+        setSensorId(navigator.userAgent);
         const isRegistered = sensors?.some(
             (sensor) => sensor.deviceId === navigator.userAgent
         );
@@ -59,14 +61,14 @@ const GpsTrackerHook = () => {
                 },
                 timestamp: Date.now(),
             });
-            if (secretDeviceId) {
+            if (sensorId) {
                 throttle(
                     () =>
                         sendGPS(
                             coords.latitude,
                             coords.longitude,
                             coords.altitude || 0,
-                            secretDeviceId,
+                            sensorId,
                             new Date().toISOString()
                         ).catch((error) => {
                             const message = parseErrorResponse(error.response);
@@ -77,13 +79,13 @@ const GpsTrackerHook = () => {
                 throttle(() => onProcessGps(), 60000)();
             }
         }
-    }, [coords, secretDeviceId, disableGps]);
+    }, [coords, sensorId, disableGps]);
 
     const onProcessGps = () => {
         processGPS(
             user,
             new Date().toISOString().split('T')[0],
-            secretDeviceId || ''
+            sensorId || ''
         )
             .then((response) => {
                 console.log('GPS data processed:', response);

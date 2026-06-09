@@ -1,6 +1,6 @@
 // src/pages/ProcessingStatusPage.tsx
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
     Box,
     Container,
@@ -9,7 +9,6 @@ import {
     Button,
 } from '@mui/material';
 import { api } from 'constants/urls';
-import { useAppSelector } from 'reducers/hooks';
 
 interface ProcessingStatus {
     job_id: string;
@@ -23,7 +22,8 @@ const REFRESH_INTERVAL_MS = 5000;
 export const ProcessingStatusPage: React.FC = () => {
     const navigate = useNavigate();
     const { jobId } = useParams<{ jobId: string }>();
-    const { deviceId } = useAppSelector((state) => state.auth);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [status, setStatus] = useState<ProcessingStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -96,7 +96,7 @@ export const ProcessingStatusPage: React.FC = () => {
                             <Button
                                 variant="contained"
                                 onClick={() =>
-                                    navigate(`/?device=${deviceId || ''}`)
+                                    navigate(`/?device=${device || ''}`)
                                 }
                             >
                                 Continue

@@ -39,17 +39,17 @@ function OnlineDot({ online }: { online: boolean }) {
     );
 }
 
-export default function CurrentStatus({ deviceId }: { deviceId: string }) {
+export default function CurrentStatus({ device }: { device: string }) {
     const { data } = useSWR(
-        deviceId ? ['current-status', deviceId] : null,
-        () => getCurrentStatus(deviceId),
+        device ? ['current-status', device] : null,
+        () => getCurrentStatus(device),
         { refreshInterval: 5 * 60 * 1000, revalidateOnFocus: false }
     );
 
     if (!data) return null;
 
     const thumbnailUrl = data.currentThumbnail
-        ? `${THUMBNAIL_HOST_URL}/${deviceId}/${data.currentThumbnail}`
+        ? `${THUMBNAIL_HOST_URL}/${device}/${data.currentThumbnail}`
         : null;
 
     const cameraLastSeenText = data.cameraLastSeen

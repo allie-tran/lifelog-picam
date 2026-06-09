@@ -31,7 +31,7 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useRef, useState } from 'react';
 import { MapContainer, Marker, TileLayer } from 'react-leaflet';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
@@ -56,14 +56,15 @@ const BORING_NAMES = new Set(['---', 'Unknown Place', 'Unknown', '']);
 const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
     const dispatch = useAppDispatch();
     const navigate = useNavigate();
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [showAnnotator, setShowAnnotator] = useState(false);
     const { image: imagePath, isVideo } = useAppSelector(
         (state: any) => state.zoomedImage
     );
 
     const { data: imageData, isLoading } = useSWR(imagePath, async () =>
-        getImage(deviceId, imagePath || '')
+        getImage(device, imagePath || '')
     );
 
     const handleDownload = () => {
@@ -75,7 +76,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
     };
 
     const handleDelete = () => {
-        deleteImage(deviceId, imagePath)
+        deleteImage(device, imagePath)
             .then(() => {
                 dispatch(clearZoomedImage());
                 onDelete && onDelete(imagePath);
@@ -91,7 +92,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
             '/search?mode=id&&query=' +
                 encodeURIComponent(imagePath || '') +
                 '&device=' +
-                deviceId
+                device
         );
     };
 
@@ -151,7 +152,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                     }}
                 >
                     <source
-                        src={`${IMAGE_HOST_URL}/${deviceId}/${imagePath}`}
+                        src={`${IMAGE_HOST_URL}/${device}/${imagePath}`}
                         type="video/mp4"
                     />
                 </video>
@@ -174,11 +175,12 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [hoveredBox, setHoveredBox] = useState<ObjectDetection | null>(null);
     const [showBBoxes, setShowBBoxes] = useState(true);
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || '';
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
 
     const { data: allFaces } = useSWR(
-        data.people.length > 0 ? [deviceId, 'faces'] : null,
-        () => getAllFaces(deviceId),
+        data.people.length > 0 ? [device, 'faces'] : null,
+        () => getAllFaces(device),
         { revalidateOnFocus: false }
     );
 

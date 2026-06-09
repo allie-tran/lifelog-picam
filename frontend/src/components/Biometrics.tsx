@@ -4,7 +4,6 @@ import dayjs from 'dayjs';
 import ReactECharts from 'echarts-for-react';
 import React, { useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 
 interface MeasurementRecord {
@@ -24,10 +23,7 @@ const SENSORS = [
 export const SensorHistory: React.FC = () => {
     const [searchParams, _] = useSearchParams();
     const date = searchParams.get('date');
-    const deviceId =
-        useAppSelector((state) => state.auth.deviceId) ||
-        searchParams.get('device') ||
-        '';
+    const device = searchParams.get('device') || '';
     const today = dayjs().format('YYYY-MM-DD');
 
     // UI UX States
@@ -42,14 +38,14 @@ export const SensorHistory: React.FC = () => {
         {
             key: `browse/logs/${selectedKey}`,
             date,
-            deviceId,
+            device,
         },
         async () => {
-            if (!date || !deviceId) return {};
+            if (!date || !device) return {};
             const res = await axios.get(`/browse/logs/${selectedKey}`, {
                 params: {
                     date,
-                    device_id: deviceId,
+                    device_id: device,
                 },
             });
             if (selectedKey === '' && res.data.keys.length > 0)
@@ -137,7 +133,7 @@ export const SensorHistory: React.FC = () => {
     };
 
     if (!date) return null;
-    if (!deviceId) return null;
+    if (!device) return null;
 
     if (records && Object.keys(records).length === 0) {
         return null;

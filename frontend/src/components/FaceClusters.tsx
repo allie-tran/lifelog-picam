@@ -1,12 +1,13 @@
 import { getAllFaces } from '@apis/searchFilters';
 import { Stack, Typography } from '@mui/material';
-import { useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 
 const FaceClusters = () => {
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const { data } = useSWR('/api/face-clusters', () =>
-        getAllFaces(deviceId || '')
+        getAllFaces(device)
     );
 
     if (!data) {

@@ -35,7 +35,7 @@ const Admin = () => {
     const [userForAccess, setUserForAccess] = React.useState<string | null>(
         null
     );
-    const [deviceId, setDeviceId] = React.useState<string>('');
+    const [device, setDevice] = React.useState<string>('');
     const [accessLevel, setAccessLevel] = React.useState<AccessLevel>(
         AccessLevel.NONE
     );
@@ -64,22 +64,22 @@ const Admin = () => {
 
     const addContentAccessToUser = (
         username: string,
-        deviceId: string,
+        device: string,
         accessLevel: AccessLevel
     ) => {
-        changeUserAccess(cookies.token, username, deviceId, accessLevel);
+        changeUserAccess(cookies.token, username, device, accessLevel);
         mutate();
     };
 
     const addSensorAccessToUser = async (
-        deviceId: string,
+        device: string,
         sensorType: string,
         sensorSecret: string,
         deviceNickname: string,
         associatedUsername: string
     ) => {
         await addSensorToUser(
-            deviceId,
+            device,
             sensorType,
             sensorSecret,
             deviceNickname,
@@ -132,7 +132,7 @@ const Admin = () => {
                                 sx={{ mt: 2, textTransform: 'none' }}
                                 onClick={() => {
                                     setUserForAccess(user.username);
-                                    setDeviceId('');
+                                    setDevice('');
                                     setAccessLevel(AccessLevel.NONE);
                                     setOpen(true);
                                 }}
@@ -202,7 +202,7 @@ const Admin = () => {
                                         sx={{ ml: 1, textTransform: 'none' }}
                                         onClick={() => {
                                             setUserForAccess(user.username);
-                                            setDeviceId(device.deviceId);
+                                            setDevice(device.deviceId);
                                             setAccessLevel(device.accessLevel);
                                             setOpen(true);
                                         }}
@@ -324,8 +324,8 @@ const Admin = () => {
                     </FormControl>
                     <TextField
                         label="Device ID"
-                        onChange={(e) => setDeviceId(e.target.value)}
-                        value={deviceId}
+                        onChange={(e) => setDevice(e.target.value)}
+                        value={device}
                     />
                     <FormControl>
                         <InputLabel id="select-access-level-label">
@@ -356,7 +356,7 @@ const Admin = () => {
                             if (userForAccess) {
                                 addContentAccessToUser(
                                     userForAccess,
-                                    deviceId,
+                                    device,
                                     accessLevel
                                 );
                                 setOpen(false);

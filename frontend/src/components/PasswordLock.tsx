@@ -80,7 +80,8 @@ const DRESWidget = () => {
 const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
     const [searchParams, _] = useSearchParams();
-    const { isAuthenticated, deviceId } = useAppSelector((state) => state.auth);
+    const { isAuthenticated } = useAppSelector((state) => state.auth);
+    const device = searchParams.get('device') || '';
     const dispatch = useAppDispatch();
     const [cookies, _setCookies, removeCookies] = useCookies(['token']);
 
@@ -166,7 +167,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                // onClick={() => navigate(`/${deviceId ? `?device=${deviceId}` : ''}`)}
+                                // onClick={() => navigate(`/${device ? `?device=${device}` : ''}`)}
                                 onClick={() => {
                                     // keep device and date
                                     const date = searchParams.get('date');
@@ -198,7 +199,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate(`/search?mode=text${deviceId ? `&device=${deviceId}` : ''}`)}
+                                onClick={() => navigate(`/search?mode=text${device ? `&device=${device}` : ''}`)}
                             >
                                 <SearchRounded />
                             </IconButton>
@@ -207,7 +208,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate(`/faces${deviceId ? `?device=${deviceId}` : ''}`)}
+                                onClick={() => navigate(`/faces${device ? `?device=${device}` : ''}`)}
                             >
                                 <FaceRounded />
                             </IconButton>
@@ -225,7 +226,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navigate(`/upload${deviceId ? `?device=${deviceId}` : ''}`)}
+                                onClick={() => navigate(`/upload${device ? `?device=${device}` : ''}`)}
                             >
                                 <UploadRounded />
                             </IconButton>

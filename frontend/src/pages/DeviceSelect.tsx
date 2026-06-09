@@ -1,7 +1,7 @@
 import { CameraAltRounded } from '@mui/icons-material';
 import { FormControl, InputLabel, MenuItem, Select } from '@mui/material';
-import { setDeviceId } from 'reducers/auth';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { setDevice } from 'reducers/auth';
+import { useAppDispatch } from 'reducers/hooks';
 import useSWR from 'swr';
 import { getDevices } from '../apis/browsing';
 import '../App.css';
@@ -11,11 +11,11 @@ import { useNavigate, useSearchParams } from 'react-router';
 const DeviceSelect = ({
     onChange,
 }: {
-    onChange?: (deviceId: string) => void;
+    onChange?: (device: string) => void;
 }) => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const deviceId = useAppSelector((state) => state.auth.deviceId) || searchParams.get('device') || '';
+    const device = searchParams.get('device') || '';
     const dispatch = useAppDispatch();
 
     const { data: devices, isLoading: devicesLoading } = useSWR(
@@ -26,21 +26,21 @@ const DeviceSelect = ({
         }
     );
 
-    const selfOnChange = (newDeviceId: string) => {
-        dispatch(setDeviceId(newDeviceId));
-        searchParams.set('device', newDeviceId);
+    const selfOnChange = (newDevice: string) => {
+        dispatch(setDevice(newDevice));
+        searchParams.set('device', newDevice);
         navigate({ search: searchParams.toString() });
-        onChange?.(newDeviceId);
+        onChange?.(newDevice);
     }
 
     useEffect(() => {
         if (devices && devices.length > 0) {
-            if (deviceId && devices.includes(deviceId)) {
-                return; // Current deviceId is valid
+            if (device && devices.includes(device)) {
+                return; // Current device is valid
             }
             selfOnChange(devices[0]);
         }
-    }, [devices, deviceId, onChange]);
+    }, [devices, device, onChange]);
 
     return (
         <FormControl fullWidth sx={{ width: '200px' }} size="small">
@@ -58,18 +58,17 @@ const DeviceSelect = ({
             <Select
                 sx={{ pl: '32px' }}
                 labelId="device-select-label"
-                value={deviceId || ''}
+                value={device || ''}
                 label="Content"
                 onChange={(e) => {
-                    const selectedDeviceId = e.target.value;
-                    selfOnChange(selectedDeviceId);
+                    selfOnChange(e.target.value);
                 }}
                 disabled={devicesLoading}
             >
                 <MenuItem value="">All Devices</MenuItem>
-                {devices?.map((device) => (
-                    <MenuItem key={device} value={device}>
-                        {device}
+                {devices?.map((d) => (
+                    <MenuItem key={d} value={d}>
+                        {d}
                     </MenuItem>
                 ))}
             </Select>

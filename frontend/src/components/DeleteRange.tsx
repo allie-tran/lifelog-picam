@@ -5,7 +5,7 @@ import { ImageObject } from '@utils/types';
 import dayjs, { Dayjs } from 'dayjs';
 import React from 'react';
 import ModalWithCloseButton from './ModalWithCloseButton';
-import { useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import ImageWithDate from './ImageWithDate';
 import { DeleteRounded } from '@mui/icons-material';
 
@@ -16,7 +16,8 @@ const DeleteRange = ({
     onDelete: () => void;
     date: string;
 }) => {
-    const deviceId = useAppSelector((state) => state.auth.deviceId);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [open, setOpen] = React.useState(false);
     const [startTime, setStartTime] = React.useState<Dayjs | null>(
         dayjs().subtract(5, 'minute')
@@ -33,7 +34,7 @@ const DeleteRange = ({
             console.log('Previewing images from', startTimeWithDate.toISOString(), 'to', endTimeWithDate.toISOString());
 
             const images = await getImagesByRange(
-                deviceId,
+                device,
                 date,
                 startTimeWithDate.valueOf(),
                 endTimeWithDate.valueOf()
@@ -46,7 +47,7 @@ const DeleteRange = ({
 
     const handleDelete = async () => {
         deleteImages(
-            deviceId,
+            device,
             images.map((img) => img.imagePath)
         );
         onDelete();

@@ -10,13 +10,14 @@ import {
 import { api } from 'constants/urls';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAppSelector } from 'reducers/hooks';
+import { useSearchParams } from 'react-router';
 import DeviceSelect from './DeviceSelect';
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 
 export const UploadPage: React.FC = () => {
-    const { deviceId: device } = useAppSelector((state) => state.auth);
+    const [searchParams] = useSearchParams();
+    const device = searchParams.get('device') || '';
     const [dateFormat, setDateFormat] = useState<string>('%Y%m%d_%H%M%S_000');
     const [file, setFile] = useState<File | null>(null);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
