@@ -136,6 +136,7 @@ def get_gps_by_date(
         .join(Image, Image.id == ImageGPS.image_id)
         .order_by(Image.timestamp.desc())
     ).scalars().all()
+
     res = [GPSInfo.model_validate(g.__dict__) for g in gps]
     if len(res) == 0 and not nested and date:
         run_pipeline(session, device, date)

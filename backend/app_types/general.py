@@ -132,6 +132,13 @@ class GPSInfo(BaseModel):
     longitude: float
     elevation: Optional[float] = None
 
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def parse_nan_to_none(cls, value: Any) -> Optional[float]:
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return None
+        return value
+
 
 class LocationInfo(CamelCaseModel):
     id: Optional[str] = None

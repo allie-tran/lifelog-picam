@@ -258,7 +258,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                     sx={{
                         position: 'relative', width: '100%', borderRadius: 1,
                         overflow: 'hidden',
-                        backgroundColor: '#000', display: 'flex',
+                        display: 'flex',
                         alignItems: 'center', justifyContent: 'center',
                     }}
                 >
@@ -300,8 +300,8 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                 When &amp; Where
                             </Typography>
                             <Stack spacing={1.5}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                    <AccessTimeRounded color="action" sx={{ mt: 0.3 }} />
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <AccessTimeRounded color="action" sx={{ mt: -1 }} />
                                     <Box>
                                         <Typography variant="body2" fontWeight={500}>
                                             {formattedTime}
@@ -310,8 +310,8 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                 </Box>
 
                                 {(locLine || hasGps) && (
-                                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                        <LocationOnRounded color="action" sx={{ mt: 0.3 }} />
+                                    <Stack direction="row" alignItems="center" gap={1}>
+                                        <LocationOnRounded color="action" sx={{ mt: -1 }} />
                                         <Box sx={{ flex: 1, minWidth: 0 }}>
                                             {locLine && (
                                                 <Typography variant="body2" fontWeight={500} sx={{ mb: 0.5 }}>
@@ -324,7 +324,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                                 </Typography>
                                             )}
                                         </Box>
-                                    </Box>
+                                    </Stack>
                                 )}
 
                                 {hasGps && (
@@ -337,7 +337,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                             scrollWheelZoom={false}
                                             attributionControl={false}
                                         >
-                                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                                            <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH"/>
                                             <Marker position={[data.gps!.latitude, data.gps!.longitude]} />
                                         </MapContainer>
                                     </Box>
@@ -383,7 +383,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                                         src={avatar}
                                                         alt={name}
                                                         style={{
-                                                            width: 48, height: 48,
+                                                            width: 36, height: 36,
                                                             borderRadius: '50%',
                                                             objectFit: 'cover',
                                                             border: '2px solid #ef5350',
@@ -391,7 +391,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                                     />
                                                 ) : (
                                                     <Box sx={{
-                                                        width: 48, height: 48, borderRadius: '50%',
+                                                        width: 36, height: 36, borderRadius: '50%',
                                                         backgroundColor: '#ffcdd2',
                                                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                         border: '2px solid #ef5350',

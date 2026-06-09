@@ -1,6 +1,7 @@
 import bisect
 from collections import Counter
 import logging
+import uuid
 import pandas as pd
 import numpy as np
 from zoneinfo import ZoneInfo
@@ -10,9 +11,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
 from tqdm.auto import tqdm
-from database.models import RawGPS, Device, ImageGPS, Image
+from database.models import RawGPS, Device, ImageGPS, Image, Location
+from location.enrich_stops import enrich_segment
 from location.utils import find_timezone
 import pytz
+
+from scripts.segmentation import load_all_segments
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 # DBSCAN params (haversine expects radians)
@@ -432,6 +436,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                             "timestamp": img_ts,
                             "date": date,
                             "interpolated": True,
+                            "track_id": left["track_id"],  # assign to left track by default
                         }
                     )
                 else:
@@ -442,6 +447,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                             "elevation": left["elevation"],
                             "timestamp": img_ts,
                             "interpolated": True,
+                            "track_id": left["track_id"],  # assign to left track by default
                         }
                     )
             elif left:
@@ -452,6 +458,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                         "elevation": left["elevation"],
                         "timestamp": img_ts,
                         "interpolated": True,
+                        "track_id": left["track_id"],  # assign to left track by default
                     }
                 )
             elif right:
@@ -462,6 +469,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                         "elevation": right["elevation"],
                         "timestamp": img_ts,
                         "interpolated": True,
+                        "track_id": right["track_id"],  # assign to right track by default
                     }
                 )
             else:
@@ -515,7 +523,6 @@ def run_pipeline(session: Session, device: str, date: str):
     df, segments = build_segments(df)
     print(f"   {len(segments)} segments total")
 
-    seg_df = pd.DataFrame(segments)
     print("7. Assigning GPS points to images…")
     all_points = df.to_dict(orient="records")
     point_timestamps = df["timestamp"].tolist()
@@ -556,7 +563,6 @@ def run_pipeline(session: Session, device: str, date: str):
         stmt = stmt.on_conflict_do_update(constraint="image_gps_image_id_key", set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
         session.execute(stmt)
 
-
     # Update timezone to image
     rows = []
     for d in data:
@@ -574,10 +580,49 @@ def run_pipeline(session: Session, device: str, date: str):
         session.execute(stmt, rows)
 
     image_data.extend(data)
+    session.commit()
+
+    print(f"   GPS assignment to images complete with {len(image_data)} matches")
+    print("8. Enrich stops.")
+    for segment in segments:
+        data = enrich_segment(segment["centroid_lat"], segment["centroid_lon"], segment["is_stop"])
+        track_id = segment["track_id"]
+        print("-" * 40)
+        if data and data["key"]:
+            print(data)
+            data["timezone"] = find_timezone(segment["centroid_lat"], segment["centroid_lon"])
+            stmt = insert(Location).values(**data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={
+                    "key": stmt.excluded.key,
+                    "name": stmt.excluded.name,
+                    "timezone": stmt.excluded.timezone,
+                }
+            )
+            stmt = stmt.returning(Location.id)
+            id = session.execute(stmt).scalar_one_or_none()
+            if id:
+                print(f"Enriched track '{track_id}' with location '{data['name']}' ({data['key']})")
+                images_in_track = [d["image_id"] for d in image_data if d.get("track_id") == track_id]
+                image_paths = [d["image_path"] for d in image_data if d.get("track_id") == track_id]
+                print(f"   {len(images_in_track)} images in this track: {image_paths[-10:]}")
+                stmt = update(Image).where(Image.id.in_(images_in_track)).values(location_id=id)
+                session.execute(stmt)
 
     session.commit()
-    print(f"   GPS assignment to images complete with {len(image_data)} matches")
-
-
-    print("8. Enrich stops.")
-    print("Not Implemented: would involve sending API requests to a geocoding service with stop centroids to get place names, categories, etc.")
+    # session.execute(
+    #     update(Image)
+    #     .where(Image.date == date)
+    #     .where(Image.device == device)
+    #     .values(
+    #         activity="",
+    #         activity_description="",
+    #         activity_confidence="",
+    #         segment_id=None,
+    #     )
+    # )
+    # session.commit()
+    # print(f"Reset segments for date {date} and device {device}.")
+    load_all_segments(session, device, date, skip_annotations=False)
+    session.flush()

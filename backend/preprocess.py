@@ -71,6 +71,8 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
     # Do auto_filters later TODO!!
     if query.text:
         emb = search_model.encode_text(query.text)
+        matrix = get_matrix(session, device_id)
+        emb = apply_transformation(emb, matrix)
         stmt = create_stmt_with_embedding(emb, device_id)
     else:
         stmt = create_stmt_generic(device_id)

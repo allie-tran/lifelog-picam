@@ -86,7 +86,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                                 face_embedding = np.array(face.embedding)
                                 face_embedding = face_embedding / np.linalg.norm(face_embedding)  # Normalize the face embedding
                                 dist = np.dot(embedding, face_embedding)  # Cosine similarity
-                                if dist > 0.8:  # Adjust threshold as needed
+                                if dist > 0.7:  # Adjust threshold as needed
                                     confidence = dist
                                     label = whitelist_person.name
                                     break
