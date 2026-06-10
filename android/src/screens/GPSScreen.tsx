@@ -155,24 +155,35 @@ const GPSScreen = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, deviceId]);
 
-  // ── Restore state if service was already running ──────────────────────────
+  // ── Check existing permission and restore service state on mount ──────────
   useEffect(() => {
-    if (isBackgroundGPSRunning()) {
-      setTrackingEnabled(true);
-      setHasPermission(true);
-    }
+    const init = async () => {
+      // Check if location permission was already granted
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        if (granted) { setHasPermission(true); }
+      } else {
+        setHasPermission(true);
+      }
+      if (isBackgroundGPSRunning()) {
+        setTrackingEnabled(true);
+      }
+    };
+    init();
     // On unmount: stop watchPosition only — leave BackgroundService running
     return () => { stopWatchPosition(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Start watchPosition for map updates when tracking + sensorId ready ────
+  // ── Start watchPosition for map updates whenever permission is available ──
   useEffect(() => {
-    if (trackingEnabled && sensorDeviceId && hasPermission) {
+    if (hasPermission && sensorDeviceId) {
       startWatchPosition();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackingEnabled, sensorDeviceId, hasPermission]);
+  }, [hasPermission, sensorDeviceId]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const postToMap = useCallback((msg: object) => {
@@ -203,21 +214,59 @@ const GPSScreen = () => {
 
   const requestPermission = async (): Promise<boolean> => {
     if (Platform.OS !== 'android') { setHasPermission(true); return true; }
-    const result = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      {
-        title: 'Location Permission',
-        message: 'Lifelog needs your location to track your position.',
-        buttonPositive: 'OK',
-        buttonNegative: 'Cancel',
-      },
-    );
-    const granted = result === PermissionsAndroid.RESULTS.GRANTED;
-    setHasPermission(granted);
-    if (!granted) {
-      Alert.alert('Permission denied', 'Location permission is required for GPS tracking.');
+    try {
+      // Notification permission (Android 13+)
+      if (Platform.Version >= 33) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          {
+            title: 'Notification Permission',
+            message: 'Lifelog needs to show a notification while tracking in the background.',
+            buttonPositive: 'Allow',
+            buttonNegative: 'Skip',
+          },
+        );
+      }
+
+      // Foreground location
+      const result = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Location Permission',
+          message: 'Lifelog needs your location to track your position.',
+          buttonPositive: 'OK',
+          buttonNegative: 'Cancel',
+        },
+      );
+      const foregroundGranted = result === PermissionsAndroid.RESULTS.GRANTED;
+      if (!foregroundGranted) {
+        setHasPermission(false);
+        Alert.alert('Permission denied', 'Location permission is required for GPS tracking.');
+        return false;
+      }
+      setHasPermission(true);
+
+      // Background location (Android 10+)
+      if (Platform.Version >= 29) {
+        const backgroundResult = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+          {
+            title: 'Background Location Permission',
+            message: 'Allow "all the time" access so Lifelog can track your position when the app is in the background.',
+            buttonPositive: 'OK',
+            buttonNegative: 'Skip',
+          },
+        );
+        if (backgroundResult !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Background location', 'Tracking will only work while the app is open.');
+        }
+      }
+      return true;
+    } catch (err) {
+      console.warn('Permission request error:', err);
+      setHasPermission(false);
+      return false;
     }
-    return granted;
   };
 
   // ── Toggle handler ────────────────────────────────────────────────────────
