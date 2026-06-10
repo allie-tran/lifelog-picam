@@ -60,7 +60,7 @@ Step 1 — Pick the broad group that best matches what is happening (choose exac
 
 Step 2 — Write a short activity label in gerund form (2–4 words), specific enough to be useful but consistent across similar scenes. Good examples: "writing code", "eating lunch", "commuting by train", "attending a lecture", "having a conversation", "tidying the desk".
 
-Step 3 — Write one or two sentences describing what is visible in the scene. Use the context above (time, location) to understand the scene, but don't just repeat the context.
+Step 3 — Write one or two short sentences describing what is visible in the scene. Use the context above (time, location, if stationary) to understand the scene, but don't repeat them.
 
 Return only valid JSON in this format:
 

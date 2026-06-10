@@ -1,10 +1,14 @@
-from sqlalchemy import create_engine, insert, or_, select, update
-from sqlalchemy.orm import Session, selectinload
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import create_engine, delete, insert, or_, select, update
+from sqlalchemy.orm import Session
 from auth.ortho import get_matrix
 from auth.types import Person
 from celery_app import celery
 from collections import Counter
-from database.models import Image, ImageEmbedding, ImageObject, ImagePerson, PeopleCluster, Location
+from database.models import (
+    Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry,
+    Image, ImageEmbedding, ImageObject, ImagePerson, PeopleCluster, Location,
+)
 from scripts.anonymise import anonymise_image
 from scripts.describe_segments import describe_segment, simple_describe_segment
 from pymongo import MongoClient
@@ -17,40 +21,15 @@ from location.gps_pipeline import run_pipeline
 from apis.explore import _FACES_CACHE
 import os
 
-# Cosine distance threshold for assigning a face to an existing cluster.
-# Below this distance → same person; above → new cluster.
 _FACE_CLUSTER_THRESHOLD = 0.40
-
+_MAX_CLUSTER_AGE_DAYS = 1
 
 logging.info("Starting Celery worker for describe_segment_task...")
 PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
 engine = create_engine(PG_URI)
 
-class MyTask(celery.Task):
-    def __init__(self):
-        self.sessions = {}
-
-    def before_start(self, task_id, args, kwargs):
-        self.sessions[task_id] = Session(engine)  # Create a new session for this task
-        super().before_start(task_id, args, kwargs)
-
-    def after_return(self, status, retval, task_id, args, kwargs, einfo):
-        session = self.sessions.pop(task_id)
-        session.flush()  # Flush any pending changes to the database
-        session.close()
-        super().after_return(status, retval, task_id, args, kwargs, einfo)
-
-    @property
-    def session(self):
-        return self.sessions[self.request.id]
-
 
 def _build_segment_context(session, device: str, date: str, segment_id: int) -> str:
-    """
-    Build a natural-language context string for the LLM describing when and
-    where this segment occurred.  Returns an empty string if nothing useful
-    can be determined (GPS not yet enriched, etc.).
-    """
     try:
         rows = session.execute(
             select(Image.timestamp, Image.local_timestamp, Image.location_id)
@@ -102,7 +81,7 @@ def _build_segment_context(session, device: str, date: str, segment_id: int) -> 
                 country = loc.country or ""
                 parts = list(dict.fromkeys(p for p in [place, city, country] if p))
                 loc_str = ", ".join(parts)
-                movement = "in transit" if loc.stop is False else "at a stop"
+                movement = "in transit" if loc.stop is False else "stationary"
                 lines.append(f"Location: {movement} — {loc_str}" if loc_str else f"Location: {movement}")
 
         return "\n".join(f"- {l}" for l in lines)
@@ -111,14 +90,19 @@ def _build_segment_context(session, device: str, date: str, segment_id: int) -> 
         return ""
 
 
-@celery.task(name="tasks.describe_segment_task", base=MyTask, bind=True)
+@celery.task(name="tasks.describe_segment_task", bind=True)
 def describe_segment_task(
     self,
     device, date, thumbnail_paths, segment_id, extra_info: list[str] = []
 ):
     mongo_client = MongoClient("mongodb://localhost:27017/")
+
+    # Read phase — get context, then release the connection
+    with Session(engine) as session:
+        context = _build_segment_context(session, device, date, segment_id)
+
+    # LLM call — no DB connection held
     try:
-        context = _build_segment_context(self.session, device, date, segment_id)
         activity_obj = describe_segment(
             device,
             date,
@@ -127,21 +111,10 @@ def describe_segment_task(
             context=context,
             extra_info=extra_info,
         )
-        # stmt = select(ImageEmbedding.embedding).join(Image).where(
-        #     Image.device == device,
-        #     Image.segment_id == segment_id,
-        #     Image.date == date,
-        # )
-        # embeddings = [r.embedding for r in self.session.execute(stmt).fetchall()]
-        # logging.info(f"Retrieved {len(embeddings)} embeddings for segment {segment_id} of device {device} on date {date}")
 
-        # activity_obj = simple_describe_segment(
-        #     embeddings=embeddings,
-        #     matrix=get_matrix(self.session, device),
-        #     segment_id=segment_id,
-        # )
-
-        stmt = update(Image).where(
+        # Write phase — short transaction
+        with Session(engine) as session:
+            stmt = update(Image).where(
                 Image.device == device,
                 Image.segment_id == segment_id,
                 Image.date == date,
@@ -151,38 +124,37 @@ def describe_segment_task(
                 activity_description=activity_obj["activity_description"],
                 activity_confidence=activity_obj["activity_confidence"],
             )
+            pg_result = session.execute(stmt)
+            logging.info(
+                "Updated %d rows for segment %s with activity '%s'",
+                pg_result.rowcount, segment_id, activity_obj["activity"],
+            )
+            session.commit()
 
-        logging.info(f"Updating database for segment {segment_id} with activity '{activity_obj['activity']}' and confidence '{activity_obj['activity_confidence']}'")
-        pg_result = self.session.execute(stmt)
-        logging.info(f"Updated {pg_result.rowcount} rows in the database for segment {segment_id}")
-        self.session.commit()
+            try:
+                from database.models import Image as _Img
+                from scripts.notify import maybe_notify_segment
+                img_row = session.execute(
+                    select(_Img.location_id, _Img.thumbnail)
+                    .where(_Img.device == device, _Img.segment_id == segment_id, _Img.date == date)
+                    .order_by(_Img.timestamp.asc())
+                    .limit(1)
+                ).first()
+                maybe_notify_segment(
+                    session, device, date, segment_id,
+                    activity_obj["activity"],
+                    img_row.location_id if img_row else None,
+                    img_row.thumbnail if img_row else None,
+                )
+                session.commit()
+            except Exception as _ne:
+                logging.warning("maybe_notify_segment failed for %s/%s seg %s: %s", device, date, segment_id, _ne)
 
-        # Bust browse cache for this device/date so next load reflects new annotations
+        # Bust browse cache (no DB connection needed)
         from sessions.redis import redis_client as _rc
         _rc.delete_pattern(f"browse:{device}:{date}:*")
 
-        # Fire notification if location is new or activity is unusual
-        try:
-            from database.models import Image as _Img
-            from scripts.notify import maybe_notify_segment
-            img_row = self.session.execute(
-                select(_Img.location_id, _Img.thumbnail)
-                .where(_Img.device == device, _Img.segment_id == segment_id, _Img.date == date)
-                .order_by(_Img.timestamp.asc())
-                .limit(1)
-            ).first()
-            location_id = img_row.location_id if img_row else None
-            representative_thumbnail = img_row.thumbnail if img_row else None
-            maybe_notify_segment(
-                self.session, device, date, segment_id,
-                activity_obj["activity"], location_id, representative_thumbnail,
-            )
-            self.session.commit()
-        except Exception as _ne:
-            logging.warning("maybe_notify_segment failed for %s/%s seg %s: %s", device, date, segment_id, _ne)
-
-        # Incremental dirty flag: record which segment changed rather than
-        # invalidating the whole day summary at once.
+        # Mark day summary dirty in MongoDB
         mongo_client["picam"]["day_summaries"].update_one(
             {"date": date, "device": device},
             {
@@ -192,12 +164,10 @@ def describe_segment_task(
             upsert=True,
         )
     except Exception as e:
-        logging.error(
-            f"Error describing segment {segment_id} for {device} on {date}: {e}"
-        )
+        logging.error("Error describing segment %s for %s on %s: %s", segment_id, device, date, e)
 
 
-@celery.task(name="tasks.yolo_process_images_task", base=MyTask, bind=True)
+@celery.task(name="tasks.yolo_process_images_task", bind=True)
 def yolo_process_images_task(
     self,
     device,
@@ -205,158 +175,153 @@ def yolo_process_images_task(
     whitelist_names: list[str] = [],
     whitelist_embeddings: list[list[list[float]]] = [],
 ):
-    logging.info(f"Starting YOLO processing for device {device} with {len(paths)} images")
+    logging.info("Starting YOLO processing for device %s with %d images", device, len(paths))
     if not paths:
-        logging.info(f"No paths provided for YOLO processing for device {device}")
         return
+
     whitelist = [
         Person(name=name, embeddings=embedding, cropped=[""])
         for name, embedding in zip(whitelist_names, whitelist_embeddings)
     ]
+
+    # Heavy inference — no DB connection held
     results = extract_object_from_images(paths, whitelist)
 
-    # Get image_ids from paths
+    # Write phase — short transaction
     relative_paths = [path.split(f"{device}/")[1] for path in paths]
-    stmt = select(Image.id, Image.image_path).where(
-        Image.device == device, Image.image_path.in_(relative_paths)
-    )
-    pg_results = self.session.execute(stmt).fetchall()
-    image_id_map = {r.image_path: r.id for r in pg_results}
 
-    object_rows = []
-    person_rows = []
-    image_rows = []
-    for r in results:
-        image_path = r["image_path"]
-        objects = r["objects"]
-        people = r["people"]
-        relative_path = image_path.split(f"{device}/")[1]
-        if image_id_map.get(relative_path) is None:
-            continue
+    with Session(engine) as session:
+        pg_results = session.execute(
+            select(Image.id, Image.image_path).where(
+                Image.device == device, Image.image_path.in_(relative_paths)
+            )
+        ).fetchall()
+        image_id_map = {r.image_path: r.id for r in pg_results}
 
-        image_id = image_id_map[relative_path]
+        object_rows = []
+        person_rows = []
+        image_rows = []
+        for r in results:
+            image_path = r["image_path"]
+            relative_path = image_path.split(f"{device}/")[1]
+            if image_id_map.get(relative_path) is None:
+                continue
+            image_id = image_id_map[relative_path]
 
-        for obj in objects:
-            obj = obj.model_dump()
-            object_rows.append(
-                {
+            for obj in r["objects"]:
+                obj = obj.model_dump()
+                object_rows.append({
                     "image_id": image_id,
                     "label": obj["label"],
                     "confidence": obj["confidence"],
                     "bbox": obj["bbox"],
                     "rel_bbox": obj["rel_bbox"],
-                }
-            )
+                })
 
-        for person in people:
-            person = person.model_dump()
-            person_rows.append(
-                {
+            for person in r["people"]:
+                person = person.model_dump()
+                person_rows.append({
                     "image_id": image_id,
                     "label": person["label"],
                     "confidence": person["confidence"],
                     "bbox": person["bbox"],
                     "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
-                }
-            )
-        image_rows.append(relative_path)
+                })
+            image_rows.append(relative_path)
 
-    if object_rows:
-        self.session.execute(insert(ImageObject).values(object_rows))
-        logging.info(f"Inserted {len(object_rows)} objects into the database")
-    if person_rows:
-        self.session.execute(insert(ImagePerson).values(person_rows))
-        logging.info(f"Inserted {len(person_rows)} people into the database")
+        affected_ids = list(image_id_map.values())
+        if affected_ids:
+            session.execute(delete(ImageObject).where(ImageObject.image_id.in_(affected_ids)))
+            session.execute(delete(ImagePerson).where(ImagePerson.image_id.in_(affected_ids)))
 
-    self.session.execute(
-        update(Image)
-        .where(Image.image_path.in_(image_rows), Image.device == device)
-        .values(
-            proc_yolo=True,
-            proc_insightface=True,
-            proc_deepface=False,
+        if object_rows:
+            session.execute(insert(ImageObject).values(object_rows))
+            logging.info("Inserted %d objects", len(object_rows))
+        if person_rows:
+            session.execute(insert(ImagePerson).values(person_rows))
+            logging.info("Inserted %d people", len(person_rows))
+
+        session.execute(
+            update(Image)
+            .where(Image.image_path.in_(image_rows), Image.device == device)
+            .values(proc_yolo=True, proc_insightface=True, proc_deepface=False)
         )
-    )
-    logging.info(f"Updated {len(image_rows)} images as processed for YOLO and InsightFace")
+        logging.info("Updated %d images as YOLO/InsightFace processed", len(image_rows))
+        session.commit()
 
-    self.session.commit()
-
-    # Trigger incremental location + face-cluster updates for affected dates
-    dates = list({p.split("/")[0] for p in relative_paths if "/" in p})
-    for date in dates:
-        update_location_task.delay(device, date)
     recluster_unassigned_faces_task.delay(device)
 
 
-@celery.task(name="tasks.update_location_task", base=MyTask, bind=True)
+@celery.task(name="tasks.update_location_task", bind=True)
 def update_location_task(self, device: str, date: str):
-    """
-    Run the GPS → location pipeline for device/date.
-    Called automatically after YOLO processes new images so that location_id
-    is populated without waiting for a manual trigger.
-    """
     try:
-        run_pipeline(self.session, device, date)
+        with Session(engine) as session:
+            run_pipeline(session, device, date)
         logging.info("Location pipeline complete for %s/%s", device, date)
     except Exception as e:
         logging.error("update_location_task failed for %s/%s: %s", device, date, e)
 
 
-@celery.task(name="tasks.recluster_unassigned_faces_task", base=MyTask, bind=True)
+@celery.task(name="tasks.recluster_unassigned_faces_task", bind=True)
 def recluster_unassigned_faces_task(self, device: str):
-    """
-    Incrementally assign ImagePerson rows that have an embedding but no cluster_id
-    to the nearest existing PeopleCluster, or create a new cluster.
+    with Session(engine) as session:
+        device_row = session.execute(
+            select(Device).where(Device.device_id == device)
+        ).scalar()
+        keep = device_row.keep_face_recognition if device_row else False
 
-    Algorithm:
-      - For each unassigned face: compute cosine distance to every cluster centroid.
-      - If nearest distance < _FACE_CLUSTER_THRESHOLD → assign; update centroid online.
-      - Else → create new cluster (label = 'Unknown').
-    This is called after every YOLO batch so clusters stay fresh without a
-    full nightly re-clustering run.
-    """
-    # Load all unassigned face embeddings for this device
-    rows = self.session.execute(
-        select(ImagePerson)
-        .join(Image, Image.id == ImagePerson.image_id)
-        .where(
-            Image.device == device,
-            ImagePerson.cluster_id.is_(None),
-            ImagePerson.embedding.isnot(None),
-        )
-    ).scalars().all()
+    if keep:
+        _recluster_whitelist_mode(device)
+    else:
+        _recluster_clustering_mode(device)
+
+
+def _recluster_clustering_mode(device: str):
+    # --- Read phase (short session) ---
+    with Session(engine) as session:
+        rows = session.execute(
+            select(ImagePerson.id, ImagePerson.embedding)
+            .join(Image, Image.id == ImagePerson.image_id)
+            .where(
+                Image.device == device,
+                ImagePerson.cluster_id.is_(None),
+                ImagePerson.embedding.isnot(None),
+            )
+        ).all()
+
+        clusters = session.execute(
+            select(PeopleCluster.id, PeopleCluster.center_embedding)
+            .where(or_(PeopleCluster.device == device, PeopleCluster.device.is_(None)))
+        ).all()
 
     if not rows:
-        logging.debug("No unassigned faces for device %s", device)
         return
 
-    # Load all existing clusters
-    clusters = self.session.execute(select(PeopleCluster)).scalars().all()
-    # Build centroid matrix: shape (C, 512)
+    # --- Numpy phase (no DB connection) ---
+    person_ids = [r.id for r in rows]
+    person_embs = np.array([np.array(r.embedding, dtype=np.float32) for r in rows])
+    person_embs /= np.linalg.norm(person_embs, axis=1, keepdims=True) + 1e-8
+
     if clusters:
         centroid_ids = [c.id for c in clusters]
-        centroid_matrix = np.array([np.array(c.center_embedding) for c in clusters], dtype=np.float32)
+        centroid_matrix = np.array(
+            [np.array(c.center_embedding, dtype=np.float32) for c in clusters]
+        )
         centroid_matrix /= np.linalg.norm(centroid_matrix, axis=1, keepdims=True) + 1e-8
-        # Track how many faces are in each cluster (for online centroid update)
         cluster_counts = {c.id: 1 for c in clusters}
     else:
         centroid_ids = []
         centroid_matrix = np.empty((0, 512), dtype=np.float32)
         cluster_counts = {}
 
-    assigned = 0
-    created = 0
+    person_cluster_map: dict[uuid.UUID, uuid.UUID] = {}
+    centroid_updates: dict[uuid.UUID, list] = {}
+    new_cluster_rows: list[dict] = []
+    assigned = created = 0
 
-    for person in rows:
-        emb = np.array(person.embedding, dtype=np.float32)
-        norm = np.linalg.norm(emb)
-        if norm < 1e-8:
-            continue
-        emb_norm = emb / norm
-
+    for person_id, emb_norm in zip(person_ids, person_embs):
         if len(centroid_ids) > 0:
-            # Cosine distance = 1 - dot(emb_norm, centroid_row)
             distances = 1.0 - (centroid_matrix @ emb_norm)
             best_idx = int(np.argmin(distances))
             best_dist = float(distances[best_idx])
@@ -365,51 +330,408 @@ def recluster_unassigned_faces_task(self, device: str):
             best_idx = -1
 
         if best_dist < _FACE_CLUSTER_THRESHOLD:
-            # Assign to existing cluster; online centroid update (running mean)
             cluster_id = centroid_ids[best_idx]
             n = cluster_counts[cluster_id]
             new_centroid = (centroid_matrix[best_idx] * n + emb_norm) / (n + 1)
             new_centroid /= np.linalg.norm(new_centroid) + 1e-8
             centroid_matrix[best_idx] = new_centroid
             cluster_counts[cluster_id] += 1
-            # Persist centroid update
-            self.session.execute(
-                update(PeopleCluster)
-                .where(PeopleCluster.id == cluster_id)
-                .values(center_embedding=new_centroid.tolist())
-            )
+            centroid_updates[cluster_id] = new_centroid.tolist()
+            person_cluster_map[person_id] = cluster_id
             assigned += 1
         else:
-            # Create new cluster
             new_id = uuid.uuid4()
-            self.session.execute(
-                insert(PeopleCluster).values(
-                    id=new_id,
-                    cluster_label="Unknown",
-                    center_embedding=emb_norm.tolist(),
-                )
-            )
-            cluster_id = new_id
-            # Append to in-memory arrays
+            new_cluster_rows.append({
+                "id": new_id,
+                "cluster_label": "Unknown",
+                "center_embedding": emb_norm.tolist(),
+                "device": device,
+                "whitelist_entry_id": None,
+            })
             centroid_ids.append(new_id)
             centroid_matrix = np.vstack([centroid_matrix, emb_norm[np.newaxis, :]])
             cluster_counts[new_id] = 1
+            person_cluster_map[person_id] = new_id
             created += 1
 
-        self.session.execute(
-            update(ImagePerson)
-            .where(ImagePerson.id == person.id)
-            .values(cluster_id=cluster_id)
+    # --- Write phase (short session) ---
+    with Session(engine) as session:
+        if new_cluster_rows:
+            session.execute(insert(PeopleCluster).values(new_cluster_rows))
+
+        for cluster_id, new_centroid in centroid_updates.items():
+            session.execute(
+                update(PeopleCluster)
+                .where(PeopleCluster.id == cluster_id)
+                .values(center_embedding=new_centroid)
+            )
+
+        # Bulk update: group person IDs by their assigned cluster
+        by_cluster: dict[uuid.UUID, list] = {}
+        for pid, cid in person_cluster_map.items():
+            by_cluster.setdefault(cid, []).append(pid)
+        for cluster_id, pids in by_cluster.items():
+            session.execute(
+                update(ImagePerson)
+                .where(ImagePerson.id.in_(pids))
+                .values(cluster_id=cluster_id)
+            )
+
+        session.commit()
+
+    _FACES_CACHE.pop(device, None)
+    logging.info("Face re-cluster (clustering mode) %s: %d assigned, %d new", device, assigned, created)
+
+
+def _recluster_whitelist_mode(device: str, days_back: int = 90):
+    # --- Read phase (short session) ---
+    with Session(engine) as session:
+        rows = session.execute(
+            select(ImagePerson.id, ImagePerson.embedding)
+            .join(Image, Image.id == ImagePerson.image_id)
+            .where(
+                Image.device == device,
+                Image.timestamp >= datetime.now(timezone.utc) - timedelta(days=days_back),
+                ImagePerson.cluster_id.is_(None),
+                ImagePerson.embedding.isnot(None),
+            )
+        ).all()
+
+        clusters = session.execute(
+            select(PeopleCluster.id, PeopleCluster.cluster_label, PeopleCluster.center_embedding)
+            .where(
+                PeopleCluster.device == device,
+                PeopleCluster.whitelist_entry_id.isnot(None),
+            )
+        ).all()
+
+    if not rows:
+        return
+
+    if not clusters:
+        logging.debug("No whitelist clusters for device %s; skipping assignment", device)
+        delete_unknown_face_embeddings_task.delay(device)
+        return
+
+    # --- Numpy phase (no DB connection) ---
+    person_ids = [r.id for r in rows]
+    person_embs = np.array([np.array(r.embedding, dtype=np.float32) for r in rows])
+    person_embs /= np.linalg.norm(person_embs, axis=1, keepdims=True) + 1e-8
+
+    centroid_ids = [c.id for c in clusters]
+    cluster_labels = {c.id: c.cluster_label for c in clusters}
+    centroid_matrix = np.array(
+        [np.array(c.center_embedding, dtype=np.float32) for c in clusters]
+    )
+    centroid_matrix /= np.linalg.norm(centroid_matrix, axis=1, keepdims=True) + 1e-8
+
+    # cluster_id -> (person_ids, label)
+    by_cluster: dict[uuid.UUID, tuple[list, str]] = {}
+    assigned = 0
+
+    for person_id, emb_norm in zip(person_ids, person_embs):
+        distances = 1.0 - (centroid_matrix @ emb_norm)
+        best_idx = int(np.argmin(distances))
+        if float(distances[best_idx]) < _FACE_CLUSTER_THRESHOLD:
+            cluster_id = centroid_ids[best_idx]
+            label = cluster_labels[cluster_id]
+            if cluster_id not in by_cluster:
+                by_cluster[cluster_id] = ([], label)
+            by_cluster[cluster_id][0].append(person_id)
+            assigned += 1
+
+    # --- Write phase (short session) ---
+    if by_cluster:
+        with Session(engine) as session:
+            for cluster_id, (pids, label) in by_cluster.items():
+                session.execute(
+                    update(ImagePerson)
+                    .where(ImagePerson.id.in_(pids))
+                    .values(cluster_id=cluster_id, label=label)
+                )
+            session.commit()
+
+    _FACES_CACHE.pop(device, None)
+    delete_unknown_face_embeddings_task.delay(device)
+    logging.info("Face re-cluster (whitelist mode) %s: %d assigned to whitelist", device, assigned)
+
+
+@celery.task(name="tasks.delete_unknown_face_embeddings_task")
+def delete_unknown_face_embeddings_task(device: str):
+    """Stub: purge embeddings for unknown faces older than 24h in whitelist mode."""
+    logging.debug("delete_unknown_face_embeddings_task: stub called for device %s", device)
+
+
+# ---------------------------------------------------------------------------
+# Cluster rebuild tasks (triggered when toggling recognition mode)
+# ---------------------------------------------------------------------------
+
+def _kmeans_numpy(embeddings: np.ndarray, k: int, max_iter: int = 100):
+    """Spherical KMeans on L2-normalised embeddings using cosine distance."""
+    n = embeddings.shape[0]
+    rng = np.random.default_rng(42)
+    centers = embeddings[rng.choice(n, k, replace=False)].copy()
+
+    labels = np.zeros(n, dtype=np.int32)
+    for _ in range(max_iter):
+        sims = embeddings @ centers.T
+        new_labels = np.argmax(sims, axis=1).astype(np.int32)
+
+        new_centers = np.zeros_like(centers)
+        for j in range(k):
+            mask = new_labels == j
+            if mask.any():
+                c = embeddings[mask].mean(axis=0)
+                norm = np.linalg.norm(c)
+                new_centers[j] = c / (norm + 1e-8)
+            else:
+                new_centers[j] = centers[j]
+
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        centers = new_centers
+
+    return labels, centers
+
+
+@celery.task(name="tasks.setup_clustering_task", bind=True)
+def setup_clustering_task(self, device: str, n_clusters: int = 20):
+    # --- Read phase ---
+    with Session(engine) as session:
+        rows = session.execute(
+            select(ImagePerson.id, ImagePerson.embedding)
+            .join(Image, Image.id == ImagePerson.image_id)
+            .where(Image.device == device, ImagePerson.embedding.isnot(None)
+        )).all()
+
+    if not rows:
+        logging.info("setup_clustering_task: no face embeddings for device %s", device)
+        return
+
+    # --- KMeans phase (no DB connection) ---
+    ids = [r.id for r in rows]
+    raw = np.array([np.array(r.embedding, dtype=np.float32) for r in rows])
+    embeddings = raw / (np.linalg.norm(raw, axis=1, keepdims=True) + 1e-8)
+
+    k = min(n_clusters, len(ids))
+    labels, centers = _kmeans_numpy(embeddings, k)
+
+    # Build cluster rows and person assignments
+    cluster_map: dict[int, uuid.UUID] = {}
+    cluster_rows = []
+    for label_idx in range(k):
+        new_id = uuid.uuid4()
+        cluster_rows.append({
+            "id": new_id,
+            "cluster_label": f"Person {label_idx + 1}",
+            "center_embedding": centers[label_idx].tolist(),
+            "device": device,
+            "whitelist_entry_id": None,
+        })
+        cluster_map[label_idx] = new_id
+
+    by_cluster: dict[int, list] = {}
+    for person_id, label in zip(ids, labels.tolist()):
+        by_cluster.setdefault(label, []).append(person_id)
+
+    # --- Write phase (short session) ---
+    with Session(engine) as session:
+        if cluster_rows:
+            session.execute(insert(PeopleCluster).values(cluster_rows))
+        for label_idx, pids in by_cluster.items():
+            session.execute(
+                update(ImagePerson)
+                .where(ImagePerson.id.in_(pids))
+                .values(cluster_id=cluster_map[label_idx])
+            )
+        session.commit()
+
+    _FACES_CACHE.pop(device, None)
+    logging.info("setup_clustering_task: created %d clusters for device %s", k, device)
+
+
+@celery.task(name="tasks.setup_whitelist_clusters_task", bind=True)
+def setup_whitelist_clusters_task(self, device: str):
+    # --- Read phase ---
+    with Session(engine) as session:
+        device_row = session.execute(
+            select(Device).where(Device.device_id == device)
+        ).scalar()
+        if not device_row:
+            return
+
+        entries = session.execute(
+            select(DeviceWhitelistEntry).where(DeviceWhitelistEntry.device_id == device_row.id)
+        ).scalars().all()
+
+        if not entries:
+            logging.info("setup_whitelist_clusters_task: no whitelist entries for device %s", device)
+            return
+
+        # Load embeddings for each entry while session is open
+        entry_data = []
+        for entry in entries:
+            emb_rows = session.execute(
+                select(DeviceWhitelistEmbedding.embedding)
+                .where(DeviceWhitelistEmbedding.entry_id == entry.id)
+            ).scalars().all()
+            entry_data.append((str(entry.name), entry.id, emb_rows))
+
+    # --- Compute centroids (no DB) ---
+    cluster_rows = []
+    entries_with_data = []
+    for name, entry_id, emb_rows in entry_data:
+        if not emb_rows:
+            continue
+        mat = np.array([np.array(e, dtype=np.float32) for e in emb_rows])
+        center = mat.mean(axis=0)
+        norm = np.linalg.norm(center)
+        if norm > 1e-8:
+            center /= norm
+        cluster_rows.append({
+            "id": uuid.uuid4(),
+            "cluster_label": name,
+            "center_embedding": center.tolist(),
+            "device": device,
+            "whitelist_entry_id": entry_id,
+        })
+        entries_with_data.append((name, entry_id, emb_rows))
+
+    # --- Write clusters (short session) ---
+    if cluster_rows:
+        with Session(engine) as session:
+            session.execute(insert(PeopleCluster).values(cluster_rows))
+            session.commit()
+        logging.info(
+            "setup_whitelist_clusters_task: created %d whitelist clusters for device %s",
+            len(cluster_rows), device,
         )
 
-    self.session.commit()
+    # Assign all unassigned faces to the new clusters
+    _recluster_whitelist_mode(device, days_back=_MAX_CLUSTER_AGE_DAYS)
 
-    # Invalidate the /all-faces in-process cache so next request reflects new clusters
+    # Queue per-entry relabeling for the past 24h
+    for name, entry_id, emb_rows in entries_with_data:
+        embeddings = [list(map(float, e)) for e in emb_rows]
+        relabel_whitelist_faces_task.apply_async(
+            args=(device, name, embeddings),
+            kwargs={"since_hours": 24},
+            retry=False,
+        )
+
     _FACES_CACHE.pop(device, None)
+    logging.info("setup_whitelist_clusters_task: done for device %s", device)
+
+
+@celery.task(name="tasks.relabel_whitelist_faces_task", bind=True)
+def relabel_whitelist_faces_task(
+    self,
+    device: str,
+    name: str,
+    new_embeddings: list[list[float]],
+    threshold: float = 0.7,
+    since_hours: int | None = None,
+):
+    from constants import DIR, THUMBNAIL_DIR
+
+    new_embs = [np.array(e, dtype=np.float32) for e in new_embeddings]
+    new_embs = [e / (np.linalg.norm(e) + 1e-8) for e in new_embs]
+
+    query = (
+        select(
+            ImagePerson.id, ImagePerson.image_id, ImagePerson.embedding,
+            ImagePerson.bbox, Image.image_path, Image.thumbnail,
+        )
+        .join(Image, Image.id == ImagePerson.image_id)
+        .where(
+            Image.device == device,
+            ImagePerson.label == "redacted face",
+            ImagePerson.embedding.isnot(None),
+            Image.deleted == False,
+        )
+    )
+    if since_hours is not None:
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        query = query.where(Image.timestamp >= since_dt)
+
+    # --- Read phase ---
+    with Session(engine) as session:
+        rows = session.execute(query).all()
+
+    # --- Numpy matching phase (no DB) ---
+    matched_ids: list[uuid.UUID] = []
+    relabelled_image_ids: set = set()
+
+    for row in rows:
+        face_emb = np.array(row.embedding, dtype=np.float32)
+        norm = np.linalg.norm(face_emb)
+        if norm < 1e-8:
+            continue
+        face_emb /= norm
+
+        best_sim = max(float(np.dot(ne, face_emb)) for ne in new_embs)
+        if best_sim >= threshold:
+            matched_ids.append(row.id)
+            relabelled_image_ids.add(row.image_id)
+
+    # --- Write phase (short session) ---
+    if matched_ids:
+        with Session(engine) as session:
+            session.execute(
+                update(ImagePerson)
+                .where(ImagePerson.id.in_(matched_ids))
+                .values(label=name, confidence=threshold)
+            )
+            session.commit()
 
     logging.info(
-        "Face re-cluster for %s: %d assigned to existing, %d new clusters created.",
-        device, assigned, created,
+        "relabel_whitelist: relabelled %d faces as '%s' for device %s",
+        len(matched_ids), name, device,
+    )
+
+    if not relabelled_image_ids:
+        return
+
+    # Fetch image paths for thumbnail re-generation (short session)
+    with Session(engine) as session:
+        affected_images = session.execute(
+            select(Image.id, Image.image_path, Image.thumbnail)
+            .where(Image.id.in_(relabelled_image_ids), Image.device == device)
+        ).all()
+
+        image_persons = {}
+        for img in affected_images:
+            persons = session.execute(
+                select(ImagePerson.label, ImagePerson.bbox)
+                .where(ImagePerson.image_id == img.id)
+            ).all()
+            image_persons[img.id] = (img.image_path, img.thumbnail, persons)
+
+    # File ops + task dispatch (no DB)
+    queued = 0
+    for img_id, (image_path, thumbnail, persons) in image_persons.items():
+        boxes = [p.bbox for p in persons if p.label in ("redacted face", "face")]
+        whitelist_boxes = [p.bbox for p in persons if p.label not in ("redacted face", "face")]
+
+        src = f"{DIR}/{device}/{image_path}"
+        thumb = f"{THUMBNAIL_DIR}/{device}/{thumbnail}"
+
+        if not os.path.exists(src):
+            continue
+
+        try:
+            if os.path.exists(thumb):
+                os.remove(thumb)
+        except OSError:
+            pass
+
+        anonymise_image_task.delay(src, thumb, boxes, whitelist_boxes, skip_sam3=True)
+        queued += 1
+
+    logging.info(
+        "relabel_whitelist: re-queued thumbnails for %d images on device %s",
+        queued, device,
     )
 
 
@@ -419,12 +741,12 @@ def anonymise_image_task(path, thumbnail_path, boxes, whitelist_boxes, skip_sam3
     return thumbnail_path
 
 
-@celery.task(name="tasks.compute_bio_day_stats_task", base=MyTask, bind=True)
+@celery.task(name="tasks.compute_bio_day_stats_task", bind=True)
 def compute_bio_day_stats_task(self, device_id: str, date: str):
-    """Nightly task: compute and upsert BioDayStats for device_id/date."""
     from scripts.bio_stats import compute_and_upsert_bio_day_stats
     try:
-        result = compute_and_upsert_bio_day_stats(self.session, device_id, date)
+        with Session(engine) as session:
+            result = compute_and_upsert_bio_day_stats(session, device_id, date)
         if result:
             logging.info("Computed bio_day_stats for %s/%s", device_id, date)
         else:
@@ -435,32 +757,16 @@ def compute_bio_day_stats_task(self, device_id: str, date: str):
 
 @celery.task(name="tasks.run_gps_pipeline_task")
 def run_gps_pipeline_task(device: str, date: str):
-    """
-    Run the full GPS pipeline (enrichment + segmentation + LLM annotation)
-    for a given device/date.  Queued from upload_gps every ~10 minutes so that
-    segmentation always runs after GPS data is available.
-    """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SaSession
-    _engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
-    with SaSession(_engine) as _session:
+    with Session(engine) as session:
         try:
-            run_pipeline(_session, device, date)
+            run_pipeline(session, device, date)
         except Exception as e:
             logging.error("run_gps_pipeline_task failed for %s/%s: %s", device, date, e)
 
 
 @celery.task(name="tasks.nightly_location_update_all_devices")
 def nightly_location_update_all_devices():
-    """
-    Beat-scheduled: run the GPS→location pipeline for all device/date pairs
-    where images still have no location_id assigned.
-    """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SaSession
-
-    engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
-    with SaSession(engine) as session:
+    with Session(engine) as session:
         rows = session.execute(
             select(Image.device, Image.date)
             .where(Image.location_id.is_(None), Image.deleted == False)
@@ -474,15 +780,7 @@ def nightly_location_update_all_devices():
 
 @celery.task(name="tasks.nightly_recluster_all_devices")
 def nightly_recluster_all_devices():
-    """
-    Beat-scheduled: re-cluster unassigned faces for all known camera devices.
-    """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SaSession
-    from database.models import Device
-
-    engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
-    with SaSession(engine) as session:
+    with Session(engine) as session:
         device_ids = session.execute(select(Device.device_id)).scalars().all()
 
     for device_id in device_ids:
@@ -492,22 +790,14 @@ def nightly_recluster_all_devices():
 
 @celery.task(name="tasks.nightly_bio_stats_all_devices")
 def nightly_bio_stats_all_devices():
-    """
-    Beat-scheduled nightly task.
-    Computes bio_day_stats for today and yesterday across all known sensor devices.
-    """
-    from datetime import datetime, timedelta
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SaSession
     from database.models import SensorDevice
 
-    engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
     today = datetime.utcnow().strftime("%Y-%m-%d")
     yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    with SaSession(engine) as session:
+    with Session(engine) as session:
         device_ids = session.execute(
-            __import__("sqlalchemy").select(SensorDevice.device_id)
+            select(SensorDevice.device_id)
         ).scalars().all()
 
     for device_id in device_ids:
@@ -519,24 +809,14 @@ def nightly_bio_stats_all_devices():
 
 @celery.task(name="tasks.pipeline_catchup_task")
 def pipeline_catchup_task():
-    """
-    Runs every 30 minutes. Re-queues images that missed pipeline steps (YOLO,
-    thumbnail, CLIP embedding) when Celery was purged or the worker restarted.
-    Skips images newer than 15 minutes to avoid racing with in-flight tasks.
-    """
-    import os
-    from datetime import datetime, timedelta
     from collections import defaultdict as _defaultdict
-    from sqlalchemy import create_engine as _ce
-    from sqlalchemy.orm import Session as _SaSession
     from constants import DIR, THUMBNAIL_DIR
 
-    _engine = _ce(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
     cutoff = datetime.utcnow() - timedelta(minutes=15)
     queued_yolo = queued_thumbs = queued_enc = queued_seg = 0
 
-    with _SaSession(_engine) as session:
-        # 1. YOLO: images still flagged proc_yolo=False
+    with Session(engine) as session:
+        # YOLO: images still flagged proc_yolo=False
         yolo_rows = session.execute(
             select(Image.device, Image.image_path)
             .where(
@@ -557,7 +837,7 @@ def pipeline_catchup_task():
                 yolo_process_images_task.delay(device, full_paths, [], [])
             queued_yolo = len(yolo_rows)
 
-        # 2. CLIP embeddings: images with no ImageEmbedding row
+        # CLIP embeddings: images with no ImageEmbedding row
         no_emb_rows = session.execute(
             select(Image.device, Image.image_path)
             .outerjoin(ImageEmbedding, ImageEmbedding.image_id == Image.id)
@@ -580,9 +860,7 @@ def pipeline_catchup_task():
                 except Exception as exc:
                     logging.warning("catchup: encode failed for %s/%s: %s", device, image_path, exc)
 
-        # 3. Thumbnails: check disk for missing .webp files among recent images.
-        #    proc_sam3=True is set immediately when the async task is dispatched, so
-        #    it doesn't tell us whether the file actually landed on disk.
+        # Thumbnails: check disk for missing .webp files
         thumb_rows = session.execute(
             select(Image.device, Image.image_path)
             .where(
@@ -604,9 +882,7 @@ def pipeline_catchup_task():
             anonymise_image_task.delay(src, expected_webp, [], [], skip_sam3=True)
             queued_thumbs += 1
 
-        # 4. Unannotated segments: segment_id assigned but activity is NULL (task
-        #    never ran) or "" (cleared by process_date resegment without reannotate).
-        #    Excludes "unclear activity" which means the LLM already tried and gave up.
+        # Unannotated segments
         unannotated_segs = session.execute(
             select(Image.device, Image.date, Image.segment_id)
             .where(
@@ -648,72 +924,69 @@ def pipeline_catchup_task():
 
 @celery.task(name="tasks.update_status_summary")
 def update_status_summary():
-    """
-    Beat-scheduled every 15 min: generate a one-sentence LLM summary of what the
-    user is currently doing, for each recently-active device. Cached in Redis
-    so the /status/current endpoint serves it instantly.
-    """
-    from datetime import datetime, timedelta, timezone as tz
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SaSession
-    from database.models import Device, Image as _Image
+    from database.models import Device as _Device, Image as _Image
     from sessions.redis import redis_client
 
-    engine = create_engine(os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam"))
-    now = datetime.now(tz.utc)
+    now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=2)
+    thirty_min_ago = now - timedelta(minutes=30)
 
-    with SaSession(engine) as session:
+    # --- Read phase ---
+    with Session(engine) as session:
         active = session.execute(
-            select(Device.device_id)
-            .where(Device.last_seen.isnot(None), Device.last_seen > cutoff)
+            select(_Device.device_id)
+            .where(_Device.last_seen.isnot(None), _Device.last_seen > cutoff)
         ).scalars().all()
 
         if not active:
             return
 
-        try:
-            from llm.gemini import LLM
-            llm = LLM()
-        except Exception as e:
-            logging.warning("Status summary: LLM init failed: %s", e)
-            return
-
+        device_descriptions: dict[str, list[str]] = {}
         for device_id in active:
-            try:
-                thirty_min_ago = now - timedelta(minutes=30)
-                rows = session.execute(
-                    select(_Image.segment_id, _Image.activity_description)
-                    .where(
-                        _Image.device == device_id,
-                        _Image.deleted == False,
-                        _Image.timestamp > thirty_min_ago,
-                        _Image.activity_description.isnot(None),
-                        _Image.activity_description != "",
-                    )
-                    .distinct(_Image.segment_id)
-                    .order_by(_Image.segment_id.desc())
-                    .limit(5)
-                ).fetchall()
-
-                descriptions = [r.activity_description for r in rows if r.activity_description]
-                if not descriptions:
-                    continue
-
-                prompt = (
-                    "You are a lifelogging assistant. Based on these recent activity descriptions "
-                    "from a wearable camera, write a single concise sentence (under 20 words) "
-                    "summarising what the person is currently doing. "
-                    f"Activities (most recent first): {'; '.join(descriptions)}"
+            rows = session.execute(
+                select(_Image.segment_id, _Image.activity_description)
+                .where(
+                    _Image.device == device_id,
+                    _Image.deleted == False,
+                    _Image.timestamp > thirty_min_ago,
+                    _Image.activity_description.isnot(None),
+                    _Image.activity_description != "",
                 )
-                summary_text = llm.generate(prompt)
+                .distinct(_Image.segment_id)
+                .order_by(_Image.segment_id.desc())
+                .limit(5)
+            ).fetchall()
+            descriptions = [r.activity_description for r in rows if r.activity_description]
+            if descriptions:
+                device_descriptions[device_id] = descriptions
 
-                cache_key = f"status:{device_id}:summary"
-                redis_client.set_json_with_ttl(
-                    cache_key,
-                    {"text": summary_text, "updated_at": now.isoformat()},
-                    ttl_seconds=25 * 60,
-                )
-                logging.info("Updated status summary for %s.", device_id)
-            except Exception as e:
-                logging.error("Status summary failed for %s: %s", device_id, e)
+    if not device_descriptions:
+        return
+
+    # --- LLM phase (no DB connection) ---
+    try:
+        from llm.gemini import LLM
+        llm = LLM()
+    except Exception as e:
+        logging.warning("Status summary: LLM init failed: %s", e)
+        return
+
+    for device_id, descriptions in device_descriptions.items():
+        try:
+            prompt = (
+                "You are a lifelogging assistant. Based on these recent activity descriptions "
+                "from a wearable camera, write a single concise sentence (under 20 words) "
+                "summarising what the person is currently doing. "
+                f"Activities (most recent first): {'; '.join(descriptions)}"
+            )
+            summary_text = llm.generate(prompt)
+
+            cache_key = f"status:{device_id}:summary"
+            redis_client.set_json_with_ttl(
+                cache_key,
+                {"text": summary_text, "updated_at": now.isoformat()},
+                ttl_seconds=25 * 60,
+            )
+            logging.info("Updated status summary for %s.", device_id)
+        except Exception as e:
+            logging.error("Status summary failed for %s: %s", device_id, e)

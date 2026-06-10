@@ -11,7 +11,6 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
@@ -38,7 +37,7 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_thumbnail_path
+from scripts.utils import CustomFormatter, get_thumbnail_path
 from settings import control_app
 from settings.utils import create_device
 from apis.explore import app as explore_app
@@ -56,10 +55,20 @@ from sqlalchemy import select, desc, update
 from datetime import datetime
 import logging
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
-    force=True
-)
+logger = logging.getLogger("lifelog-picam")
+logger.setLevel(logging.INFO)
+
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(CustomFormatter())
+
+logger.addHandler(ch)
+
+# logging.basicConfig(
+#     level=logging.INFO, # format="%(asctime)s - %(levelname)s - %(message)s",
+#     format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
+#     force=True
+# )
 
 
 # ---------------------------------------------------------------------------
@@ -135,8 +144,8 @@ async def lifespan(app: CustomFastAPI):
     close_db()
     mqtt_task.cancel()
     try:
-        await mqtt_task
-    except asyncio.CancelledError:
+        await asyncio.wait_for(mqtt_task, timeout=5.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
         print("MQTT consumer safely stopped.")
 
 

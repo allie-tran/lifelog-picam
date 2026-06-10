@@ -79,12 +79,13 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
 
                         label = "redacted face"
                         confidence = float(face.confidence)
+                        face_embedding = np.array(face.embedding)
+                        face_embedding = face_embedding / np.linalg.norm(face_embedding)  # normalize the face embedding
+
                         for whitelist_person in whitelist:
                             for embedding in whitelist_person.embeddings:
                                 embedding = np.array(embedding)
                                 embedding = embedding / np.linalg.norm(embedding)  # Normalize the embedding
-                                face_embedding = np.array(face.embedding)
-                                face_embedding = face_embedding / np.linalg.norm(face_embedding)  # Normalize the face embedding
                                 dist = np.dot(embedding, face_embedding)  # Cosine similarity
                                 if dist > 0.7:  # Adjust threshold as needed
                                     confidence = dist

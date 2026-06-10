@@ -21,7 +21,7 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
-import { deleteImage, getAllDates, getImagesByHour } from '../apis/browsing';
+import { deleteImage, deleteImages, getAllDates, getImagesByHour } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 
 function MainPage() {
@@ -119,13 +119,11 @@ function MainPage() {
         }
     }, [data, availableHours, hour]);
 
-    const deleteRow = (imagePaths: string[]) => {
+    const deleteRow = async (imagePaths: string[]) => {
         dispatch(setLoading(true));
-        Promise.all(imagePaths.map((path) => deleteImage(device, path))).then(
-            () => {
-                mutate().then(() => dispatch(setLoading(false)));
-            }
-        );
+        await deleteImages(device, imagePaths);
+        await mutate();
+        dispatch(setLoading(false));
     };
 
     return (

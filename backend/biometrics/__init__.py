@@ -113,6 +113,8 @@ async def mqtt_consumer():
                     payload = message.payload.decode()
                     parse_data(str(message.topic), payload)
 
+        except asyncio.CancelledError:
+            raise
         except aiomqtt.MqttError as error:
             print(f"MQTT Error: {error}. Reconnecting in 5 seconds...")
             await asyncio.sleep(5)

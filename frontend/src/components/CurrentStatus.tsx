@@ -53,11 +53,11 @@ export default function CurrentStatus({ device }: { device: string }) {
         : null;
 
     const cameraLastSeenText = data.cameraLastSeen
-        ? dayjs(data.cameraLastSeen).fromNow()
+        ? dayjs.utc(data.cameraLastSeen).fromNow()
         : 'Never';
 
     const segmentSinceText = data.segmentSince
-        ? dayjs(data.segmentSince).fromNow()
+        ? dayjs.utc(data.segmentSince).fromNow()
         : null;
 
     return (
@@ -87,7 +87,7 @@ export default function CurrentStatus({ device }: { device: string }) {
                         {data.sensors.map((s) => (
                             <Tooltip
                                 key={`${s.deviceId}-${s.sensorType}`}
-                                title={`${s.nickname || SENSOR_LABELS[s.sensorType] || s.sensorType}: ${s.lastSeen ? dayjs(s.lastSeen).fromNow() : 'never'}`}
+                                title={`${s.nickname || SENSOR_LABELS[s.sensorType] || s.sensorType}: ${s.lastSeen ? dayjs.utc(s.lastSeen).fromNow() : 'never'}`}
                                 arrow
                             >
                                 <Stack direction="row" spacing={0.3} alignItems="center" sx={{ cursor: 'default' }}>

@@ -53,10 +53,10 @@ def delete_image(
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
-    res: CursorResult = session.execute(stmt)
+    res = session.execute(stmt)
     logger.info(
         "Marked %d record(s) as deleted for image %s on device %s.",
-        res.rowcount, request.image_path, device,
+        res.rowcount, request.image_path, device,  # type: ignore
     )
     session.commit()
 
@@ -75,6 +75,10 @@ def delete_images(
         .where(ImageModel.image_path.in_(paths))
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
+    )
+    logger.info(
+        "Marked %d record(s) as deleted for %d images on device %s.",
+        len(paths), len(request.image_paths), device,  # type: ignore
     )
     session.commit()
 

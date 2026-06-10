@@ -179,7 +179,7 @@ const ResultSummaryBar = ({
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const { data: availableFaces } = useSWR(
-        [device, 'faces'],
+        device ? [device, 'faces'] : null,
         () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );

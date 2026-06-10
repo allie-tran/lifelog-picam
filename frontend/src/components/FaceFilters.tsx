@@ -24,7 +24,7 @@ const FaceFiltersHook = () => {
     const { peopleIds } = useAppSelector((state) => state.search.query);
 
     const { data: availableFaces } = useSWR(
-        [device, 'faces'],
+        device ? [device, 'faces'] : null,
         async () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );

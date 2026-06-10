@@ -62,7 +62,7 @@ const TemporalFiltersHook = ({
     );
     const [pendingDate, setPendingDate] = useState<Dayjs | null>(null);
 
-    const { data: availableYears } = useSWR([device, 'year'], async () => {
+    const { data: availableYears } = useSWR(device ? [device, 'year'] : null, async () => {
         const years = await getAvailableValues(device, 'year');
         setCurrentYear(
             years.length > 0 ? parseInt(years[0]) : new Date().getFullYear()
@@ -70,7 +70,7 @@ const TemporalFiltersHook = ({
         return years.map((y) => parseInt(y));
     });
 
-    const { data: availableDates } = useSWR([device, 'date'], () =>
+    const { data: availableDates } = useSWR(device ? [device, 'date'] : null, () =>
         getAvailableValues(device, 'date')
     );
     const availableDatesSet = useMemo(

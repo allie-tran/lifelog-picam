@@ -64,7 +64,7 @@ const LocationFiltersHook = () => {
     >(null);
 
     const { data: availableCountries } = useSWR(
-        [device, isMoving, 'country'],
+        device ? [device, isMoving, 'country'] : null,
         async () =>
             getAvailableValues(
                 device,
@@ -74,7 +74,7 @@ const LocationFiltersHook = () => {
     );
 
     const { data: availableLocations } = useSWR(
-        [device, 'location', countries, isMoving],
+        device ? [device, 'location', countries, isMoving] : null,
         async () =>
             isMoving
                 ? getMovingPeriods(device, countries)
@@ -83,7 +83,7 @@ const LocationFiltersHook = () => {
     );
 
     const { data: markersData } = useSWR(
-        [device, locationIds],
+        device ? [device, locationIds] : null,
         async () => getMapMarkers(device, countries),
         
         { revalidateOnFocus: false, revalidateOnReconnect: false }
