@@ -1,3 +1,5 @@
+import { getAvailableValues } from '@apis/searchFilters';
+import { DeleteRounded } from '@mui/icons-material';
 import {
     Box,
     Button,
@@ -11,8 +13,13 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import { DeleteRounded } from '@mui/icons-material';
-import { useMemo, useState, useCallback } from 'react';
+import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
+import dayjs from 'dayjs';
+import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
+import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import useSWR from 'swr';
 import {
     DayOfWeek,
     Month,
@@ -21,18 +28,11 @@ import {
     dayOfWeekOptions,
     monthOptions,
     seasonOptions,
-    timeOfDayOptions,
+    timeOfDayOptions
 } from 'types/filters';
-import TimeHeatmap from './TimeHeatmap';
-import useSWR from 'swr';
-import { getAvailableValues } from '@apis/searchFilters';
-import { useSearchParams } from 'react-router';
-import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
 import { ImageObject } from 'utils/types';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
+import TimeHeatmap from './TimeHeatmap';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);

@@ -60,6 +60,14 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
     force=True
 )
+logger = logging.getLogger("lifelog-picam")
+logger.setLevel(logging.INFO)
+
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(CustomFormatter())
+
+logger.addHandler(ch)
 
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)

@@ -59,6 +59,7 @@ def delete_image(
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
+    res = session.execute(stmt)
     logger.info(
         "Marked %d record(s) as deleted for image %s on device %s.",
         res.rowcount, request.image_path, device,  # type: ignore

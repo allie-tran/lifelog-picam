@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, delete, insert, or_, select, update
 from sqlalchemy.orm import Session
+from auth.ortho import get_matrix
 from auth.types import Person
 from celery_app import celery
 from collections import Counter
@@ -146,7 +147,7 @@ def describe_segment_task(
             pg_result = session.execute(stmt)
             logging.info(
                 "Updated %d rows for segment %s with activity '%s'",
-                pg_result.rowcount, segment_id, activity_obj["activity"],
+                pg_result.rowcount, segment_id, activity_obj["activity"],  # type: ignore
             )
             session.commit()
 
@@ -216,9 +217,6 @@ def yolo_process_images_task(
             )
         ).fetchall()
         image_id_map = {r.image_path: r.id for r in pg_results}
-        if not image_id_map:
-            logging.error("No matching images found in DB for YOLO results for device %s", device)
-            return
 
         object_rows = []
         person_rows = []
@@ -260,10 +258,6 @@ def yolo_process_images_task(
         if object_rows:
             session.execute(insert(ImageObject).values(object_rows))
             logging.info("Inserted %d objects", len(object_rows))
-
-        if person_rows:
-            session.execute(insert(ImagePerson).values(person_rows))
-            logging.info("Inserted %d people", len(person_rows))
 
         # Mark images as processed by YOLO/InsightFace (but not DeepFace, which is separate)
         session.execute(

@@ -10,9 +10,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import DocumentPicker, { types } from 'react-native-document-picker';
+import { pick, types } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
-import { completeUpload, getProcessingStatus, initUpload, uploadChunk } from '../api/upload';
+import {
+  completeUpload,
+  getProcessingStatus,
+  initUpload,
+  uploadChunk,
+} from '../api/upload';
 import { useAppSelector } from '../store';
 import { COLORS } from '../constants';
 
@@ -27,8 +32,10 @@ const UploadScreen = () => {
   const [fileUri, setFileUri] = useState<string | null>(null);
   const [dateFormat, setDateFormat] = useState(DEFAULT_DATE_FORMAT);
 
-  const [phase, setPhase] = useState<'idle' | 'copying' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
-  const [uploadProgress, setUploadProgress] = useState(0);   // 0–1
+  const [phase, setPhase] = useState<
+    'idle' | 'copying' | 'uploading' | 'processing' | 'done' | 'error'
+  >('idle');
+  const [uploadProgress, setUploadProgress] = useState(0); // 0–1
   const [processProgress, setProcessProgress] = useState(0); // 0–1
   const [statusMsg, setStatusMsg] = useState('');
 
@@ -37,7 +44,11 @@ const UploadScreen = () => {
 
   const pickFile = async () => {
     try {
-      const result = await DocumentPicker.pickSingle({ type: [types.zip] });
+      // const result = await DocumentPicker.pickSingle({ type: [types.zip] });
+      const result = await pick({
+        allowMultiSelection: false,
+        type: [types.zip],
+      });
       setFileName(result.name ?? 'upload.zip');
       setFileSize(result.size ?? 0);
       setFileUri(result.uri);
@@ -46,14 +57,16 @@ const UploadScreen = () => {
       setProcessProgress(0);
       setStatusMsg('');
     } catch (e) {
-      if (!DocumentPicker.isCancel(e)) {
+      if (!e?.message?.includes('cancelled')) {
         Alert.alert('Error', 'Could not open file.');
       }
     }
   };
 
   const startUpload = async () => {
-    if (!fileUri || !deviceId) { return; }
+    if (!fileUri || !deviceId) {
+      return;
+    }
     abortRef.current = false;
 
     let tmpPath: string | null = null;
@@ -75,7 +88,9 @@ const UploadScreen = () => {
 
       // Upload chunks
       for (let i = 0; i < totalChunks; i++) {
-        if (abortRef.current) { throw new Error('Cancelled'); }
+        if (abortRef.current) {
+          throw new Error('Cancelled');
+        }
         const offset = i * CHUNK_SIZE;
         const length = Math.min(CHUNK_SIZE, totalBytes - offset);
 
@@ -84,10 +99,13 @@ const UploadScreen = () => {
         // Read chunk as base64 then write it to its own temp file so FormData
         // can send it as a real binary blob.
         const b64 = await RNFS.read(tmpPath, length, offset, 'base64');
-        const chunkPath = `${RNFS.TemporaryDirectoryPath}/chunk_${i}_${Date.now()}`;
+        const chunkPath = `${
+          RNFS.TemporaryDirectoryPath
+        }/chunk_${i}_${Date.now()}`;
         await RNFS.write(chunkPath, b64, 0, 'base64');
 
-        const chunkUri = Platform.OS === 'android' ? `file://${chunkPath}` : chunkPath;
+        const chunkUri =
+          Platform.OS === 'android' ? `file://${chunkPath}` : chunkPath;
         await uploadChunk(uploadId, i, totalChunks, chunkUri);
         await RNFS.unlink(chunkPath).catch(() => {});
 
@@ -107,7 +125,9 @@ const UploadScreen = () => {
           const res = await getProcessingStatus(id);
           const { status, progress, message } = res.data;
           setProcessProgress(progress ?? 0);
-          if (message) { setStatusMsg(message); }
+          if (message) {
+            setStatusMsg(message);
+          }
           if (status === 'done') {
             clearInterval(pollRef.current!);
             setPhase('done');
@@ -130,13 +150,17 @@ const UploadScreen = () => {
       setPhase('error');
       setStatusMsg(err?.message ?? 'Upload failed.');
     } finally {
-      if (tmpPath) { RNFS.unlink(tmpPath).catch(() => {}); }
+      if (tmpPath) {
+        RNFS.unlink(tmpPath).catch(() => {});
+      }
     }
   };
 
   const cancel = () => {
     abortRef.current = true;
-    if (pollRef.current) { clearInterval(pollRef.current); }
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+    }
     setPhase('idle');
     setStatusMsg('');
     setUploadProgress(0);
@@ -153,7 +177,8 @@ const UploadScreen = () => {
     setProcessProgress(0);
   };
 
-  const isActive = phase === 'copying' || phase === 'uploading' || phase === 'processing';
+  const isActive =
+    phase === 'copying' || phase === 'uploading' || phase === 'processing';
   const isDone = phase === 'done';
   const isError = phase === 'error';
 
@@ -175,8 +200,12 @@ const UploadScreen = () => {
         <Text style={styles.pickerIcon}>📦</Text>
         {fileUri ? (
           <>
-            <Text style={styles.pickerFilename} numberOfLines={1}>{fileName}</Text>
-            <Text style={styles.pickerSize}>{(fileSize / 1024 / 1024).toFixed(1)} MB</Text>
+            <Text style={styles.pickerFilename} numberOfLines={1}>
+              {fileName}
+            </Text>
+            <Text style={styles.pickerSize}>
+              {(fileSize / 1024 / 1024).toFixed(1)} MB
+            </Text>
           </>
         ) : (
           <Text style={styles.pickerHint}>Tap to select a ZIP file</Text>
@@ -196,13 +225,18 @@ const UploadScreen = () => {
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <Text style={styles.hint}>Python strptime format (e.g. %Y%m%d_%H%M%S_000)</Text>
+        <Text style={styles.hint}>
+          Python strptime format (e.g. %Y%m%d_%H%M%S_000)
+        </Text>
       </View>
 
       {/* Upload button */}
       {!isActive && !isDone && (
         <TouchableOpacity
-          style={[styles.uploadBtn, (!fileUri || !dateFormat.trim()) && styles.uploadBtnDisabled]}
+          style={[
+            styles.uploadBtn,
+            (!fileUri || !dateFormat.trim()) && styles.uploadBtnDisabled,
+          ]}
           onPress={startUpload}
           disabled={!fileUri || !dateFormat.trim()}
         >
@@ -217,17 +251,24 @@ const UploadScreen = () => {
 
           {/* Progress bar */}
           <View style={styles.progressBar}>
-            <View style={[
-              styles.progressFill,
-              { width: `${Math.round(totalProgress * 100)}%` },
-              isDone && styles.progressFillDone,
-              isError && styles.progressFillError,
-            ]} />
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${Math.round(totalProgress * 100)}%` },
+                isDone && styles.progressFillDone,
+                isError && styles.progressFillError,
+              ]}
+            />
           </View>
-          <Text style={styles.progressPct}>{Math.round(totalProgress * 100)}%</Text>
+          <Text style={styles.progressPct}>
+            {Math.round(totalProgress * 100)}%
+          </Text>
 
           {phase === 'processing' && (
-            <ActivityIndicator color={COLORS.primary} style={{ marginTop: 8 }} />
+            <ActivityIndicator
+              color={COLORS.primary}
+              style={{ marginTop: 8 }}
+            />
           )}
 
           {isDone && (
@@ -256,57 +297,113 @@ const UploadScreen = () => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 16, paddingBottom: 48 },
-  title: { fontSize: 22, fontWeight: '700', color: COLORS.purple, marginBottom: 20 },
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: COLORS.purple,
+    marginBottom: 20,
+  },
 
   picker: {
-    backgroundColor: COLORS.surface, borderRadius: 14, padding: 20,
-    alignItems: 'center', borderWidth: 2, borderColor: COLORS.divider,
-    borderStyle: 'dashed', gap: 6, marginBottom: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.divider,
+    borderStyle: 'dashed',
+    gap: 6,
+    marginBottom: 16,
   },
   pickerSelected: { borderColor: COLORS.primary, borderStyle: 'solid' },
   pickerIcon: { fontSize: 32 },
-  pickerFilename: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary, maxWidth: 260 },
+  pickerFilename: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    maxWidth: 260,
+  },
   pickerSize: { fontSize: 12, color: COLORS.textSecondary },
   pickerHint: { fontSize: 14, color: COLORS.textSecondary },
 
   field: { marginBottom: 16 },
-  label: { fontSize: 13, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 6 },
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
   input: {
-    backgroundColor: COLORS.surface, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
-    fontSize: 14, color: COLORS.textPrimary, borderWidth: 1, borderColor: COLORS.divider,
+    backgroundColor: COLORS.surface,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    borderWidth: 1,
+    borderColor: COLORS.divider,
   },
   hint: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 },
 
   uploadBtn: {
-    backgroundColor: COLORS.primary, borderRadius: 12, paddingVertical: 14,
-    alignItems: 'center', marginTop: 4,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
   },
   uploadBtnDisabled: { opacity: 0.45 },
   uploadBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 
   progressCard: {
-    backgroundColor: COLORS.surface, borderRadius: 14, padding: 20,
-    marginTop: 16, gap: 8,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    padding: 20,
+    marginTop: 16,
+    gap: 8,
   },
-  progressLabel: { fontSize: 13, color: COLORS.textPrimary, textAlign: 'center' },
+  progressLabel: {
+    fontSize: 13,
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+  },
   progressBar: {
-    height: 8, backgroundColor: COLORS.divider, borderRadius: 4, overflow: 'hidden',
+    height: 8,
+    backgroundColor: COLORS.divider,
+    borderRadius: 4,
+    overflow: 'hidden',
     marginVertical: 4,
   },
-  progressFill: { height: '100%', backgroundColor: COLORS.primary, borderRadius: 4 },
+  progressFill: {
+    height: '100%',
+    backgroundColor: COLORS.primary,
+    borderRadius: 4,
+  },
   progressFillDone: { backgroundColor: '#4CAF50' },
   progressFillError: { backgroundColor: COLORS.primary },
-  progressPct: { fontSize: 12, color: COLORS.textSecondary, textAlign: 'center' },
+  progressPct: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
 
   doneBtn: {
-    marginTop: 8, paddingVertical: 10, borderRadius: 10,
-    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.primary,
+    marginTop: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
     alignItems: 'center',
   },
   doneBtnText: { color: COLORS.primary, fontWeight: '600' },
   retryBtn: {
-    marginTop: 8, paddingVertical: 10, borderRadius: 10,
-    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.primary,
+    marginTop: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
     alignItems: 'center',
   },
   retryBtnText: { color: COLORS.primary, fontWeight: '600' },

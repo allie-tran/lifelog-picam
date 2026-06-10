@@ -41,6 +41,10 @@ const SERVICE_OPTIONS = {
   taskDesc: 'Recording your location in the background',
   taskIcon: { name: 'ic_launcher', type: 'mipmap' },
   color: '#16A299',
+  foregroundServiceType: ['location'] as const,
+  parameters: {
+      delay: 5000,
+  },
 };
 
 export const startBackgroundGPS = (sensorDeviceId: string, deviceId: string) => {

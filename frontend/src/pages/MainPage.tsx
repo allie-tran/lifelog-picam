@@ -22,10 +22,9 @@ import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
 import {
-    deleteImage,
     deleteImages,
     getAllDates,
-    getImagesByHour,
+    getImagesByHour
 } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 
