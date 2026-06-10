@@ -3,9 +3,13 @@ import { DeleteRounded } from '@mui/icons-material';
 import {
     Box,
     Button,
+    Checkbox,
     Chip,
+    Grid,
     IconButton,
     Stack,
+    Tab,
+    Tabs,
     TextField,
     Typography,
 } from '@mui/material';
@@ -19,7 +23,12 @@ import useSWR from 'swr';
 import {
     DayOfWeek,
     Month,
+    Season,
     TimeOfDay,
+    dayOfWeekOptions,
+    monthOptions,
+    seasonOptions,
+    timeOfDayOptions,
 } from 'types/filters';
 import { ImageObject } from 'utils/types';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
@@ -51,6 +60,7 @@ const TemporalFiltersHook = ({
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+    const [tabIndex, setTabIndex] = useState(0);
     const [startText, setStartText] = useState('');
     const [endText, setEndText] = useState('');
 
@@ -106,109 +116,142 @@ const TemporalFiltersHook = ({
 
     // ── renders ───────────────────────────────────────────────────────────
 
-    /**
-     * Rendered inside the sidebar Temporal Filter accordion.
-     * Only year filter chips + date range input — time/day/month are now
-     * handled directly by the heatmap below the results.
-     */
     const renderFilterOptions = () => (
-        <Stack spacing={1.5} sx={{ pt: 0.5, pb: 1 }}>
-            {/* Year filter */}
-            {availableYears && availableYears.length > 0 && (
-                <Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
-                        Year
-                    </Typography>
-                    <Stack direction="row" flexWrap="wrap" gap={0.5} mt={0.5}>
-                        {availableYears.map((yr) => (
-                            <Chip
-                                key={yr}
-                                label={yr}
-                                size="small"
-                                variant={years.includes(yr) ? 'filled' : 'outlined'}
-                                color={years.includes(yr) ? 'primary' : 'default'}
-                                onClick={() => {
-                                    const next = years.includes(yr)
-                                        ? years.filter((y) => y !== yr)
-                                        : [...years, yr];
-                                    update({ years: next });
-                                    setCurrentYear(yr);
-                                }}
-                            />
-                        ))}
-                    </Stack>
-                </Box>
-            )}
-
-            {/* Custom date ranges */}
-            <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
-                    Specific dates
-                </Typography>
-                <Stack spacing={0.75} mt={0.5} mb={0.75}>
-                    <TextField
-                        size="small"
-                        label="Date"
-                        placeholder="15 Jun 2024"
-                        value={startText}
-                        onChange={(e) => setStartText(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
-                        error={startText.trim() !== '' && !parseDate(startText)}
-                        helperText={
-                            startText.trim() !== '' && !parseDate(startText)
-                                ? 'Unrecognised date'
-                                : undefined
-                        }
+        <Stack direction="row" sx={{ minHeight: 180 }}>
+            <Tabs
+                value={tabIndex}
+                onChange={(_, v) => setTabIndex(v)}
+                orientation="vertical"
+                sx={{
+                    borderRight: 1,
+                    borderColor: 'divider',
+                    minWidth: 80,
+                    '& .MuiTab-root': {
+                        minHeight: 32,
+                        py: 0.5,
+                        px: 1,
+                        fontSize: '11px',
+                        alignItems: 'flex-start',
+                        textAlign: 'left',
+                    },
+                }}
+            >
+                <Tab label="Time" />
+                <Tab label="Week Day" />
+                <Tab label="Season" />
+                <Tab label="Month" />
+                <Tab label="Year" />
+                <Tab label="Date" />
+            </Tabs>
+            <Box sx={{ flex: 1, pl: 1, overflowY: 'auto', maxHeight: 220 }}>
+                {tabIndex === 0 && (
+                    <ListOfCheckBoxes
+                        options={timeOfDayOptions}
+                        selectedOptions={timeOfDays}
+                        onChange={(selected) => update({ timeOfDays: selected as TimeOfDay[] })}
                     />
-                    <TextField
-                        size="small"
-                        label="End date (optional)"
-                        placeholder="20 Jun 2024"
-                        value={endText}
-                        onChange={(e) => setEndText(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
-                        error={endText.trim() !== '' && !parseDate(endText)}
-                        helperText={
-                            endText.trim() !== '' && !parseDate(endText)
-                                ? 'Unrecognised date'
-                                : undefined
-                        }
+                )}
+                {tabIndex === 1 && (
+                    <ListOfCheckBoxes
+                        options={dayOfWeekOptions}
+                        selectedOptions={dayOfWeeks}
+                        onChange={(selected) => update({ dayOfWeeks: selected as DayOfWeek[] })}
                     />
-                    <Button
-                        variant="outlined"
-                        size="small"
-                        disabled={!startText.trim() || !parseDate(startText)}
-                        onClick={handleAddRange}
-                    >
-                        Add
-                    </Button>
-                </Stack>
-                <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                    {customRanges
-                        .filter((r) => r.start !== r.end)
-                        .map((r) => (
-                            <Chip
-                                key={`${r.start}-${r.end}`}
-                                label={`${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`}
+                )}
+                {tabIndex === 2 && (
+                    <ListOfCheckBoxes
+                        options={seasonOptions}
+                        selectedOptions={seasons}
+                        onChange={(selected) => update({ seasons: selected as Season[] })}
+                    />
+                )}
+                {tabIndex === 3 && (
+                    <ListOfCheckBoxes
+                        options={monthOptions}
+                        selectedOptions={months}
+                        onChange={(selected) => update({ months: selected as Month[] })}
+                    />
+                )}
+                {tabIndex === 4 && (
+                    <ListOfCheckBoxes
+                        options={availableYears ? availableYears.map(String) : []}
+                        selectedOptions={years.map(String)}
+                        onChange={(selected) => {
+                            update({ years: selected.map(Number) });
+                            if (selected.length > 0)
+                                setCurrentYear(Number(selected[selected.length - 1]));
+                        }}
+                    />
+                )}
+                {tabIndex === 5 && (
+                    <Box mt={1}>
+                        <Stack spacing={0.75} mb={1}>
+                            <TextField
                                 size="small"
-                                onDelete={() => {
-                                    const { start: rs, end: re } = r;
-                                    setSearchParams((prev) => {
-                                        const current =
-                                            parseSearchParams(new URLSearchParams(prev)).customRanges;
-                                        return applyQueryToParams(
-                                            {
-                                                customRanges: current.filter(
-                                                    (x) => !(x.start === rs && x.end === re)
-                                                ),
-                                            },
-                                            new URLSearchParams(prev)
-                                        );
-                                    });
-                                }}
+                                label="Date"
+                                placeholder="15 Jun 2024"
+                                value={startText}
+                                onChange={(e) => setStartText(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
+                                error={startText.trim() !== '' && !parseDate(startText)}
+                                helperText={
+                                    startText.trim() !== '' && !parseDate(startText)
+                                        ? 'Unrecognised date'
+                                        : undefined
+                                }
                             />
-                        ))}
-                </Stack>
+                            <TextField
+                                size="small"
+                                label="End date (optional)"
+                                placeholder="20 Jun 2024"
+                                value={endText}
+                                onChange={(e) => setEndText(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
+                                error={endText.trim() !== '' && !parseDate(endText)}
+                                helperText={
+                                    endText.trim() !== '' && !parseDate(endText)
+                                        ? 'Unrecognised date'
+                                        : undefined
+                                }
+                            />
+                            <Button
+                                variant="outlined"
+                                size="small"
+                                disabled={!startText.trim() || !parseDate(startText)}
+                                onClick={handleAddRange}
+                            >
+                                Add
+                            </Button>
+                        </Stack>
+                        <Stack direction="row" flexWrap="wrap" gap={0.5}>
+                            {customRanges
+                                .filter((r) => r.start !== r.end)
+                                .map((r) => (
+                                    <Chip
+                                        key={`${r.start}-${r.end}`}
+                                        label={`${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`}
+                                        size="small"
+                                        onDelete={() => {
+                                            const { start: rs, end: re } = r;
+                                            setSearchParams((prev) => {
+                                                const current = parseSearchParams(
+                                                    new URLSearchParams(prev)
+                                                ).customRanges;
+                                                return applyQueryToParams(
+                                                    {
+                                                        customRanges: current.filter(
+                                                            (x) => !(x.start === rs && x.end === re)
+                                                        ),
+                                                    },
+                                                    new URLSearchParams(prev)
+                                                );
+                                            });
+                                        }}
+                                    />
+                                ))}
+                        </Stack>
+                    </Box>
+                )}
             </Box>
         </Stack>
     );
@@ -307,6 +350,69 @@ const TemporalFiltersHook = ({
         nothingIsSelected,
     };
 };
+
+const CheckboxWithText = ({
+    label,
+    checked,
+    onChange,
+    disabled = false,
+}: {
+    label: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    disabled?: boolean;
+}) => (
+    <Grid size={6} sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
+        <Checkbox
+            size="small"
+            disabled={disabled}
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            sx={{ padding: '4px' }}
+        />
+        <Typography variant="caption" sx={{ display: 'inline-block', ml: -0.5 }}>
+            {label.slice(0, 1).toUpperCase() + label.slice(1)}
+        </Typography>
+    </Grid>
+);
+
+const ListOfCheckBoxes = ({
+    options,
+    selectedOptions,
+    onChange,
+}: {
+    options: string[];
+    selectedOptions: string[];
+    onChange: (selected: string[]) => void;
+}) => (
+    <Grid container spacing={1}>
+        <CheckboxWithText
+            label="All"
+            checked={selectedOptions.length === options.length}
+            onChange={(checked) => onChange(checked ? options : [])}
+        />
+        {options.map((option) => (
+            <CheckboxWithText
+                key={option}
+                label={option}
+                checked={selectedOptions.includes(option)}
+                onChange={(checked) =>
+                    onChange(
+                        checked
+                            ? [...selectedOptions, option]
+                            : selectedOptions.filter((o) => o !== option)
+                    )
+                }
+            />
+        ))}
+        <CheckboxWithText
+            label="None"
+            disabled={selectedOptions.length === 0}
+            checked={false}
+            onChange={(checked) => { if (checked) onChange([]); }}
+        />
+    </Grid>
+);
 
 const PhotoStrip = ({
     images,
