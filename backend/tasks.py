@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import time
 from sqlalchemy import create_engine, delete, insert, or_, select, update
 from sqlalchemy.orm import Session
 from auth.ortho import get_matrix
@@ -20,7 +21,7 @@ from scripts.object_detection import ModelWrapper, extract_object_from_images
 from location.gps_pipeline import run_pipeline
 from apis.explore import _FACES_CACHE
 import os
-from constants import _FACE_CLUSTER_THRESHOLD, _FACE_SIMILARITY_THRESHOLD
+from constants import _FACE_CLUSTER_THRESHOLD, _FACE_SIMILARITY_THRESHOLD, DIR, THUMBNAIL_DIR
 
 _MAX_CLUSTER_AGE_DAYS = 1
 
@@ -745,7 +746,7 @@ def relabel_whitelist_faces_task(
         except OSError:
             pass
 
-        anonymise_image_task.delay(src, thumb, boxes, whitelist_boxes, skip_sam3=True)
+        anonymise_image_task.delay(device, image_path, thumb, boxes, whitelist_boxes, skip_sam3=True)
         queued += 1
 
     logging.info(
@@ -754,9 +755,35 @@ def relabel_whitelist_faces_task(
     )
 
 
-@celery.task(name="tasks.anonymise_image_task")
-def anonymise_image_task(path, thumbnail_path, boxes, whitelist_boxes, skip_sam3=False):
-    anonymise_image(path, thumbnail_path, boxes, whitelist_boxes, skip_sam3=skip_sam3)
+@celery.task(name="tasks.anonymise_image_task", bind=True)
+def anonymise_image_task(self, device_id, relative_path, thumbnail_path, skip_sam3=False):
+    # Check until the yolo process has been done
+    done = None
+
+    with Session(engine) as session:
+        while True:
+            session.expire_all()  # Clear the session cache to get the latest data from the database
+            done = session.execute(select(Image).where(Image.image_path == relative_path, Image.device == device_id)).scalars().first()
+            if done and done.proc_yolo:
+                break
+            time.sleep(1)
+
+        res = session.execute(
+            select(ImagePerson)
+            .where(ImagePerson.image_id == done.id)
+        ).scalars().all()
+
+        blur_face_boxes = []
+        whitelist_boxes = []
+        for person in res:
+            if person.label != "redacted face" and person.label != "face":
+                whitelist_boxes.append(person.bbox)
+            else:
+                blur_face_boxes.append(person.bbox)
+
+    logging.info(f"YOLO is done for {device_id}/{relative_path}, proceeding with thumbnail creation with {len(blur_face_boxes)} faces to blur and {len(whitelist_boxes)} whitelist boxes")
+    path = f"{DIR}/{device_id}/{relative_path}"
+    anonymise_image(path, thumbnail_path, blur_face_boxes, whitelist_boxes, skip_sam3=skip_sam3)
     return thumbnail_path
 
 
@@ -829,7 +856,6 @@ def nightly_bio_stats_all_devices():
 @celery.task(name="tasks.pipeline_catchup_task")
 def pipeline_catchup_task():
     from collections import defaultdict as _defaultdict
-    from constants import DIR, THUMBNAIL_DIR
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=1)
     queued_yolo = queued_thumbs = queued_enc = queued_seg = 0
@@ -898,7 +924,7 @@ def pipeline_catchup_task():
             src = f"{DIR}/{device}/{image_path}"
             if not os.path.exists(src):
                 continue
-            anonymise_image_task.delay(src, expected_webp, [], [], skip_sam3=True)
+            anonymise_image_task.delay(device, image_path, expected_webp, [], [], skip_sam3=True)
             queued_thumbs += 1
 
         # Unannotated segments

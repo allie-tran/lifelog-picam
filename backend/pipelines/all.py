@@ -83,41 +83,11 @@ def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=Fals
         f"{DIR}/{device_id}/{relative_path}"
     )
 
-    # Check until the yolo process has been done
-    done = None
-    while True:
-        session.expire_all()  # Clear the session cache to get the latest data from the database
-        done = session.execute(select(Image).where(Image.image_path == relative_path, Image.device == device_id)).scalars().first()
-        if done and done.proc_yolo:
-            break
-        time.sleep(1)
-
-    # get whitelist people
-    # res = session.execute(
-    #     select(ImagePerson)
-    #     .where(Image.image_path == relative_path, Image.device == device_id)
-    #     .join(Image, Image.id == ImagePerson.image_id)
-    # ).scalars().all()
-    res = session.execute(
-        select(ImagePerson)
-        .where(ImagePerson.image_id == done.id)
-    ).scalars().all()
-
-    boxes = []
-    whitelist_boxes = []
-    for person in res:
-        if person.label != "redacted face" and person.label != "face":
-            whitelist_boxes.append(person.bbox)
-        else:
-            boxes.append(person.bbox)
-
     if not thumbnail_exists:
-        logging.info(f"YOLO is done for {device_id}/{relative_path}, proceeding with thumbnail creation with {len(boxes)} faces to blur and {len(whitelist_boxes)} whitelist boxes")
         anonymise_image_task.delay(
-            f"{DIR}/{device_id}/{relative_path}",
+            device_id,
+            relative_path,
             thumbnail_path,
-            boxes,
-            whitelist_boxes,
             skip_sam3=skip_sam3,
         )
 
