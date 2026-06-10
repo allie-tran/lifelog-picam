@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import time
 from sqlalchemy import create_engine, delete, insert, or_, select, update
 from sqlalchemy.orm import Session
 from auth.ortho import get_matrix
@@ -222,6 +221,8 @@ def yolo_process_images_task(
         object_rows = []
         person_rows = []
         image_rows = []
+        # Collect boxes per image for anonymise dispatch after YOLO write
+        image_boxes: dict[str, tuple[list, list]] = {}
         for r in results:
             image_path = r["image_path"]
             relative_path = image_path.split(f"{device}/")[1]
@@ -239,6 +240,8 @@ def yolo_process_images_task(
                     "rel_bbox": obj["rel_bbox"],
                 })
 
+            blur_boxes = []
+            wl_boxes = []
             for person in r["people"]:
                 person = person.model_dump()
                 person_rows.append({
@@ -249,6 +252,11 @@ def yolo_process_images_task(
                     "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
                 })
+                if person["label"] in ("redacted face", "face"):
+                    blur_boxes.append(person["bbox"])
+                else:
+                    wl_boxes.append(person["bbox"])
+            image_boxes[relative_path] = (blur_boxes, wl_boxes)
             image_rows.append(image_id)
 
         affected_ids = list(image_id_map.values())
@@ -269,6 +277,13 @@ def yolo_process_images_task(
         logging.info("Updated %d images as YOLO/InsightFace processed", len(image_rows))
         session.commit()
         session.flush()
+
+    # Dispatch thumbnail creation for each processed image now that boxes are known.
+    # This replaces the old polling loop inside anonymise_image_task.
+    for rel_path, (blur_boxes, wl_boxes) in image_boxes.items():
+        thumb_path = f"{THUMBNAIL_DIR}/{device}/{rel_path.rsplit('.', 1)[0]}.webp"
+        if not os.path.exists(thumb_path):
+            anonymise_image_task.delay(device, rel_path, thumb_path, blur_boxes, wl_boxes)
 
     recluster_unassigned_faces_task.delay(device)
 
@@ -756,32 +771,36 @@ def relabel_whitelist_faces_task(
 
 
 @celery.task(name="tasks.anonymise_image_task", bind=True)
-def anonymise_image_task(self, device_id, relative_path, thumbnail_path, skip_sam3=False):
-    # Check until the yolo process has been done
-    done = None
-
-    with Session(engine) as session:
-        while True:
-            session.expire_all()  # Clear the session cache to get the latest data from the database
-            done = session.execute(select(Image).where(Image.image_path == relative_path, Image.device == device_id)).scalars().first()
-            if done and done.proc_yolo:
-                break
-            time.sleep(1)
-
-        res = session.execute(
-            select(ImagePerson)
-            .where(ImagePerson.image_id == done.id)
-        ).scalars().all()
-
-        blur_face_boxes = []
-        whitelist_boxes = []
-        for person in res:
-            if person.label != "redacted face" and person.label != "face":
-                whitelist_boxes.append(person.bbox)
+def anonymise_image_task(
+    self,
+    device_id,
+    relative_path,
+    thumbnail_path,
+    blur_face_boxes=None,
+    whitelist_boxes=None,
+    skip_sam3=False,
+):
+    # If boxes weren't passed in (e.g. catchup path), fetch them from DB.
+    # No polling — caller is responsible for dispatching after YOLO is done.
+    if blur_face_boxes is None or whitelist_boxes is None:
+        with Session(engine) as session:
+            img = session.execute(
+                select(Image).where(Image.image_path == relative_path, Image.device == device_id)
+            ).scalars().first()
+            if img:
+                res = session.execute(
+                    select(ImagePerson).where(ImagePerson.image_id == img.id)
+                ).scalars().all()
+                blur_face_boxes = [p.bbox for p in res if p.label in ("redacted face", "face")]
+                whitelist_boxes = [p.bbox for p in res if p.label not in ("redacted face", "face")]
             else:
-                blur_face_boxes.append(person.bbox)
+                blur_face_boxes = []
+                whitelist_boxes = []
 
-    logging.info(f"YOLO is done for {device_id}/{relative_path}, proceeding with thumbnail creation with {len(blur_face_boxes)} faces to blur and {len(whitelist_boxes)} whitelist boxes")
+    logging.info(
+        "Anonymising %s/%s: %d faces to blur, %d whitelisted",
+        device_id, relative_path, len(blur_face_boxes), len(whitelist_boxes),
+    )
     path = f"{DIR}/{device_id}/{relative_path}"
     anonymise_image(path, thumbnail_path, blur_face_boxes, whitelist_boxes, skip_sam3=skip_sam3)
     return thumbnail_path

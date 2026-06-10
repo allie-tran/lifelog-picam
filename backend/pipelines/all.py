@@ -1,5 +1,4 @@
 from collections import defaultdict
-import time
 from datetime import timezone
 from typing import Optional
 import traceback
@@ -12,8 +11,8 @@ from auth.types import Person
 from constants import DIR
 from pipelines.delete import remove_physical_images
 from scripts.date_utils import parse_date
-from scripts.utils import get_thumbnail_path, make_video_thumbnail
-from tasks import anonymise_image_task, yolo_process_images_task
+from scripts.utils import make_video_thumbnail
+from tasks import yolo_process_images_task
 from visual import clip_model, SIGLIP
 from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 from sqlalchemy.exc import SQLAlchemyError
@@ -79,18 +78,8 @@ def yolo_process_images(
 
 
 def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=False):
-    thumbnail_path, thumbnail_exists = get_thumbnail_path(
-        f"{DIR}/{device_id}/{relative_path}"
-    )
-
-    if not thumbnail_exists:
-        anonymise_image_task.delay(
-            device_id,
-            relative_path,
-            thumbnail_path,
-            skip_sam3=skip_sam3,
-        )
-
+    # anonymise_image_task is dispatched by yolo_process_images_task after
+    # detection results are written, so it isn't dispatched here anymore.
     session.execute(
         update(Image)
         .where(Image.image_path == relative_path, Image.device == device_id)
