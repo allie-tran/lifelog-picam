@@ -50,6 +50,9 @@ def get_rewritten_description(description, instructions: list[str] = []):
 
 
 _GROUP_NAMES = list(CATEGORIES_WITH_GROUPS.keys())
+_ALL_ACTIVITIES: list[str] = [
+    act for details in CATEGORIES_WITH_GROUPS.values() for act in details["activities"]
+]
 
 PROMPT = """
 These are photos captured from a POV lifelogging camera worn by me.
@@ -60,7 +63,10 @@ Step 1 — Pick the broad group that best matches what is happening (choose exac
 
 Step 2 — Write a short activity label in gerund form (2–4 words), specific enough to be useful but consistent across similar scenes. Good examples: "writing code", "eating lunch", "commuting by train", "attending a lecture", "having a conversation", "tidying the desk".
 
-Step 3 — Write one or two sentences describing what is visible in the scene. Use the context above (time, location) to understand the scene, but don't just repeat the context.
+Step 3 — Write one or two short sentences describing what is visible in the scene. Use the context above (time, location, if stationary) to understand the scene, but don't repeat them.
+
+Step 4 — From the list below, select every tracked activity label that accurately applies to this segment (may be empty, may be several) as Tags. Choose only from this exact list:
+{activities_list}
 
 Return only valid JSON in this format:
 
@@ -69,7 +75,8 @@ Return only valid JSON in this format:
     "group": "exact group name from the list above",
     "activity": "short gerund label",
     "description": "scene description",
-    "confidence": "High / Medium / Low"
+    "confidence": "High / Medium / Low",
+    "tags": ["Tag1", "Tag2"]
 }}
 ```
 """
@@ -119,11 +126,13 @@ def describe_segment(
     activity = "unclear activity"
     description = ""
     confidence = "Low"
+    tags: list[str] = []
     tries = 0
 
     context_block = f"Context about this segment:\n{context}\n\n" if context else ""
     formatted_prompt = PROMPT.format(
         groups_list="\n".join(f"- {g}" for g in _GROUP_NAMES),
+        activities_list="\n".join(f"- {a}" for a in _ALL_ACTIVITIES),
         context_block=context_block,
     )
 
@@ -151,8 +160,17 @@ def describe_segment(
                     matched = [g for g in _GROUP_NAMES if g.lower() in raw_group.lower() or raw_group.lower() in g.lower()]
                 group = matched[0] if matched else "Miscellaneous"
 
+                # Validate tags against canonical list (case-insensitive)
+                _act_lower = {a.lower(): a for a in _ALL_ACTIVITIES}
+                raw_tags = parsed_obj.get("tags", [])
+                tags = [
+                    _act_lower[t.lower()]
+                    for t in (raw_tags if isinstance(raw_tags, list) else [])
+                    if t.lower() in _act_lower
+                ]
+
                 logger.info(
-                    f"Segment {segment_id}: group={group}, activity={activity}, confidence={confidence}"
+                    f"Segment {segment_id}: group={group}, activity={activity}, confidence={confidence}, tags={tags}"
                 )
             else:
                 logger.warning(f"Segment {segment_id}: LLM returned no parsed object")
@@ -178,6 +196,7 @@ def describe_segment(
         "activity_group": group,
         "activity_description": description,
         "activity_confidence": confidence,
+        "activity_tags": ",".join(tags) if tags else None,
     }
 
 class ADLClassifier:

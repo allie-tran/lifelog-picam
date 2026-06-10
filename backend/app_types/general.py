@@ -200,6 +200,7 @@ class LifelogImage(CamelCaseModel):
     activity_group: Optional[str] = None
     activity_description: Optional[str] = None
     activity_confidence: Optional[str] = None
+    activity_tags: Optional[str] = None
 
     new: bool = True
 
@@ -215,6 +216,7 @@ class SummarySegment(CamelCaseModel):
     segment_index: int | None = None
     activity: str = "Unclear"
     activity_group: Optional[str] = None
+    activity_tags: Optional[str] = None  # comma-separated canonical activity names from LLM
     start_time: datetime
     end_time: datetime
     duration: int

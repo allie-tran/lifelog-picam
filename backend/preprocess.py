@@ -13,7 +13,7 @@ from app_types import (
 from app_types.search import ResultSummary, SearchQuery
 from auth.ortho import apply_transformation, get_matrix
 from constants import DIR, THUMBNAIL_DIR
-from database.models import Image, ImageEmbedding, ImagePerson, Location, PeopleCluster
+from database.models import Image, ImageEmbedding, ImageGPS, ImagePerson, Location, PeopleCluster
 from visual import clip_model
 from scripts.utils import make_video_thumbnail
 from query_parse.extract_info import Query
@@ -158,8 +158,8 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
         stmt = stmt.join(Image.gps)
         min_lat, min_lon, max_lat, max_lon = query.bounds
         stmt = stmt.where(
-            Image.gps.latitude.between(min_lat, max_lat),
-            Image.gps.longitude.between(min_lon, max_lon)
+            ImageGPS.latitude.between(min_lat, max_lat),
+            ImageGPS.longitude.between(min_lon, max_lon)
         )
 
     # People

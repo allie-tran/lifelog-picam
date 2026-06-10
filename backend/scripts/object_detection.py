@@ -8,7 +8,11 @@ from insightface.app import FaceAnalysis
 from auth.types import Person
 import os
 
+import logging
+from constants import _FACE_SIMILARITY_THRESHOLD
+
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
+logger = logging.getLogger(__name__)
 
 class ModelWrapper:
     def __init__(self):
@@ -79,17 +83,31 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
 
                         label = "redacted face"
                         confidence = float(face.confidence)
+                        face_embedding = np.array(face.embedding)
+                        face_embedding = face_embedding / np.linalg.norm(face_embedding)  # normalize the face embedding
+
                         for whitelist_person in whitelist:
+                            embeddings = []
                             for embedding in whitelist_person.embeddings:
                                 embedding = np.array(embedding)
+                                embeddings.append(embedding)
                                 embedding = embedding / np.linalg.norm(embedding)  # Normalize the embedding
-                                face_embedding = np.array(face.embedding)
-                                face_embedding = face_embedding / np.linalg.norm(face_embedding)  # Normalize the face embedding
-                                dist = np.dot(embedding, face_embedding)  # Cosine similarity
-                                if dist > 0.7:  # Adjust threshold as needed
-                                    confidence = dist
+                                sim = np.dot(face_embedding, embedding)
+                                logger.debug(f"Comparing to whitelist person {whitelist_person.name}, cosine similarity: {sim:.4f}")
+                                if sim > _FACE_SIMILARITY_THRESHOLD:
+                                    confidence = sim
                                     label = whitelist_person.name
                                     break
+
+                            if embeddings:
+                                avg_embedding = np.mean(embeddings, axis=0)
+                                avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
+                                sim = np.dot(avg_embedding, face_embedding)
+                                logger.debug(f"Comparing to average embedding of whitelist ({len(embeddings)} entries), cosine similarity: {sim:.4f}")
+                                if sim > _FACE_SIMILARITY_THRESHOLD:
+                                    confidence = sim
+                                    label = whitelist_person.name
+
 
                         people.append(
                             ObjectDetection(

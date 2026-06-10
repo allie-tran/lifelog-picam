@@ -64,11 +64,15 @@ def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
     Returns True when a segment should count toward a period target.
 
     Priority:
-      1. activity_group exact match (the LLM's fixed-group pick)
-      2. activity exact match (case-insensitive)
-      3. CLIP text cosine similarity >= _PERIOD_TEXT_SIM_THRESHOLD
-         so free-form labels like "writing code" match "Coding"
+      1. activity_tags exact match — LLM-assigned canonical labels (most reliable)
+      2. activity_group exact match — LLM's fixed-group pick
+      3. activity exact match (case-insensitive)
+      4. CLIP text cosine similarity >= _PERIOD_TEXT_SIM_THRESHOLD (fallback)
     """
+    if seg.activity_tags:
+        tag_set = {t.strip().lower() for t in seg.activity_tags.split(",")}
+        if target_name.lower() in tag_set:
+            return True
     if seg.activity_group == target_name:
         return True
     activity = seg.activity or ""
@@ -351,6 +355,7 @@ def _build_segment_entry(
     images_sorted = sorted(images, key=lambda img: img.timestamp)
     activity = images_sorted[0].activity or "Unclear"
     activity_group = images_sorted[0].activity_group or None
+    activity_tags = images_sorted[0].activity_tags or None
     start_time = images_sorted[0].timestamp
     end_time = images_sorted[-1].timestamp
     duration = max(int((end_time - start_time).total_seconds()), 10)
@@ -359,6 +364,7 @@ def _build_segment_entry(
         segment_index=None,
         activity=activity,
         activity_group=activity_group,
+        activity_tags=activity_tags,
         start_time=start_time,
         end_time=end_time,
         duration=duration,
@@ -556,7 +562,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             activity_lines.append(line)
 
         day_summary_text = llm.generate_from_text(
-            "What is the highlight of the day based on the following activities?\n"
+            "What is the highlight of the day based on the following activities? Answer as if you are NOT the user, but an external observer describing the day.\n"
             "Ignore unclear activities. Write 2-3 sentences in first person.\n"
             + "\n".join(activity_lines)
         )

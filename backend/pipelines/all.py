@@ -1,4 +1,5 @@
 from collections import defaultdict
+import time
 from datetime import timezone
 from typing import Optional
 import traceback
@@ -17,6 +18,7 @@ from visual import clip_model, SIGLIP
 from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 from sqlalchemy.exc import SQLAlchemyError
 from visual.siglip import SIGLIP
+import logging
 
 
 def index_to_postgres(
@@ -55,6 +57,7 @@ def index_to_postgres(
         index_elements=["device", "image_path"]
     )
     session.execute(stmt)
+    session.commit()
 
 
 def yolo_process_images(
@@ -79,12 +82,27 @@ def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=Fals
     thumbnail_path, thumbnail_exists = get_thumbnail_path(
         f"{DIR}/{device_id}/{relative_path}"
     )
+
+    # Check until the yolo process has been done
+    done = None
+    while True:
+        session.expire_all()  # Clear the session cache to get the latest data from the database
+        done = session.execute(select(Image).where(Image.image_path == relative_path, Image.device == device_id)).scalars().first()
+        if done and done.proc_yolo:
+            break
+        time.sleep(1)
+
     # get whitelist people
+    # res = session.execute(
+    #     select(ImagePerson)
+    #     .where(Image.image_path == relative_path, Image.device == device_id)
+    #     .join(Image, Image.id == ImagePerson.image_id)
+    # ).scalars().all()
     res = session.execute(
         select(ImagePerson)
-        .where(Image.image_path == relative_path, Image.device == device_id)
-        .join(Image, Image.id == ImagePerson.image_id)
+        .where(ImagePerson.image_id == done.id)
     ).scalars().all()
+
     boxes = []
     whitelist_boxes = []
     for person in res:
@@ -94,6 +112,7 @@ def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=Fals
             boxes.append(person.bbox)
 
     if not thumbnail_exists:
+        logging.info(f"YOLO is done for {device_id}/{relative_path}, proceeding with thumbnail creation with {len(boxes)} faces to blur and {len(whitelist_boxes)} whitelist boxes")
         anonymise_image_task.delay(
             f"{DIR}/{device_id}/{relative_path}",
             thumbnail_path,
@@ -200,6 +219,9 @@ def process_image(
                 )
             )
 
+        session.commit()
+        session.flush()
+        session.expire_all()  # Clear the session cache to get the latest data from the database
         yolo_process_images(device_id, white_list, [relative_path])
         create_thumbnail(session, device_id, relative_path)
         encode_image(session, device_id, relative_path)
@@ -229,4 +251,3 @@ def process_video(
     # ).create()
 
     # encode_image(device_id, f"{date}/{file_name}", collection)
-

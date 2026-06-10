@@ -5,12 +5,14 @@ interface DRESState {
     sessionId: string | null;
     evaluationId: string | null;
     currentTask: Task | null;
+    submittedImages: string[];
 }
 
 const initialState: DRESState = {
     sessionId: null,
     evaluationId: null,
     currentTask: null,
+    submittedImages: [],
 };
 
 const dresSlice = createSlice({
@@ -34,8 +36,16 @@ const dresSlice = createSlice({
         setCurrentTask(state, action: PayloadAction<Task | null>) {
             state.currentTask = action.payload;
         },
+        addSubmittedImages(state, action: PayloadAction<string[]>) {
+            const set = new Set(state.submittedImages);
+            action.payload.forEach((p) => set.add(p));
+            state.submittedImages = Array.from(set);
+        },
+        clearSubmittedImages(state) {
+            state.submittedImages = [];
+        },
     },
 });
 
-export const { dresLogin, dresLogout, setEvaluation, setCurrentTask } = dresSlice.actions;
+export const { dresLogin, dresLogout, setEvaluation, setCurrentTask, addSubmittedImages, clearSubmittedImages } = dresSlice.actions;
 export default dresSlice.reducer;

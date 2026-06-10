@@ -13,18 +13,19 @@ import {
     Grid,
     InputLabel,
     ListItemText,
+    ListSubheader,
     MenuItem,
     Select,
     Stack,
+    TextField,
     Typography,
 } from '@mui/material';
 import countryBoundingBoxes from 'country-bounding-boxes.json';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
-import { setSearchQuery } from 'reducers/search';
+import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
 // { countryCode: [countryName, [minLat, minLng, maxLat, maxLng]] }
 
 const countryNameToBounds: Record<string, number[]> = {};
@@ -52,19 +53,22 @@ const getCountryBounds = (countries: string[]) => {
     return [minLat, minLng, maxLat, maxLng] as [number, number, number, number];
 };
 
-const LocationFiltersHook = () => {
-    const dispatch = useAppDispatch();
-    const [searchParams] = useSearchParams();
+const LocationFiltersHook = ({ extraLocationLabels = {} }: { extraLocationLabels?: Record<string, string> } = {}) => {
+    const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const { isMoving, countries, locationIds, bounds } = useAppSelector(
-        (state) => state.search.query
-    );
+    const { isMoving, countries, locationIds, bounds } = parseSearchParams(searchParams);
+    const [locationSearch, setLocationSearch] = useState('');
+
+    const update = useCallback((partial: Parameters<typeof applyQueryToParams>[0]) => {
+        setSearchParams((prev) => applyQueryToParams(partial, new URLSearchParams(prev)));
+    }, [setSearchParams]);
     const [visualBounds, setVisualBounds] = useState<
         [number, number, number, number] | null
     >(null);
+    const isFirstRender = useRef(true);
 
     const { data: availableCountries } = useSWR(
-        [device, isMoving, 'country'],
+        device ? [device, isMoving, 'country'] : null,
         async () =>
             getAvailableValues(
                 device,
@@ -74,7 +78,7 @@ const LocationFiltersHook = () => {
     );
 
     const { data: availableLocations } = useSWR(
-        [device, 'location', countries, isMoving],
+        device ? [device, 'location', countries, isMoving] : null,
         async () =>
             isMoving
                 ? getMovingPeriods(device, countries)
@@ -83,17 +87,23 @@ const LocationFiltersHook = () => {
     );
 
     const { data: markersData } = useSWR(
-        [device, locationIds],
+        device ? [device, locationIds] : null,
         async () => getMapMarkers(device, countries),
         
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
+    const countriesKey = countries.join(',');
     useEffect(() => {
         const newBounds = getCountryBounds(countries);
         setVisualBounds(newBounds);
-        dispatch(setSearchQuery({ locationIds: [] }));
-    }, [countries]);
+        // Skip clearing locationIds on initial mount so URL-loaded filters are preserved
+        if (isFirstRender.current) {
+            isFirstRender.current = false;
+            return;
+        }
+        update({ locationIds: [] });
+    }, [countriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const nothingIsSelected =
         locationIds.length === 0 && countries.length === 0 && bounds === null;
@@ -115,9 +125,7 @@ const LocationFiltersHook = () => {
             <CheckboxWithText
                 label="On the Move"
                 checked={isMoving}
-                onChange={(checked) =>
-                    dispatch(setSearchQuery({ isMoving: checked }))
-                }
+                onChange={(checked) => update({ isMoving: checked })}
             />
             <FormControl sx={{ mt: 1, width: '100%' }}>
                 <InputLabel id="country-select-label">Countries</InputLabel>
@@ -126,14 +134,12 @@ const LocationFiltersHook = () => {
                     multiple
                     value={countries}
                     onChange={(e) =>
-                        dispatch(
-                            setSearchQuery({
-                                countries:
-                                    typeof e.target.value === 'string'
-                                        ? e.target.value.split(',')
-                                        : e.target.value,
-                            })
-                        )
+                        update({
+                            countries:
+                                typeof e.target.value === 'string'
+                                    ? e.target.value.split(',')
+                                    : e.target.value,
+                        })
                     }
                     renderValue={(selected) => selected.join(', ')}
                 >
@@ -152,30 +158,57 @@ const LocationFiltersHook = () => {
                     multiple
                     value={locationIds}
                     onChange={(e) =>
-                        dispatch(
-                            setSearchQuery({
-                                locationIds:
-                                    typeof e.target.value === 'string'
-                                        ? e.target.value.split(',')
-                                        : e.target.value,
-                            })
-                        )
+                        update({
+                            locationIds:
+                                typeof e.target.value === 'string'
+                                    ? e.target.value.split(',')
+                                    : e.target.value,
+                        })
                     }
                     renderValue={(selected) =>
-                        availableLocations
-                            ?.filter((loc) => selected.includes(loc.id as string))
-                            .map((loc) => loc.name)
-                            .join(', ') || ''
+                        selected
+                            .map((id) => {
+                                const loc = availableLocations?.find((l) => l.id === id);
+                                return loc?.name ?? extraLocationLabels[id] ?? id;
+                            })
+                            .join(', ')
                     }
+                    MenuProps={{ autoFocus: false }}
                 >
-                    {availableLocations?.map((loc) => (
-                        <MenuItem key={loc.id} value={loc.id}>
-                            <Checkbox
-                                checked={locationIds.includes(loc.id as string)}
-                            />
-                            <ListItemText primary={loc.name} />
-                        </MenuItem>
-                    ))}
+                    <ListSubheader sx={{ p: 0.5, lineHeight: 1 }}>
+                        <TextField
+                            size="small"
+                            fullWidth
+                            autoFocus
+                            placeholder="Search locations…"
+                            value={locationSearch}
+                            onChange={(e) => setLocationSearch(e.target.value)}
+                            onKeyDown={(e) => e.stopPropagation()}
+                        />
+                    </ListSubheader>
+                    {locationIds
+                        .filter(
+                            (id) =>
+                                !availableLocations?.some((l) => l.id === id) &&
+                                (extraLocationLabels[id] ?? id)
+                        )
+                        .map((id) => (
+                            <MenuItem key={id} value={id}>
+                                <Checkbox checked />
+                                <ListItemText primary={extraLocationLabels[id] ?? id} />
+                            </MenuItem>
+                        ))}
+                    {(availableLocations ?? [])
+                        .filter((loc) =>
+                            !locationSearch ||
+                            loc.name?.toLowerCase().includes(locationSearch.toLowerCase())
+                        )
+                        .map((loc) => (
+                            <MenuItem key={loc.id} value={loc.id}>
+                                <Checkbox checked={locationIds.includes(loc.id as string)} />
+                                <ListItemText primary={loc.name} />
+                            </MenuItem>
+                        ))}
                 </Select>
             </FormControl>
         </Box>
@@ -183,11 +216,9 @@ const LocationFiltersHook = () => {
 
     const handleAddBound = useCallback(
         (minLat: number, minLng: number, maxLat: number, maxLng: number) => {
-            dispatch(
-                setSearchQuery({ bounds: [minLat, minLng, maxLat, maxLng] })
-            );
+            update({ bounds: [minLat, minLng, maxLat, maxLng] });
         },
-        []
+        [update]
     );
 
     const renderMap = () => {
@@ -208,14 +239,7 @@ const LocationFiltersHook = () => {
                 color="primary"
                 sx={{ mt: 2 }}
                 onClick={() => {
-                    dispatch(
-                        setSearchQuery({
-                            isMoving: false,
-                            countries: [],
-                            locationIds: [],
-                            bounds: null,
-                        })
-                    );
+                    update({ isMoving: false, countries: [], locationIds: [], bounds: null });
                     setVisualBounds(null);
                 }}
             >

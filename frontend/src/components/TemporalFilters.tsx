@@ -8,10 +8,11 @@ import {
     Stack,
     Tab,
     Tabs,
+    TextField,
     Typography,
 } from '@mui/material';
 import { DeleteRounded } from '@mui/icons-material';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import {
     DayOfWeek,
     Month,
@@ -25,11 +26,9 @@ import {
 import TimeHeatmap from './TimeHeatmap';
 import useSWR from 'swr';
 import { getAvailableValues } from '@apis/searchFilters';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { useSearchParams } from 'react-router';
-import { setSearchQuery } from 'reducers/search';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import dayjs, { Dayjs } from 'dayjs';
+import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
+import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { ImageObject } from 'utils/types';
@@ -37,6 +36,17 @@ import { THUMBNAIL_HOST_URL } from '../constants/urls';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+const DATE_FORMATS = ['D MMM YYYY', 'D MMMM YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'D/M/YYYY'];
+
+const parseDate = (text: string) => {
+    for (const fmt of DATE_FORMATS) {
+        const d = dayjs(text.trim(), fmt, true);
+        if (d.isValid()) return d;
+    }
+    const d = dayjs(text.trim());
+    return d.isValid() ? d : null;
+};
 
 const TemporalFiltersHook = ({
     resultImages = [],
@@ -47,22 +57,21 @@ const TemporalFiltersHook = ({
     onDeleteImage?: (path: string) => void;
     onZoomImage?: (path: string, isVideo: boolean) => void;
 } = {}) => {
-    const dispatch = useAppDispatch();
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const [tabIndex, setTabIndex] = useState(0);
-    const [currentYear, setCurrentYear] = useState<number>(
-        new Date().getFullYear()
-    );
-    const [customCells, setCustomCells] = useState<
-        Set<{ row: number; col: number; value: number }>
-    >(new Set());
-    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges } = useAppSelector(
-        (state) => state.search.query
-    );
-    const [pendingDate, setPendingDate] = useState<Dayjs | null>(null);
+    const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+    const [customCells, setCustomCells] = useState<Set<{ row: number; col: number; value: number }>>(new Set());
+    const [startText, setStartText] = useState('');
+    const [endText, setEndText] = useState('');
 
-    const { data: availableYears } = useSWR([device, 'year'], async () => {
+    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges } = parseSearchParams(searchParams);
+
+    const update = useCallback((partial: Parameters<typeof applyQueryToParams>[0]) => {
+        setSearchParams((prev) => applyQueryToParams(partial, new URLSearchParams(prev)));
+    }, [setSearchParams]);
+
+    const { data: availableYears } = useSWR(device ? [device, 'year'] : null, async () => {
         const years = await getAvailableValues(device, 'year');
         setCurrentYear(
             years.length > 0 ? parseInt(years[0]) : new Date().getFullYear()
@@ -70,7 +79,7 @@ const TemporalFiltersHook = ({
         return years.map((y) => parseInt(y));
     });
 
-    const { data: availableDates } = useSWR([device, 'date'], () =>
+    const { data: availableDates } = useSWR(device ? [device, 'date'] : null, () =>
         getAvailableValues(device, 'date')
     );
     const availableDatesSet = useMemo(
@@ -94,6 +103,21 @@ const TemporalFiltersHook = ({
         months.length === 0 &&
         years.length === 0 &&
         customRanges.length === 0;
+
+    const handleAddRange = useCallback(() => {
+        const start = parseDate(startText);
+        if (!start) return;
+        const end = endText.trim() ? (parseDate(endText) ?? start) : start;
+        const startStr = start.format('YYYY-MM-DD');
+        const endStr = end.format('YYYY-MM-DD');
+        setSearchParams((prev) => {
+            const current = parseSearchParams(new URLSearchParams(prev)).customRanges;
+            if (current.some((r) => r.start === startStr && r.end === endStr)) return prev;
+            return applyQueryToParams({ customRanges: [...current, { start: startStr, end: endStr }] }, new URLSearchParams(prev));
+        });
+        setStartText('');
+        setEndText('');
+    }, [startText, endText, setSearchParams]);
 
     const renderFilterOptions = () => (
         <Stack direction="row" sx={{ minHeight: 180 }}>
@@ -127,97 +151,65 @@ const TemporalFiltersHook = ({
                     <ListOfCheckBoxes
                         options={timeOfDayOptions}
                         selectedOptions={timeOfDays}
-                        onChange={(selected) =>
-                            dispatch(
-                                setSearchQuery({
-                                    timeOfDays: selected as TimeOfDay[],
-                                })
-                            )
-                        }
+                        onChange={(selected) => update({ timeOfDays: selected as TimeOfDay[] })}
                     />
                 )}
                 {tabIndex === 1 && (
                     <ListOfCheckBoxes
                         options={dayOfWeekOptions}
                         selectedOptions={dayOfWeeks}
-                        onChange={(selected) =>
-                            dispatch(
-                                setSearchQuery({
-                                    dayOfWeeks: selected as DayOfWeek[],
-                                })
-                            )
-                        }
+                        onChange={(selected) => update({ dayOfWeeks: selected as DayOfWeek[] })}
                     />
                 )}
                 {tabIndex === 2 && (
                     <ListOfCheckBoxes
                         options={seasonOptions}
                         selectedOptions={seasons}
-                        onChange={(selected) =>
-                            dispatch(
-                                setSearchQuery({ seasons: selected as Season[] })
-                            )
-                        }
+                        onChange={(selected) => update({ seasons: selected as Season[] })}
                     />
                 )}
                 {tabIndex === 3 && (
                     <ListOfCheckBoxes
                         options={monthOptions}
                         selectedOptions={months}
-                        onChange={(selected) =>
-                            dispatch(
-                                setSearchQuery({ months: selected as Month[] })
-                            )
-                        }
+                        onChange={(selected) => update({ months: selected as Month[] })}
                     />
                 )}
                 {tabIndex === 4 && (
                     <ListOfCheckBoxes
                         options={availableYears ? availableYears.map(String) : []}
                         selectedOptions={years.map(String)}
-                        onChange={(selected) =>
-                            dispatch(setSearchQuery({ years: selected.map(Number) }))
-                        }
+                        onChange={(selected) => update({ years: selected.map(Number) })}
                     />
                 )}
                 {tabIndex === 5 && (
                     <Box mt={1}>
-                        <Stack spacing={1} alignItems="center" mb={1}>
-                            <DatePicker
-                                label="Pick a date"
-                                value={pendingDate}
-                                onChange={(v) => setPendingDate(v)}
-                                slotProps={{ textField: { size: 'small' } }}
-                                shouldDisableDate={(day) =>
-                                    availableDatesSet.size > 0 &&
-                                    !availableDatesSet.has(day.format('YYYY-MM-DD'))
-                                }
-                                referenceDate={
-                                    availableDates?.length
-                                        ? dayjs(availableDates[availableDates.length - 1])
-                                        : dayjs()
-                                }
+                        <Stack spacing={0.75} mb={1}>
+                            <TextField
+                                size="small"
+                                label="Date"
+                                placeholder="15 Jun 2024"
+                                value={startText}
+                                onChange={(e) => setStartText(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
+                                error={startText.trim() !== '' && !parseDate(startText)}
+                                helperText={startText.trim() !== '' && !parseDate(startText) ? 'Unrecognised date' : undefined}
+                            />
+                            <TextField
+                                size="small"
+                                label="End date (optional)"
+                                placeholder="20 Jun 2024"
+                                value={endText}
+                                onChange={(e) => setEndText(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
+                                error={endText.trim() !== '' && !parseDate(endText)}
+                                helperText={endText.trim() !== '' && !parseDate(endText) ? 'Unrecognised date' : undefined}
                             />
                             <Button
                                 variant="outlined"
                                 size="small"
-                                disabled={!pendingDate}
-                                onClick={() => {
-                                    if (!pendingDate) return;
-                                    const dateStr = pendingDate.format('YYYY-MM-DD');
-                                    const alreadyAdded = customRanges.some(
-                                        (r) => r.start === dateStr
-                                    );
-                                    if (!alreadyAdded) {
-                                        dispatch(setSearchQuery({
-                                            customRanges: [
-                                                ...customRanges,
-                                                { start: dateStr, end: dateStr },
-                                            ],
-                                        }));
-                                    }
-                                    setPendingDate(null);
-                                }}
+                                disabled={!startText.trim() || !parseDate(startText)}
+                                onClick={handleAddRange}
                             >
                                 Add
                             </Button>
@@ -225,16 +217,23 @@ const TemporalFiltersHook = ({
                         <Stack direction="row" flexWrap="wrap" gap={0.5}>
                             {customRanges.map((r) => (
                                 <Chip
-                                    key={r.start}
-                                    label={dayjs(r.start).format('D MMM YYYY')}
-                                    size="small"
-                                    onDelete={() =>
-                                        dispatch(setSearchQuery({
-                                            customRanges: customRanges.filter(
-                                                (x) => x.start !== r.start
-                                            ),
-                                        }))
+                                    key={`${r.start}-${r.end}`}
+                                    label={
+                                        r.start === r.end
+                                            ? dayjs(r.start).format('D MMM YYYY')
+                                            : `${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`
                                     }
+                                    size="small"
+                                    onDelete={() => {
+                                        const { start: rs, end: re } = r;
+                                        setSearchParams((prev) => {
+                                            const current = parseSearchParams(new URLSearchParams(prev)).customRanges;
+                                            return applyQueryToParams(
+                                                { customRanges: current.filter((x) => !(x.start === rs && x.end === re)) },
+                                                new URLSearchParams(prev)
+                                            );
+                                        });
+                                    }}
                                 />
                             ))}
                         </Stack>
@@ -285,16 +284,7 @@ const TemporalFiltersHook = ({
                 color="primary"
                 sx={{ mt: 2 }}
                 onClick={() => {
-                    dispatch(
-                        setSearchQuery({
-                            timeOfDays: [],
-                            dayOfWeeks: [],
-                            seasons: [],
-                            months: [],
-                            years: [],
-                            customRanges: [],
-                        })
-                    );
+                    update({ timeOfDays: [], dayOfWeeks: [], seasons: [], months: [], years: [], customRanges: [] });
                     setCustomCells(new Set());
                 }}
             >

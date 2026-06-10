@@ -10,7 +10,8 @@ const ImageIdSearch = ({ visible = true }: { visible?: boolean }) => {
     const navigate = useNavigate();
 
     const onSearch = (query: string) => {
-        navigate('/search?mode=id&&query=' + encodeURIComponent(query) + '&device=' + searchParams.get('device'));
+        const device = searchParams.get('device') || '';
+        navigate('/search?mode=id&&query=' + encodeURIComponent(query) + (device ? `&device=${device}` : ''));
     };
 
     return (

@@ -7,6 +7,7 @@ import {
     DeleteRounded,
     GridViewRounded,
     HistoryRounded,
+    SendRounded,
     SortRounded,
     ViewStreamRounded,
 } from '@mui/icons-material';
@@ -39,6 +40,7 @@ import {
     parseQueryFilters,
     searchImages,
 } from 'apis/browsing';
+import { submitImage } from 'apis/dres';
 import ResultSummaryBar from 'components/ResultSummaryBar';
 import { FaceFiltersHook } from 'components/FaceFilters';
 import ImageDropSearch from 'components/ImageDropSearch';
@@ -52,11 +54,14 @@ import utc from 'dayjs/plugin/utc';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
-import { setLoading } from 'reducers/feedback';
+import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
-import { clearHistory, pushToHistory, removeFromHistory, setSearchQuery } from 'reducers/search';
+import { clearHistory, pushToHistory, removeFromHistory } from 'reducers/search';
+import { addSubmittedImages } from 'reducers/dres';
+import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
+import { SearchQuery } from '@utils/types';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
 
@@ -65,16 +70,29 @@ dayjs.extend(timezone);
 
 const PAGE_SIZE = 20;
 
+
+const queryFilterChips = (entry: SearchQuery): string[] => {
+    const chips: string[] = [];
+    entry.timeOfDays?.forEach((t) => chips.push(t));
+    entry.dayOfWeeks?.forEach((d) => chips.push(d.slice(0, 3)));
+    entry.seasons?.forEach((s) => chips.push(s));
+    entry.months?.forEach((m) => chips.push(m.slice(0, 3)));
+    entry.years?.forEach((y) => chips.push(String(y)));
+    if (entry.isMoving) chips.push('moving');
+    entry.countries?.forEach((c) => chips.push(c));
+    if ((entry.locationIds?.length ?? 0) > 0)
+        chips.push(`${entry.locationIds!.length} place${entry.locationIds!.length > 1 ? 's' : ''}`);
+    if ((entry.peopleIds?.length ?? 0) > 0)
+        chips.push(`${entry.peopleIds!.length} person${entry.peopleIds!.length > 1 ? 's' : ''}`);
+    return chips;
+};
+
 const SearchPage = () => {
     const dispatch = useAppDispatch();
-    const [searchParams, _] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const searchQuery = useAppSelector((state) => state.search.query);
+    const searchQuery = useMemo(() => parseSearchParams(searchParams), [searchParams]);
     const searchHistory = useAppSelector((state) => state.search.history);
-
-    useEffect(() => {
-        if (device) dispatch(setDevice(device));
-    }, [device]);
 
     // View Settings
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
@@ -82,16 +100,38 @@ const SearchPage = () => {
     const [viewMode, setViewMode] = useState<'images' | 'events'>('images');
     const [page, setPage] = useState(1);
 
-    // Search Settings
-    const [textQuery, setTextQuery] = useState(searchQuery.text || '');
+    // Search Settings — local draft text; committed to URL on Enter
+    const [textQuery, setTextQuery] = useState(() => searchParams.get('q') || '');
     const [useImageInput, setUseImageInput] = useState<boolean>(false);
+
+    useEffect(() => {
+        if (device) dispatch(setDevice(device));
+    }, [device]);
+
+    // Keep textQuery in sync on browser back/forward
+    useEffect(() => {
+        setTextQuery(searchParams.get('q') || '');
+    }, [searchParams.get('q')]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!textQuery.trim()) return;
         const timer = setTimeout(() => {
             parseQueryFilters(textQuery, device)
                 .then((parsed) => {
-                    dispatch(setSearchQuery(parsed));
+                    // Only apply filters actually extracted from the text — never
+                    // clear URL params that were set via the filter UI
+                    const extracted: Partial<SearchQuery> = {};
+                    if (parsed.timeOfDays?.length) extracted.timeOfDays = parsed.timeOfDays;
+                    if (parsed.dayOfWeeks?.length) extracted.dayOfWeeks = parsed.dayOfWeeks;
+                    if (parsed.seasons?.length) extracted.seasons = parsed.seasons;
+                    if (parsed.months?.length) extracted.months = parsed.months;
+                    if (parsed.years?.length) extracted.years = parsed.years;
+                    if (parsed.customRanges?.length) extracted.customRanges = parsed.customRanges;
+                    if (parsed.countries?.length) extracted.countries = parsed.countries;
+                    if (parsed.locationIds?.length) extracted.locationIds = parsed.locationIds;
+                    if (Object.keys(extracted).length > 0) {
+                        setSearchParams((prev) => applyQueryToParams(extracted, new URLSearchParams(prev)), { replace: true });
+                    }
                     const hasTemporalFilter =
                         (parsed.timeOfDays?.length ?? 0) > 0 ||
                         (parsed.dayOfWeeks?.length ?? 0) > 0 ||
@@ -103,18 +143,20 @@ const SearchPage = () => {
                 .catch(() => {});
         }, 800);
         return () => clearTimeout(timer);
-    }, [textQuery, dispatch]);
+    }, [textQuery, device, setSearchParams]);
 
     const [filterShown, setFilterShown] = useState<
         'temporal' | 'location' | 'faces' | null
     >(null);
+
+    const [extraLocationLabels, setExtraLocationLabels] = useState<Record<string, string>>({});
 
     const {
         renderFilterOptions: LocationFilterOptions,
         renderMap,
         renderClearButton: LocationClearButton,
         nothingIsSelected: locationNothingIsSelected,
-    } = LocationFiltersHook();
+    } = LocationFiltersHook({ extraLocationLabels });
     const {
         renderFilterOptions: FaceFilterOptions,
         renderFaceExplorer,
@@ -138,7 +180,7 @@ const SearchPage = () => {
         isLoading,
         mutate,
     } = useSWR(
-        ['search', device, sortBy, searchQuery],
+        ['search', sortBy, searchParams.toString()],
         () =>
             searchImages(device, searchQuery, sortBy).then(
                 ({ segments, topLocations, topCountries, topPeople }) => {
@@ -149,7 +191,6 @@ const SearchPage = () => {
                         topCountries,
                         topPeople,
                     });
-                    if (segments.length > 0) setFilterShown('temporal');
                     if (sortBy === 'relevance') {
                         setSortOrder('desc');
                         return segments.slice().reverse();
@@ -239,37 +280,56 @@ const SearchPage = () => {
     const triggerSearch = React.useCallback(() => {
         const full = { ...searchQuery, text: textQuery };
         dispatch(pushToHistory(full));
-        dispatch(setSearchQuery({ text: textQuery }));
-    }, [searchQuery, textQuery, dispatch]);
+        setSearchParams((prev) => {
+            const p = new URLSearchParams(prev);
+            if (textQuery) p.set('q', textQuery); else p.delete('q');
+            return p;
+        }); // push — new browser history entry
+    }, [searchQuery, textQuery, dispatch, setSearchParams]);
 
-    const restoreFromHistory = React.useCallback((entry: typeof searchQuery) => {
+    const restoreFromHistory = React.useCallback((entry: SearchQuery) => {
         setTextQuery(entry.text || '');
-        dispatch(setSearchQuery(entry));
-    }, [dispatch]);
+        setSearchParams((prev) => {
+            const p = applyQueryToParams(entry, new URLSearchParams());
+            const device = prev.get('device');
+            if (device) p.set('device', device);
+            return p;
+        }); // push
+    }, [setSearchParams]);
 
     const handleAppendToQuery = React.useCallback((text: string) => {
-        setTextQuery((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
-    }, []);
+        const newText = textQuery.trim() ? `${textQuery.trim()} ${text}` : text;
+        setTextQuery(newText);
+        setSearchParams((prev) => {
+            const p = new URLSearchParams(prev);
+            if (newText) p.set('q', newText); else p.delete('q');
+            return p;
+        });
+    }, [textQuery, setSearchParams]);
 
-    const handleAddLocationFilter = React.useCallback(
-        (id: string) => {
-            const existing = searchQuery.locationIds ?? [];
-            if (!existing.includes(id)) {
-                dispatch(setSearchQuery({ locationIds: [...existing, id] }));
-            }
-        },
-        [searchQuery.locationIds, dispatch]
-    );
+    const handleAddLocationFilter = React.useCallback((id: string, name: string) => {
+        setSearchParams((prev) => {
+            const existing = prev.get('locationIds')?.split(',').filter(Boolean) ?? [];
+            if (existing.includes(id)) return prev;
+            const p = new URLSearchParams(prev);
+            p.set('locationIds', [...existing, id].join(','));
+            return p;
+        });
+        setExtraLocationLabels((prev) => ({ ...prev, [id]: name }));
+    }, [setSearchParams]);
 
-    const handleAddPersonFilter = React.useCallback(
-        (id: string) => {
-            const existing = searchQuery.peopleIds ?? [];
-            if (!existing.includes(id)) {
-                dispatch(setSearchQuery({ peopleIds: [...existing, id] }));
-            }
-        },
-        [searchQuery.peopleIds, dispatch]
-    );
+    const handleAddPersonFilter = React.useCallback((id: string) => {
+        setSearchParams((prev) => {
+            const existing = prev.get('peopleIds')?.split(',').filter(Boolean) ?? [];
+            if (existing.includes(id)) return prev;
+            const p = new URLSearchParams(prev);
+            p.set('peopleIds', [...existing, id].join(','));
+            return p;
+        });
+    }, [setSearchParams]);
+
+    const { evaluationId, sessionId, currentTask } = useAppSelector((s) => s.dres);
+    const dresReady = !!(evaluationId && sessionId);
 
     const deleteRow = (imagePaths: string[]) => {
         dispatch(setLoading(true));
@@ -277,6 +337,40 @@ const SearchPage = () => {
             setDeleted((prev) => [...prev, ...imagePaths]);
             dispatch(setLoading(false));
         });
+    };
+
+    // DRES page-select submit flow
+    const [isDresSelecting, setIsDresSelecting] = useState(false);
+    const [dresSelectedImages, setDresSelectedImages] = useState<string[]>([]);
+
+    const handleDresSelectPage = () => {
+        setDresSelectedImages(currentPageImages.map((img) => img.imagePath));
+        setIsDresSelecting(true);
+    };
+
+    const handleDresConfirmSubmit = () => {
+        if (!dresReady || !dresSelectedImages.length) return;
+        const toSubmit = [...dresSelectedImages];
+        // Optimistically mark as submitted and close selection mode immediately
+        dispatch(addSubmittedImages(toSubmit));
+        setDresSelectedImages([]);
+        setIsDresSelecting(false);
+        // Fire requests in the background without blocking interaction
+        (async () => {
+            try {
+                let lastResult = null;
+                for (const imagePath of toSubmit) {
+                    lastResult = await submitImage({ image: imagePath, evaluationId: evaluationId!, sessionId: sessionId! });
+                }
+                const r = lastResult!;
+                dispatch(showNotification({
+                    message: `DRES: ${r.verdict} — submitted ${toSubmit.length} images`,
+                    type: r.severity,
+                }));
+            } catch {
+                dispatch(showNotification({ message: 'DRES submit failed', type: 'error' }));
+            }
+        })();
     };
 
     const currentPageResults =
@@ -366,26 +460,18 @@ const SearchPage = () => {
                         </Stack>
                         <Stack spacing={0.25}>
                             {searchHistory.slice(0, 8).map((entry, i) => {
-                                const filterCount = [
-                                    entry.timeOfDays?.length,
-                                    entry.dayOfWeeks?.length,
-                                    entry.months?.length,
-                                    entry.years?.length,
-                                    entry.customRanges?.length,
-                                    entry.locationIds?.length,
-                                    entry.peopleIds?.length,
-                                    entry.countries?.length,
-                                ].reduce((sum, n) => sum + (n || 0), 0);
+                                const chips = queryFilterChips(entry);
                                 return (
-                                    <Stack key={i} direction="row" alignItems="center" sx={{ '&:hover .remove-btn': { opacity: 1 } }}>
+                                    <Stack key={i} direction="row" alignItems="flex-start" sx={{ '&:hover .remove-btn': { opacity: 1 } }}>
                                         <Button
                                             size="small"
                                             variant="text"
-                                            startIcon={<HistoryRounded sx={{ fontSize: 13, color: 'text.disabled' }} />}
+                                            startIcon={<HistoryRounded sx={{ fontSize: 13, color: 'text.disabled', mt: 0.25 }} />}
                                             onClick={() => restoreFromHistory(entry)}
                                             sx={{
                                                 flex: 1,
                                                 justifyContent: 'flex-start',
+                                                alignItems: 'flex-start',
                                                 textTransform: 'none',
                                                 py: 0.25,
                                                 px: 0.75,
@@ -394,19 +480,28 @@ const SearchPage = () => {
                                                 '& .MuiButton-startIcon': { mr: 0.5 },
                                             }}
                                         >
-                                            <Typography noWrap sx={{ fontSize: '12px', maxWidth: 185 }}>
-                                                {entry.text || '(filters only)'}
-                                            </Typography>
-                                            {filterCount > 0 && (
-                                                <Typography sx={{ fontSize: '10px', color: 'text.secondary', ml: 0.5, flexShrink: 0 }}>
-                                                    +{filterCount}
+                                            <Box>
+                                                <Typography noWrap sx={{ fontSize: '12px', maxWidth: 220, lineHeight: 1.3 }}>
+                                                    {entry.text || '(filters only)'}
                                                 </Typography>
-                                            )}
+                                                {chips.length > 0 && (
+                                                    <Stack direction="row" flexWrap="wrap" gap={0.25} sx={{ mt: 0.25 }}>
+                                                        {chips.map((chip, j) => (
+                                                            <Chip
+                                                                key={j}
+                                                                label={chip}
+                                                                size="small"
+                                                                sx={{ fontSize: '9px', height: 14, '& .MuiChip-label': { px: 0.5 } }}
+                                                            />
+                                                        ))}
+                                                    </Stack>
+                                                )}
+                                            </Box>
                                         </Button>
                                         <IconButton
                                             className="remove-btn"
                                             size="small"
-                                            sx={{ p: 0.25, opacity: 0, transition: 'opacity 0.15s' }}
+                                            sx={{ p: 0.25, opacity: 0, transition: 'opacity 0.15s', mt: 0.25 }}
                                             onClick={() => dispatch(removeFromHistory(i))}
                                         >
                                             <CloseRounded sx={{ fontSize: 11 }} />
@@ -557,7 +652,25 @@ const SearchPage = () => {
                 </Stack>
             </Drawer>
 
-            <Box sx={{ paddingLeft: '325px' }}>
+            <Drawer
+                anchor="right"
+                open={filterShown === 'location'}
+                variant="persistent"
+                slotProps={{
+                    paper: {
+                        sx: {
+                            width: 340,
+                            p: 2,
+                            paddingTop: 8,
+                            zIndex: 1200,
+                        },
+                    },
+                }}
+            >
+                {renderMap()}
+            </Drawer>
+
+            <Box sx={{ paddingLeft: '325px', paddingRight: filterShown === 'location' ? '340px' : 0 }}>
                 <Box id="app" sx={{ width: '100%' }} />
                 <Stack direction="row" spacing={0.5} sx={{ width: '100%' }}>
                     <Box
@@ -602,8 +715,7 @@ const SearchPage = () => {
                                 />
                             </Stack>
                         ) : null}
-                        {filterShown === 'temporal' && renderHeatmap()}
-                        {filterShown === 'location' && renderMap()}
+                        {renderHeatmap()}
                         {filterShown === 'faces' && renderFaceExplorer()}
                     </Stack>
                 </Stack>
@@ -775,25 +887,30 @@ const SearchPage = () => {
                 ) : (
                     <>
                         {currentPageImages.length == 0 ? null : (
-                            <Stack direction="row" alignItems="center">
+                            <Stack direction="row" alignItems="center" spacing={1}>
                                 <Button
                                     color="error"
                                     onClick={() => {
-                                        setSelectedImages(
-                                            currentPageImages.map(
-                                                (img) => img.imagePath
-                                            )
-                                        );
+                                        setSelectedImages(currentPageImages.map((img) => img.imagePath));
                                         setIsSelecting(true);
                                     }}
-                                    sx={{
-                                        textTransform: 'none',
-                                        marginBottom: 2,
-                                    }}
+                                    sx={{ textTransform: 'none', marginBottom: 2 }}
                                 >
                                     <DeleteRounded sx={{ marginRight: 1 }} />
                                     Delete All on This Page
                                 </Button>
+                                {dresReady && (
+                                    <Tooltip title={currentTask ? `Submit to: ${currentTask.name}` : 'Select images on this page to submit to DRES'}>
+                                        <Button
+                                            color="success"
+                                            onClick={handleDresSelectPage}
+                                            sx={{ textTransform: 'none', marginBottom: 2 }}
+                                            startIcon={<SendRounded />}
+                                        >
+                                            Submit Page ({currentPageImages.length})
+                                        </Button>
+                                    </Tooltip>
+                                )}
                             </Stack>
                         )}
                         {isSelecting && (
@@ -812,14 +929,35 @@ const SearchPage = () => {
                                 </Button>
                                 <Button
                                     variant="outlined"
-                                    onClick={() => {
-                                        setIsSelecting(false);
-                                        setSelectedImages([]);
-                                    }}
+                                    onClick={() => { setIsSelecting(false); setSelectedImages([]); }}
                                     sx={{ textTransform: 'none' }}
                                 >
                                     Cancel
                                 </Button>
+                            </Stack>
+                        )}
+                        {isDresSelecting && (
+                            <Stack direction="row" spacing={2} marginBottom={2} alignItems="center">
+                                <Button
+                                    variant="contained"
+                                    color="success"
+                                    onClick={handleDresConfirmSubmit}
+                                    disabled={dresSelectedImages.length === 0}
+                                    startIcon={<SendRounded />}
+                                    sx={{ textTransform: 'none' }}
+                                >
+                                    Submit ({dresSelectedImages.length})
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    onClick={() => { setIsDresSelecting(false); setDresSelectedImages([]); }}
+                                    sx={{ textTransform: 'none' }}
+                                >
+                                    Cancel
+                                </Button>
+                                <Typography variant="caption" color="text.secondary">
+                                    Click images to deselect
+                                </Typography>
                             </Stack>
                         )}
                         <Stack
@@ -828,59 +966,66 @@ const SearchPage = () => {
                             direction="row"
                             useFlexGap
                         >
-                            {currentPageImages?.map((image) =>
-                                deleted.includes(image.imagePath) ? null : (
-                                    <ImageWithDate
-                                        fontSize={'10px'}
-                                        height={'200px'}
-                                        image={image}
-                                        onClick={() => {
-                                            dispatch(
-                                                setZoomedImage({
-                                                    image: image.imagePath,
-                                                    isVideo: image.isVideo,
-                                                })
-                                            );
+                            {currentPageImages?.map((image) => {
+                                if (deleted.includes(image.imagePath)) return null;
+                                const isDresSelected = dresSelectedImages.includes(image.imagePath);
+                                return (
+                                    <Box
+                                        key={image.imagePath}
+                                        sx={{
+                                            borderRadius: '10px',
+                                            outline: isDresSelected ? '3px solid #4caf50' : 'none',
                                         }}
-                                        onDelete={() =>
-                                            setDeleted([
-                                                ...deleted,
-                                                image.imagePath,
-                                            ])
-                                        }
-                                        extra={
-                                            isSelecting && (
-                                                <Checkbox
-                                                    checked={selectedImages.includes(
-                                                        image.imagePath
+                                    >
+                                        <ImageWithDate
+                                            fontSize={'10px'}
+                                            height={'200px'}
+                                            image={image}
+                                            onClick={() => {
+                                                if (isDresSelecting) {
+                                                    setDresSelectedImages((prev) =>
+                                                        isDresSelected
+                                                            ? prev.filter((p) => p !== image.imagePath)
+                                                            : [...prev, image.imagePath]
+                                                    );
+                                                } else {
+                                                    dispatch(setZoomedImage({ image: image.imagePath, isVideo: image.isVideo }));
+                                                }
+                                            }}
+                                            onDelete={() => setDeleted([...deleted, image.imagePath])}
+                                            extra={
+                                                <>
+                                                    {isSelecting && (
+                                                        <Checkbox
+                                                            checked={selectedImages.includes(image.imagePath)}
+                                                            onChange={(e) => {
+                                                                if (e.target.checked) {
+                                                                    setSelectedImages((prev) => [...prev, image.imagePath]);
+                                                                } else {
+                                                                    setSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
+                                                                }
+                                                            }}
+                                                        />
                                                     )}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setSelectedImages(
-                                                                (prev) => [
-                                                                    ...prev,
-                                                                    image.imagePath,
-                                                                ]
-                                                            );
-                                                        } else {
-                                                            setSelectedImages(
-                                                                (prev) =>
-                                                                    prev.filter(
-                                                                        (
-                                                                            path
-                                                                        ) =>
-                                                                            path !==
-                                                                            image.imagePath
-                                                                    )
-                                                            );
-                                                        }
-                                                    }}
-                                                />
-                                            )
-                                        }
-                                    />
-                                )
-                            )}
+                                                    {isDresSelecting && (
+                                                        <Checkbox
+                                                            checked={isDresSelected}
+                                                            sx={{ color: 'success.main', '&.Mui-checked': { color: 'success.main' } }}
+                                                            onChange={(e) => {
+                                                                if (e.target.checked) {
+                                                                    setDresSelectedImages((prev) => [...prev, image.imagePath]);
+                                                                } else {
+                                                                    setDresSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
+                                                                }
+                                                            }}
+                                                        />
+                                                    )}
+                                                </>
+                                            }
+                                        />
+                                    </Box>
+                                );
+                            })}
                         </Stack>
                         {page > 0 && images.length > PAGE_SIZE * 2 && (
                             <Pagination

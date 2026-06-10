@@ -221,7 +221,6 @@ async def get_images_by_hour(
     device: str,
     date: str = "",
     hour: str = "",
-    page: int = 1,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):

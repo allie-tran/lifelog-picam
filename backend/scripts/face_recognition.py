@@ -117,3 +117,5 @@ def add_face_to_whitelist(session, device: str, name: str, files: List[UploadFil
                 embedding=embedding,
             )
         )
+    session.commit()
+    return [e.tolist() if hasattr(e, "tolist") else list(e) for e in embeddings]

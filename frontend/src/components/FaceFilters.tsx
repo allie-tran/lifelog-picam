@@ -12,19 +12,21 @@ import {
     Stack,
     Typography,
 } from '@mui/material';
-import { useAppDispatch, useAppSelector } from 'reducers/hooks';
-import { setSearchQuery } from 'reducers/search';
 import { useSearchParams } from 'react-router';
+import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
 import useSWR from 'swr';
 
 const FaceFiltersHook = () => {
-    const dispatch = useAppDispatch();
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const { peopleIds } = useAppSelector((state) => state.search.query);
+    const { peopleIds } = parseSearchParams(searchParams);
+
+    const update = (partial: Parameters<typeof applyQueryToParams>[0]) => {
+        setSearchParams((prev) => applyQueryToParams(partial, new URLSearchParams(prev)));
+    };
 
     const { data: availableFaces } = useSWR(
-        [device, 'faces'],
+        device ? [device, 'faces'] : null,
         async () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
@@ -41,16 +43,15 @@ const FaceFiltersHook = () => {
                     value={peopleIds}
                     onChange={(e) => {
                         const value = e.target.value;
-                        dispatch(
-                            setSearchQuery({
-                                peopleIds:
-                                    typeof value === 'string'
-                                        ? value.split(',')
-                                        : value,
-                            })
-                        );
+                        update({
+                            peopleIds: typeof value === 'string' ? value.split(',') : value,
+                        });
                     }}
-                    renderValue={(selected) => selected.join(', ')}
+                    renderValue={(selected) =>
+                        selected
+                            .map((id) => availableFaces?.find((f) => f.id === id)?.name ?? id)
+                            .join(', ')
+                    }
                 >
                     {availableFaces?.map((face) => (
                         <MenuItem key={face.id} value={face.id}>
@@ -121,13 +122,7 @@ const FaceFiltersHook = () => {
                 variant="outlined"
                 color="primary"
                 sx={{ mt: 2 }}
-                onClick={() => {
-                    dispatch(
-                        setSearchQuery({
-                            peopleIds: [],
-                        })
-                    );
-                }}
+                onClick={() => update({ peopleIds: [] })}
             >
                 Clear Filters
             </Button>

@@ -8,8 +8,11 @@ import torch
 from PIL import Image, ImageDraw, ExifTags
 from ultralytics.models.sam import SAM3SemanticPredictor
 from ultralytics.models import FastSAM
+import logging
 
 from scripts.utils import to_base64
+
+logger = logging.getLogger(__name__)
 
 
 class SamWrapper:
@@ -51,7 +54,6 @@ def blur_image_mosaic(image, mask, scale_ratio=0.025):
 
     # Calculate the area of the mask
     mask_area = np.sum(mask)
-    total_area = h * w
 
     # Determine hexagon size based on the mask ratio
     size = max(5, int(mask_area * scale_ratio))  # Minimum size of 5 to ensure visibility
@@ -176,13 +178,23 @@ def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=
                             mask = result.masks.data.any(dim=0).numpy().astype(bool)
                             # check if the mask has too much overlapping with the whitelist areas, if so, skip it
                             to_blur = True
+                            mask_area = int(np.sum(mask))
                             for bbox in whitelist_boxes:
                                 if mask[bbox[1] : bbox[3], bbox[0] : bbox[2]].any():
-                                    overlap_area = np.sum(
+                                    overlap_area = int(np.sum(
                                         mask[bbox[1] : bbox[3], bbox[0] : bbox[2]]
-                                    )
+                                    ))
                                     bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-                                    if overlap_area / bbox_area > 0.8:
+                                    # What fraction of the bbox is covered by the mask
+                                    bbox_coverage = overlap_area / bbox_area if bbox_area > 0 else 0
+                                    # What fraction of the mask falls inside the bbox
+                                    # (catches irregular face shapes that don't fill the full bbox)
+                                    mask_coverage = overlap_area / mask_area if mask_area > 0 else 0
+                                    logger.debug(
+                                        f"Overlap: {overlap_area}, BBox area: {bbox_area}, Mask area: {mask_area}, "
+                                        f"bbox_coverage={bbox_coverage:.2f}, mask_coverage={mask_coverage:.2f}"
+                                    )
+                                    if bbox_coverage > 0.5 or mask_coverage > 0.4:
                                         to_blur = False
                                         break
                             if to_blur:

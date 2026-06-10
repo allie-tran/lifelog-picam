@@ -2,25 +2,8 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { SearchQuery } from '@utils/types';
 
 interface SearchState {
-    query: SearchQuery;
     history: SearchQuery[];
 }
-
-const EMPTY_QUERY: SearchQuery = {
-    text: '',
-    isImageQuery: false,
-    timeOfDays: [],
-    dayOfWeeks: [],
-    seasons: [],
-    months: [],
-    years: [],
-    customRanges: [],
-    isMoving: false,
-    countries: [],
-    locationIds: [],
-    bounds: null,
-    peopleIds: [],
-};
 
 const HISTORY_KEY = 'searchQueryHistory';
 
@@ -40,7 +23,6 @@ const saveHistory = (history: SearchQuery[]) => {
 };
 
 const initialState: SearchState = {
-    query: EMPTY_QUERY,
     history: loadHistory(),
 };
 
@@ -48,16 +30,19 @@ export const searchSlice = createSlice({
     name: 'search',
     initialState,
     reducers: {
-        setSearchQuery: (state, action: PayloadAction<Partial<SearchQuery>>) => {
-            state.query = { ...state.query, ...action.payload };
-        },
-        resetSearchQuery: (state) => {
-            state.query = EMPTY_QUERY;
-        },
         pushToHistory: (state, action: PayloadAction<SearchQuery>) => {
             const entry = action.payload;
-            if (!entry.text?.trim()) return;
-            // Drop duplicate of the most recent entry
+            const hasContent =
+                !!entry.text?.trim() ||
+                (entry.timeOfDays?.length ?? 0) > 0 ||
+                (entry.dayOfWeeks?.length ?? 0) > 0 ||
+                (entry.months?.length ?? 0) > 0 ||
+                (entry.years?.length ?? 0) > 0 ||
+                (entry.seasons?.length ?? 0) > 0 ||
+                (entry.countries?.length ?? 0) > 0 ||
+                (entry.locationIds?.length ?? 0) > 0 ||
+                (entry.peopleIds?.length ?? 0) > 0;
+            if (!hasContent) return;
             const [latest] = state.history;
             if (latest && JSON.stringify(latest) === JSON.stringify(entry)) return;
             state.history = [entry, ...state.history].slice(0, 25);
@@ -74,12 +59,5 @@ export const searchSlice = createSlice({
     },
 });
 
-export const {
-    setSearchQuery,
-    resetSearchQuery,
-    pushToHistory,
-    removeFromHistory,
-    clearHistory,
-} = searchSlice.actions;
+export const { pushToHistory, removeFromHistory, clearHistory } = searchSlice.actions;
 export default searchSlice.reducer;
-

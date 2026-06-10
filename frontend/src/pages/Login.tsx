@@ -31,7 +31,7 @@ const Login = () => {
                 setCookie('token', token, { path: '/', maxAge: 3600 * 24 }); // Expires in 1 day
                 axios.defaults.headers.common['Authorization'] =
                     `Bearer ${token}`;
-                navigate('/?device=' + response.data.devices[0]);
+                navigate('/?device=' + (response.data.devices?.[0]?.deviceId || ''));
                 dispatch(
                     login({
                         username: response.data.username,

@@ -1,4 +1,4 @@
-import { BACKEND_URL, DRES_URL } from 'constants/urls'
+import { DRES_URL } from 'constants/urls'
 import axios from 'apis/defaultAxios'
 
 export type Evaluation = {
@@ -67,6 +67,9 @@ export const sendLoginRequest = async (username: string, password: string) => {
     })
 }
 
+const toMediaItemName = (imagePath: string) =>
+    (imagePath.split('/').pop()?.split('.')[0] ?? imagePath) + '_000'
+
 export const submitImage = async ({
     image,
     evaluationId,
@@ -76,11 +79,25 @@ export const submitImage = async ({
     evaluationId: string
     sessionId: string
 }): Promise<SubmitResult> => {
-    const mediaItemName = image.split('/').pop()?.split('.')[0] + '_000' ?? image
     const url = `${DRES_URL}/submit/${evaluationId}?session=${sessionId}`
     const res = await axios.post(url, {
-        answerSets: [{ answers: [{ mediaItemName }] }],
+        answerSets: [{ answers: [{ mediaItemName: toMediaItemName(image) }] }],
     })
+    return mapDresResponse(res.data)
+}
+
+export const submitImages = async ({
+    images,
+    evaluationId,
+    sessionId,
+}: {
+    images: string[]
+    evaluationId: string
+    sessionId: string
+}): Promise<SubmitResult> => {
+    const answers = images.map((img) => ({ mediaItemName: toMediaItemName(img) }))
+    const url = `${DRES_URL}/submit/${evaluationId}?session=${sessionId}`
+    const res = await axios.post(url, { answerSets: [{ answers }] })
     return mapDresResponse(res.data)
 }
 

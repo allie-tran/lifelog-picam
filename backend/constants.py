@@ -136,3 +136,6 @@ GROUPED_CATEGORIES = defaultdict(lambda: "Miscellaneous")
 for group, details in CATEGORIES_WITH_GROUPS.items():
     for activity in details["activities"]:
         GROUPED_CATEGORIES[activity] = group
+
+_FACE_CLUSTER_THRESHOLD = 0.40
+_FACE_SIMILARITY_THRESHOLD = 0.50

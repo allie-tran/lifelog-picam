@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import CursorResult, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import Session
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
@@ -14,6 +14,7 @@ from database.types import ImageRecord
 from dependencies import CamelCaseModel
 from auth import _require_owner
 from pipelines.delete import remove_physical_images
+from sessions.redis import redis_client
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -47,18 +48,25 @@ def delete_image(
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
-    stmt = (
+    affected = session.execute(
+        select(ImageModel.date, ImageModel.hour)
+        .where(ImageModel.image_path == request.image_path)
+        .where(ImageModel.device == device)
+    ).fetchall()
+    res = session.execute(
         update(ImageModel)
         .where(ImageModel.image_path == request.image_path)
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
-    res: CursorResult = session.execute(stmt)
     logger.info(
         "Marked %d record(s) as deleted for image %s on device %s.",
-        res.rowcount, request.image_path, device,
+        res.rowcount, request.image_path, device,  # type: ignore
     )
     session.commit()
+    for date, hour in affected:
+        if date and hour is not None:
+            redis_client.delete_value(f"browse:{device}:{date}:{hour}")
 
 
 @app.delete("/delete-images")
@@ -70,13 +78,26 @@ def delete_images(
 ):
     _require_owner(access_level)
     paths = [_resolve_image_path(device, p) for p in request.image_paths]
+    affected = session.execute(
+        select(ImageModel.date, ImageModel.hour)
+        .where(ImageModel.image_path.in_(paths))
+        .where(ImageModel.device == device)
+        .distinct()
+    ).fetchall()
     session.execute(
         update(ImageModel)
         .where(ImageModel.image_path.in_(paths))
         .where(ImageModel.device == device)
         .values(deleted=True, deleted_time=datetime.now(timezone.utc))
     )
+    logger.info(
+        "Marked %d record(s) as deleted for %d images on device %s.",
+        len(paths), len(request.image_paths), device,  # type: ignore
+    )
     session.commit()
+    for date, hour in affected:
+        if date and hour is not None:
+            redis_client.delete_value(f"browse:{device}:{date}:{hour}")
 
 
 @app.get("/get-deleted-images")

@@ -18,8 +18,7 @@ from sessions.redis import redis_client
 app = FastAPI()
 logger = logging.getLogger(__name__)
 
-_CAMERA_ONLINE_MINUTES = 15
-_SENSOR_ONLINE_MINUTES = 30
+_SENSOR_ONLINE_MINUTES = 5
 _GPS_STALE_MINUTES = 60
 
 
@@ -95,7 +94,11 @@ def get_current_status(
 
     latest_image = session.execute(
         select(Image)
-        .where(Image.device == device, Image.deleted == False)
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+            Image.activity.isnot(None) | Image.location_id.isnot(None) | Image.segment_id.isnot(None)
+        )
         .order_by(Image.timestamp.desc())
         .limit(1)
     ).scalar_one_or_none()

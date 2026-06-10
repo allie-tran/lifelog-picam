@@ -6,7 +6,7 @@ from PIL import Image
 import io
 import os
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import func, case, select, desc
+from sqlalchemy import func, case, or_, select, desc
 from sqlalchemy.orm import Session
 
 from app_types.general import LocationInfo
@@ -19,7 +19,7 @@ from typing import Annotated, Any
 
 from constants import DIR, THUMBNAIL_DIR
 from database import get_session
-from database.models import Image as ImageModel, ImagePerson, Location, PeopleCluster
+from database.models import Device, Image as ImageModel, ImagePerson, Location, PeopleCluster
 from app_types import CamelCaseModel
 from scripts.utils import to_absolute_bbox
 
@@ -254,7 +254,20 @@ def get_all_faces(
         logger.debug("all-faces cache hit for device %s", device)
         return cached[1]
 
-    stmt = select(PeopleCluster).where(PeopleCluster.people.any(ImagePerson.image.has(ImageModel.device == device)))
+    device_row = session.execute(select(Device).where(Device.device_id == device)).scalar()
+    if device_row and device_row.keep_face_recognition:
+        # Whitelist mode: only show clusters that are explicitly linked to a whitelist entry
+        stmt = select(PeopleCluster).where(
+            PeopleCluster.device == device,
+            PeopleCluster.whitelist_entry_id.isnot(None),
+        )
+    else:
+        stmt = select(PeopleCluster).where(
+            or_(
+                PeopleCluster.device == device,
+                PeopleCluster.people.any(ImagePerson.image.has(ImageModel.device == device)),
+            )
+        )
     clusters = session.execute(stmt).scalars().all()
     logger.info("Building all-faces for device %s: %d clusters", device, len(clusters))
 

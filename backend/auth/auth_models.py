@@ -129,6 +129,8 @@ def auth_dependency(request: Request):
     user = find_user_by_username(data["username"])
     if not user:
         raise HTTPException(status_code=401, detail="User does not exist")
+    if user.is_admin:
+        return AccessLevel.ADMIN
     devices = user.devices or []
     device = request.query_params.get("device")
     for d in devices:

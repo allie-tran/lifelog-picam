@@ -5,9 +5,15 @@ from celery.local import class_property
 from celery.result import AsyncResult
 from celery.utils.objects import FallbackContext
 from celery import Celery
+from celery.signals import after_setup_logger
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+@after_setup_logger.connect
+def setup_scripts_logger(logger, **kwargs):
+    logging.getLogger("scripts").setLevel(logging.DEBUG)
 
 celery = Celery(
     "picam-tasks",
@@ -31,10 +37,10 @@ celery.conf.update(
             "task": "tasks.nightly_bio_stats_all_devices",
             "schedule": crontab(hour=2, minute=0),
         },
-        # 03:00 UTC — location assignment catch-up for any dates still missing it
-        "nightly-location-update": {
+        # every 15 min — location assignment for any dates still missing it
+        "location-update": {
             "task": "tasks.nightly_location_update_all_devices",
-            "schedule": crontab(hour=3, minute=0),
+            "schedule": crontab(minute="*/15"),
         },
         # 03:30 UTC — face cluster catch-up across all devices
         "nightly-face-recluster": {
@@ -46,10 +52,10 @@ celery.conf.update(
             "task": "tasks.update_status_summary",
             "schedule": crontab(minute="*/15"),
         },
-        # every 30 min — re-queue images that lost pipeline tasks after Celery restart
+        # every 15 min — re-queue images that lost pipeline tasks after Celery restart
         "pipeline-catchup": {
             "task": "tasks.pipeline_catchup_task",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="*/15"),
         },
     },
     timezone="UTC",

@@ -1,5 +1,6 @@
 import {
     CheckCircleOutlineRounded,
+    ClearAllRounded,
     LoginRounded,
     LogoutRounded,
     RefreshRounded,
@@ -29,7 +30,7 @@ import {
     submitText,
 } from 'apis/dres';
 import { useEffect, useState } from 'react';
-import { dresLogin, dresLogout, setCurrentTask, setEvaluation } from 'reducers/dres';
+import { dresLogin, dresLogout, setCurrentTask, setEvaluation, clearSubmittedImages } from 'reducers/dres';
 import { showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
@@ -38,7 +39,7 @@ const POLL_INTERVAL_MS = 10_000;
 const DRESSettings = () => {
     const dispatch = useAppDispatch();
     const cachedSessionId = localStorage.getItem('dresSessionId');
-    const { sessionId, evaluationId, currentTask } = useAppSelector((s) => s.dres);
+    const { sessionId, evaluationId, currentTask, submittedImages } = useAppSelector((s) => s.dres);
 
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -180,14 +181,29 @@ const DRESSettings = () => {
                             color="success"
                             size="small"
                         />
-                        <Button
-                            size="small"
-                            color="error"
-                            startIcon={<LogoutRounded />}
-                            onClick={handleLogout}
-                        >
-                            Logout
-                        </Button>
+                        <Stack direction="row" spacing={0.5}>
+                            <Tooltip title={`Clear submission history (${submittedImages.length} images)`}>
+                                <span>
+                                    <Button
+                                        size="small"
+                                        color="warning"
+                                        startIcon={<ClearAllRounded />}
+                                        onClick={() => dispatch(clearSubmittedImages())}
+                                        disabled={submittedImages.length === 0}
+                                    >
+                                        Clear
+                                    </Button>
+                                </span>
+                            </Tooltip>
+                            <Button
+                                size="small"
+                                color="error"
+                                startIcon={<LogoutRounded />}
+                                onClick={handleLogout}
+                            >
+                                Logout
+                            </Button>
+                        </Stack>
                     </Stack>
 
                     <Stack direction="row" spacing={1} alignItems="center">

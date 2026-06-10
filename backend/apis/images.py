@@ -18,13 +18,12 @@ from typing import  Annotated, Optional
 from auth.devices import verify_device_and_user
 from constants import DIR
 from database import get_session
-from app_types import CamelCaseModel
 
 from database.types import ImageRecord
 from pipelines.all import process_image
 from pipelines.delete import mark_error
 from scripts.date_utils import parse_date
-from database.models import Device, SensorDevice
+from database.models import SensorDevice
 from datetime import datetime, timedelta, timezone
 
 from scripts.face_recognition import delete_old_faces

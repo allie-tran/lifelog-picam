@@ -99,7 +99,7 @@ export function MapSearch({
         <>
             <Box
                 sx={{
-                    height: 400,
+                    height: "100%",
                     width: '100%',
                     border: '1px solid #ccc',
                     borderRadius: 1,

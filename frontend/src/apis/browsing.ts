@@ -282,6 +282,44 @@ export const removeFromWhiteList = async (device: string, name: string) => {
     return response.data;
 };
 
+export const getImagesByPerson = async (device: string, name: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/face/images-by-name?device=${encodeURIComponent(device)}&name=${encodeURIComponent(name)}`
+    );
+    return response.data as { imagePath: string; thumbnail: string; timestamp: string }[];
+};
+
+export const relabelRecentFaces = async (device: string, hours = 24) => {
+    const response = await axios.post(
+        `${BACKEND_URL}/face/relabel-recent?device=${encodeURIComponent(device)}&hours=${hours}`
+    );
+    return response.data as { queued: number; hours: number };
+};
+
+export const getRecognitionMode = async (device: string) => {
+    const response = await axios.get(
+        `${BACKEND_URL}/face/recognition-mode?device=${encodeURIComponent(device)}`
+    );
+    return response.data as { keepFaceRecognition: boolean };
+};
+
+export const setRecognitionMode = async (device: string, keep: boolean) => {
+    const response = await axios.put(
+        `${BACKEND_URL}/face/set-recognition-mode?device=${encodeURIComponent(device)}&keep=${keep}`,
+        {
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        }
+    );
+    return response.data as { keepFaceRecognition: boolean; changed: boolean };
+};
+
+export const getAllDeviceSettings = async () => {
+    const response = await axios.get(`${BACKEND_URL}/face/all-device-settings`);
+    return response.data as { deviceId: string; keepFaceRecognition: boolean }[];
+};
+
 export const uploadAndSegment = async (blobUrl: string, points: Point[]) => {
     const formData = new FormData();
     const blobResponse = await fetch(blobUrl);

@@ -179,7 +179,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
     const device = searchParams.get('device') || '';
 
     const { data: allFaces } = useSWR(
-        data.people.length > 0 ? [device, 'faces'] : null,
+        device && data.people.length > 0 ? [device, 'faces'] : null,
         () => getAllFaces(device),
         { revalidateOnFocus: false }
     );

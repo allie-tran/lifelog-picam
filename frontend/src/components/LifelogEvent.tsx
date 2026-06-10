@@ -9,14 +9,17 @@ import {
 } from '@mui/material';
 import DirectionsWalkIcon from '@mui/icons-material/DirectionsWalk';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
+import SendRounded from '@mui/icons-material/SendRounded';
 import { GPSData, ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
+import { submitImage } from 'apis/dres';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import { CONFIDENCE_COLOURS, THEME_COLORS } from 'constants/activityColors';
 import dayjs from 'dayjs';
 import React from 'react';
-import { setLoading } from 'reducers/feedback';
-import { useAppDispatch } from 'reducers/hooks';
+import { setLoading, showNotification } from 'reducers/feedback';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { addSubmittedImages } from 'reducers/dres';
 import { useSearchParams } from 'react-router';
 import { setZoomedImage } from 'reducers/zoomedImage';
 import '../App.css';
@@ -44,12 +47,31 @@ const LifelogEvent = ({
     const dispatch = useAppDispatch();
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
+    const { evaluationId, sessionId, currentTask } = useAppSelector((s) => s.dres);
+    const dresReady = !!(evaluationId && sessionId);
     const firstImage = segment[0];
     const lastImage = segment[segment.length - 1];
     const date = dayjs(firstImage.timestamp).format('YYYY-MM-DD');
     // const count = segment.length;
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
+    const handleDresSubmitEvent = () => {
+        if (!dresReady) return;
+        const paths = segment.map((img) => img.imagePath);
+        dispatch(addSubmittedImages(paths));
+        (async () => {
+            try {
+                let lastResult = null;
+                for (const img of segment) {
+                    lastResult = await submitImage({ image: img.imagePath, evaluationId: evaluationId!, sessionId: sessionId! });
+                }
+                const r = lastResult!;
+                dispatch(showNotification({ message: `DRES: ${r.verdict} — submitted ${segment.length} images`, type: r.severity }));
+            } catch {
+                dispatch(showNotification({ message: 'DRES submit failed', type: 'error' }));
+            }
+        })();
+    };
     const confidenceColor = CONFIDENCE_COLOURS[firstImage?.activityConfidence || ''];
     const groupColor = firstImage?.activityGroup ? THEME_COLORS[firstImage.activityGroup] : undefined;
 
@@ -208,31 +230,30 @@ const LifelogEvent = ({
                                 setEdit(true);
                                 setActivityEditText(firstImage.activity || '');
                             }}
-                            sx={{
-                                textDecoration: 'underline',
-                                textTransform: 'none',
-                                p: 0,
-                            }}
+                            sx={{ textDecoration: 'underline', textTransform: 'none', p: 0 }}
                         >
                             Edit Activity Info
                         </Button>
                     ) : null}
                     <Button
                         color="error"
-                        onClick={() => {
-                            const imagePaths = segment.map(
-                                (img) => img.imagePath
-                            );
-                            deleteRow(imagePaths);
-                        }}
-                        sx={{
-                            textDecoration: 'underline',
-                            textTransform: 'none',
-                            p: 0,
-                        }}
+                        onClick={() => deleteRow(segment.map((img) => img.imagePath))}
+                        sx={{ textDecoration: 'underline', textTransform: 'none', p: 0 }}
                     >
                         Delete Row
                     </Button>
+                    {dresReady && (
+                        <Tooltip title={currentTask ? `Submit to: ${currentTask.name}` : 'Submit event to DRES'}>
+                            <Button
+                                color="success"
+                                onClick={handleDresSubmitEvent}
+                                startIcon={<SendRounded />}
+                                sx={{ textTransform: 'none', p: 0 }}
+                            >
+                                Submit Event
+                            </Button>
+                        </Tooltip>
+                    )}
                 </Stack>
                 <Stack
                     direction="row"

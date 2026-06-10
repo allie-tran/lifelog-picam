@@ -14,12 +14,14 @@ import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
 import { submitImage } from 'apis/dres';
 import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { addSubmittedImages } from 'reducers/dres';
 import { useSearchParams } from 'react-router';
 import { useEffect, useState } from 'react';
 import { showNotification } from 'reducers/feedback';
 import Annotator from './Annotator';
 import ModalWithCloseButton from './ModalWithCloseButton';
 import LifelogEvent from './LifelogEvent';
+import { parseErrorResponse } from '@utils/misc';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -49,7 +51,8 @@ const ImageWithDate = ({
     const dispatch = useAppDispatch();
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const { evaluationId, sessionId, currentTask } = useAppSelector((state) => state.dres);
+    const { evaluationId, sessionId, currentTask, submittedImages } = useAppSelector((state) => state.dres);
+    const isDresSubmitted = submittedImages.includes(image.imagePath);
     const imageUrl = image.thumbnail
         ? `${THUMBNAIL_HOST_URL}/${device}/${image.thumbnail}`
         : '';
@@ -86,17 +89,15 @@ const ImageWithDate = ({
         if (!evaluationId || !sessionId) return;
         setSubmitting(true);
         try {
-            const result = await submitImage({
-                image: image.imagePath,
-                evaluationId,
-                sessionId,
-            });
+            const result = await submitImage({ image: image.imagePath, evaluationId, sessionId });
+            dispatch(addSubmittedImages([image.imagePath]));
             dispatch(showNotification({
                 message: `DRES: ${result.verdict} — ${result.message}`,
                 type: result.severity,
             }));
-        } catch {
-            dispatch(showNotification({ message: 'DRES submission failed', type: 'error' }));
+        } catch (err: any) {
+            const reason = err.data?.description || parseErrorResponse(err) || 'Unknown error';
+            dispatch(showNotification({ message: reason, type: 'error' }));
         } finally {
             setSubmitting(false);
         }
@@ -109,7 +110,9 @@ const ImageWithDate = ({
                 height: height,
                 position: 'relative',
                 width: 'auto',
-                opacity: deleted ? 0 : 1,
+                opacity: deleted ? 0 : isDresSubmitted ? 0.55 : 1,
+                outline: isDresSubmitted ? '2px solid #a5d6a7' : 'none',
+                borderRadius: '10px',
                 transition: 'all .2s',
                 visibility: deleted ? 'hidden' : 'visible',
             }}

@@ -54,7 +54,9 @@ const LocationChip = ({
     onClick: () => void;
 }) => {
     const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-    const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+        undefined
+    );
 
     const handleMouseEnter = (e: React.MouseEvent<HTMLDivElement>) => {
         clearTimeout(hideTimer.current);
@@ -114,7 +116,10 @@ const LocationChip = ({
                         >
                             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                             <Marker
-                                position={[location.latitude!, location.longitude!]}
+                                position={[
+                                    location.latitude!,
+                                    location.longitude!,
+                                ]}
                             />
                             <MapResizer />
                         </MapContainer>
@@ -129,12 +134,20 @@ const LocationChip = ({
                     </Typography>
                 )}
                 {location.country && (
-                    <Typography variant="caption" display="block" color="text.secondary">
+                    <Typography
+                        variant="caption"
+                        display="block"
+                        color="text.secondary"
+                    >
                         {location.country}
                     </Typography>
                 )}
                 {location.info && (
-                    <Typography variant="caption" display="block" color="text.secondary">
+                    <Typography
+                        variant="caption"
+                        display="block"
+                        color="text.secondary"
+                    >
                         {location.info}
                     </Typography>
                 )}
@@ -160,7 +173,7 @@ export type ResultSummaryBarProps = {
     topCountries: CountItem[];
     topPeople: CountItem[];
     onAppendToQuery: (text: string) => void;
-    onAddLocationFilter?: (id: string) => void;
+    onAddLocationFilter?: (id: string, name: string) => void;
     onAddPersonFilter?: (id: string) => void;
 };
 
@@ -179,7 +192,7 @@ const ResultSummaryBar = ({
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const { data: availableFaces } = useSWR(
-        [device, 'faces'],
+        device ? [device, 'faces'] : null,
         () => getAllFaces(device),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
@@ -206,7 +219,9 @@ const ResultSummaryBar = ({
             </SummaryRow>
 
             {topActivities.length > 0 && (
-                <SummaryRow icon={<LocalActivityRounded sx={{ fontSize: 15 }} />}>
+                <SummaryRow
+                    icon={<LocalActivityRounded sx={{ fontSize: 15 }} />}
+                >
                     <Stack
                         direction="row"
                         spacing={0.5}
@@ -218,8 +233,7 @@ const ResultSummaryBar = ({
                                 key={a}
                                 size="small"
                                 label={a}
-                                onClick={() => onAppendToQuery(a)}
-                                sx={{ cursor: 'pointer', fontSize: '11px' }}
+                                sx={{ fontSize: '11px' }}
                             />
                         ))}
                     </Stack>
@@ -239,8 +253,9 @@ const ResultSummaryBar = ({
                                 key={loc.id ?? loc.name}
                                 location={loc}
                                 onClick={() => {
-                                    onAppendToQuery(loc.name);
-                                    if (loc.id) onAddLocationFilter?.(loc.id);
+                                    if (loc.id)
+                                        onAddLocationFilter?.(loc.id, loc.name);
+                                    else onAppendToQuery(loc.name);
                                 }}
                             />
                         ))}
@@ -286,8 +301,8 @@ const ResultSummaryBar = ({
                                     spacing={0.25}
                                     sx={{ cursor: 'pointer' }}
                                     onClick={() => {
-                                        onAppendToQuery(person.name);
-                                        const faceId = facesByName[person.name]?.id;
+                                        const faceId =
+                                            facesByName[person.name]?.id;
                                         if (faceId) onAddPersonFilter?.(faceId);
                                     }}
                                     title={`${person.name} — ${person.count} photos`}
@@ -324,7 +339,10 @@ const ResultSummaryBar = ({
                                             }}
                                         >
                                             <PersonRounded
-                                                sx={{ fontSize: 20, color: 'grey.600' }}
+                                                sx={{
+                                                    fontSize: 20,
+                                                    color: 'grey.600',
+                                                }}
                                             />
                                         </Box>
                                     )}

@@ -9,14 +9,18 @@ import {
     Button,
     Divider,
     FormControl,
+    FormControlLabel,
     InputLabel,
     MenuItem,
     Select,
+    Snackbar,
     Stack,
+    Switch,
     TextField,
     Typography,
 } from '@mui/material';
 import { addSensorToUser, changeUserAccess, getUsers } from 'apis/auth';
+import { getAllDeviceSettings, setRecognitionMode } from 'apis/browsing';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React from 'react';
 import { useCookies } from 'react-cookie';
@@ -69,6 +73,24 @@ const Admin = () => {
     ) => {
         changeUserAccess(cookies.token, username, device, accessLevel);
         mutate();
+    };
+
+    const [deviceSettingsSnackbar, setDeviceSettingsSnackbar] = React.useState<string | null>(null);
+
+    const { data: deviceSettings, mutate: mutateDeviceSettings } = useSWR(
+        '/api/face/all-device-settings',
+        () => getAllDeviceSettings(),
+        { shouldRetryOnError: false }
+    );
+
+    const handleToggleRecognitionMode = async (deviceId: string, keep: boolean) => {
+        await setRecognitionMode(deviceId, keep);
+        mutateDeviceSettings();
+        setDeviceSettingsSnackbar(
+            keep
+                ? `${deviceId}: face recognition enabled — whitelist now controls labeling.`
+                : `${deviceId}: switched to anonymous clustering.`
+        );
     };
 
     const addSensorAccessToUser = async (
@@ -286,6 +308,56 @@ const Admin = () => {
                         )}
                     </Stack>
                 </React.Fragment>
+            ))}
+
+            {/* Device Settings */}
+            <Divider flexItem sx={{ my: 2 }} />
+            <Typography variant="h5" sx={{ mb: 2 }}>
+                Device Settings
+            </Typography>
+            <Snackbar
+                open={deviceSettingsSnackbar !== null}
+                autoHideDuration={5000}
+                onClose={() => setDeviceSettingsSnackbar(null)}
+                message={deviceSettingsSnackbar}
+            />
+            {deviceSettings?.map((ds) => (
+                <Stack
+                    key={ds.deviceId}
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{
+                        width: '100%',
+                        backgroundColor: 'background.paper',
+                        borderRadius: 1,
+                        border: '1px solid #424352',
+                        p: 1,
+                        px: 2,
+                        mb: 1,
+                    }}
+                >
+                    <Stack direction="row" alignItems="center">
+                        <CameraAltRounded sx={{ mr: 1, verticalAlign: 'middle' }} />
+                        <Typography variant="body2">{ds.deviceId}</Typography>
+                    </Stack>
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                checked={ds.keepFaceRecognition}
+                                onChange={(e) =>
+                                    handleToggleRecognitionMode(ds.deviceId, e.target.checked)
+                                }
+                                size="small"
+                            />
+                        }
+                        label={
+                            <Typography variant="caption">
+                                {ds.keepFaceRecognition ? 'Whitelist recognition' : 'Anonymous clustering'}
+                            </Typography>
+                        }
+                    />
+                </Stack>
             ))}
 
             <ModalWithCloseButton

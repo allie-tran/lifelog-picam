@@ -1,20 +1,20 @@
 import {
     Badge,
-    Button,
     ButtonProps,
     IconButton,
+    InputAdornment,
+    Popover,
     Stack,
-    styled,
     TextField,
+    styled,
 } from '@mui/material';
+import { ArrowLeftRounded, ArrowRightRounded, CalendarMonthRounded } from '@mui/icons-material';
+import { DateCalendar } from '@mui/x-date-pickers/DateCalendar';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import dayjs from 'dayjs';
-import React, { useEffect, useMemo } from 'react';
+import dayjs, { Dayjs } from 'dayjs';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useAppSelector } from 'reducers/hooks';
 import '../App.css';
-import { ArrowLeftRounded, ArrowRightRounded } from '@mui/icons-material';
 
 const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
     const { allDates = [], day, outsideCurrentMonth, ...other } = props;
@@ -27,7 +27,6 @@ const AvailableDay = (props: PickersDayProps & { allDates: string[] }) => {
             />
         );
     }
-
     return (
         <Badge key={day.toString()} variant="dot" color="primary">
             <PickersDay
@@ -52,11 +51,9 @@ const CustomButton = styled('button')({
 const AvailableYear = (props: ButtonProps & { allYears: string[] }) => {
     const { allYears = [], children, ...other } = props;
     const year = dayjs(children as string).format('YYYY');
-
     if (!allYears.includes(year)) {
         return <CustomButton {...other}>{children}</CustomButton>;
     }
-
     return (
         <Badge key={year} variant="dot" color="primary">
             <CustomButton {...other}>{children}</CustomButton>
@@ -68,18 +65,26 @@ const AvailableMonth = (
     props: ButtonProps & { allMonths: string[]; year: string }
 ) => {
     const { allMonths = [], children, year, ...other } = props;
-    console.log('AvailableMonth props:', props);
     const month = `${year}-${children}`;
-
     if (!allMonths.includes(month)) {
         return <CustomButton {...other}>{children}</CustomButton>;
     }
     return (
         <Badge key={month} variant="dot" color="primary">
-            {' '}
             <CustomButton {...other}>{children}</CustomButton>
         </Badge>
     );
+};
+
+const DATE_FORMATS = ['D MMM YYYY', 'D MMMM YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'D/M/YYYY', 'M/D/YYYY'];
+
+const parseDate = (text: string): Dayjs | null => {
+    for (const fmt of DATE_FORMATS) {
+        const d = dayjs(text.trim(), fmt, true);
+        if (d.isValid()) return d;
+    }
+    const d = dayjs(text.trim());
+    return d.isValid() ? d : null;
 };
 
 const CustomDatePicker = ({
@@ -95,106 +100,130 @@ const CustomDatePicker = ({
 }) => {
     const navigate = useNavigate();
     const today = dayjs().format('YYYY-MM-DD');
-    const [searchParams, _] = useSearchParams();
-    const [usePicker, setUsePicker] = React.useState(true);
-    const [textDate, setTextDate] = React.useState(date || '');
+    const [searchParams] = useSearchParams();
+    const [textDate, setTextDate] = useState(date ? dayjs(date).format('D MMM YYYY') : '');
+    const [textError, setTextError] = useState(false);
+    const [calendarAnchor, setCalendarAnchor] = useState<HTMLElement | null>(null);
 
     const allDatesSet = useMemo(() => new Set(allDates ?? []), [allDates]);
 
-    const allMonths = React.useMemo(() => {
+    const allMonths = useMemo(() => {
         if (!allDates) return [];
-        const uniqueMonths = new Set(
-            allDates.map((date) => dayjs(date).format('YYYY-MMM'))
-        );
-        return Array.from(uniqueMonths);
+        return Array.from(new Set(allDates.map((d) => dayjs(d).format('YYYY-MMM'))));
     }, [allDates]);
 
-    const allYears = React.useMemo(() => {
+    const allYears = useMemo(() => {
         if (!allDates) return [];
-        const uniqueYears = new Set(
-            allDates.map((date) => dayjs(date).format('YYYY'))
-        );
-        return Array.from(uniqueYears);
+        return Array.from(new Set(allDates.map((d) => dayjs(d).format('YYYY'))));
     }, [allDates]);
+
+    const referenceDate = useMemo(() => {
+        if (allDates && allDates.length > 0) {
+            if (date && allDatesSet.has(date)) return dayjs(date);
+            return dayjs(allDates[allDates.length - 1]);
+        }
+        return date ? dayjs(date) : dayjs();
+    }, [allDates, date, allDatesSet]);
+
+    useEffect(() => {
+        if (!date) {
+            const newParams = new URLSearchParams(searchParams.toString());
+            newParams.set('date', today);
+            navigate({ search: newParams.toString() });
+        }
+    }, [date, navigate, today, searchParams]);
+
+    useEffect(() => {
+        setTextDate(date ? dayjs(date).format('D MMM YYYY') : '');
+        setTextError(false);
+    }, [date]);
+
+    const navigateToDate = (parsed: Dayjs) => {
+        const newParams = new URLSearchParams(searchParams.toString());
+        setPage(1);
+        setHour(null);
+        newParams.set('date', parsed.format('YYYY-MM-DD'));
+        navigate({ search: newParams.toString() });
+    };
+
+    const handleTextCommit = () => {
+        if (!textDate.trim()) return;
+        const parsed = parseDate(textDate);
+        if (parsed) {
+            setTextError(false);
+            navigateToDate(parsed);
+        } else {
+            setTextError(true);
+        }
+    };
 
     const goToNextDate = () => {
         if (!date) return;
-        const nextDate = dayjs(date).add(1, 'day').format('YYYY-MM-DD');
-        setPage(1);
-        setHour(null);
-        searchParams.set('date', nextDate);
-        navigate({ search: searchParams.toString() });
+        navigateToDate(dayjs(date).add(1, 'day'));
     };
 
     const goToPreviousDate = () => {
         if (!date) return;
-        const prevDate = dayjs(date).subtract(1, 'day').format('YYYY-MM-DD');
-        setPage(1);
-        setHour(null);
-        searchParams.set('date', prevDate);
-        navigate({ search: searchParams.toString() });
+        navigateToDate(dayjs(date).subtract(1, 'day'));
     };
 
-    useEffect(() => {
-        if (!date) {
-            searchParams.set('date', today);
-            navigate({ search: searchParams.toString() });
-        }
-    }, [date, navigate, today]);
-
-    useEffect(() => {
-        setTextDate(date ? dayjs(date).format('DD/MM/YYYY') : '');
-    }, [date]);
-
-    const referenceDate = useMemo(() => {
-        if (allDates && allDates.length > 0) {
-            if (date && allDatesSet.has(date)) {
-                return dayjs(date);
-            }
-            return dayjs(allDates[-1]);
-        }
-        if (date) {
-            return dayjs(date);
-        }
-        return dayjs();
-    }, [allDates, date, allDatesSet]);
-
     return (
-        <>
+        <Stack direction="row" alignItems="center" spacing={1}>
             <IconButton
+                size="small"
                 onClick={goToPreviousDate}
                 sx={{ border: '1px solid', borderColor: 'divider' }}
             >
                 <ArrowLeftRounded />
             </IconButton>
-            {usePicker ? (
-                <DatePicker
-                    disableFuture
-                    formatDensity="spacious"
-                    label="Select Date"
-                    value={date ? dayjs(date) : null}
-                    views={['year', 'month', 'day']}
-                    sx={{ width: '250px', transform: 'translateY(4px)' }}
-                    shouldDisableDate={(day) =>
-                        allDatesSet.size > 0 &&
-                        !allDatesSet.has(day.format('YYYY-MM-DD'))
-                    }
-                    onChange={(newValue) => {
-                        setPage(1);
-                        setHour(null);
-                        searchParams.set(
-                            'date',
-                            newValue ? newValue.format('YYYY-MM-DD') : ''
-                        );
-                        navigate({ search: searchParams.toString() });
-                    }}
-                    slots={{
-                        day: (props) => (
-                            <AvailableDay
-                                {...props}
-                                allDates={allDates || []}
-                            />
+            <TextField
+                label="Date"
+                value={textDate}
+                onChange={(e) => { setTextDate(e.target.value); setTextError(false); }}
+                onKeyDown={(e) => e.key === 'Enter' && handleTextCommit()}
+                onBlur={handleTextCommit}
+                error={textError}
+                helperText={textError ? 'Try: 15 Jun 2024' : ' '}
+                size="small"
+                sx={{ width: 200, transform: 'translateY(12px)' }}
+                slotProps={{
+                    input: {
+                        endAdornment: (
+                            <InputAdornment position="end">
+                                <IconButton
+                                    size="small"
+                                    edge="end"
+                                    onClick={(e) => setCalendarAnchor(e.currentTarget)}
+                                >
+                                    <CalendarMonthRounded fontSize="small" />
+                                </IconButton>
+                            </InputAdornment>
                         ),
+                    },
+                }}
+            />
+            <Popover
+                open={!!calendarAnchor}
+                anchorEl={calendarAnchor}
+                onClose={() => setCalendarAnchor(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <DateCalendar
+                    disableFuture
+                    value={date ? dayjs(date) : null}
+                    shouldDisableDate={(day) =>
+                        allDatesSet.size > 0 && !allDatesSet.has(day.format('YYYY-MM-DD'))
+                    }
+                    onChange={(newValue: Dayjs | null) => {
+                        if (newValue) {
+                            setCalendarAnchor(null);
+                            navigateToDate(newValue);
+                        }
+                    }}
+                    referenceDate={referenceDate}
+                    slots={{
+                        day: (props) => <AvailableDay {...props} allDates={allDates || []} />,
                         monthButton: (props) => (
                             <AvailableMonth
                                 allMonths={allMonths}
@@ -202,47 +231,18 @@ const CustomDatePicker = ({
                                 year={date ? dayjs(date).format('YYYY') : ''}
                             />
                         ),
-                        yearButton: (props) => (
-                            <AvailableYear allYears={allYears} {...props} />
-                        ),
+                        yearButton: (props) => <AvailableYear allYears={allYears} {...props} />,
                     }}
-                    referenceDate={referenceDate}
                 />
-            ) : (
-                <TextField
-                    label="Select Date"
-                    value={textDate}
-                    onChange={(e) => setTextDate(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                            setPage(1);
-                            setHour(null);
-                            searchParams.set(
-                                'date',
-                                dayjs(textDate, 'DD/MM/YYYY').format(
-                                    'YYYY-MM-DD'
-                                )
-                            );
-                            navigate({ search: searchParams.toString() });
-                        }
-                    }}
-                    sx={{ width: '250px', transform: 'translateY(4px)' }}
-                />
-            )}
-            <Button
-                onClick={() => setUsePicker(!usePicker)}
-                sx={{ marginLeft: 2 }}
-                variant="contained"
-            >
-                {usePicker ? 'Use Text' : 'Use Day Picker'}
-            </Button>
+            </Popover>
             <IconButton
+                size="small"
                 onClick={goToNextDate}
-                sx={{ border: '1px solid', borderColor: 'divider'}}
+                sx={{ border: '1px solid', borderColor: 'divider' }}
             >
                 <ArrowRightRounded />
             </IconButton>
-        </>
+        </Stack>
     );
 };
 

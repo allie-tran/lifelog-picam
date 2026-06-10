@@ -11,7 +11,6 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 from tqdm.auto import tqdm
@@ -38,7 +37,7 @@ from scripts.summary import (
     summarize_day_by_text,
     summarize_lifelog_by_day,
 )
-from scripts.utils import get_thumbnail_path
+from scripts.utils import CustomFormatter, get_thumbnail_path
 from settings import control_app
 from settings.utils import create_device
 from apis.explore import app as explore_app
@@ -57,9 +56,19 @@ from datetime import datetime
 import logging
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
     force=True
 )
+
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(CustomFormatter())
+
+logger = logging.getLogger("lifelog-picam")
+logger.setLevel(logging.INFO)
+logger.addHandler(ch)
+
 
 
 # ---------------------------------------------------------------------------
@@ -135,8 +144,8 @@ async def lifespan(app: CustomFastAPI):
     close_db()
     mqtt_task.cancel()
     try:
-        await mqtt_task
-    except asyncio.CancelledError:
+        await asyncio.wait_for(mqtt_task, timeout=5.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
         print("MQTT consumer safely stopped.")
 
 
@@ -473,7 +482,7 @@ def get_day_summary(
             and day_summary.last_image_time == last_image_time
         ))
     ):
-        logging.info("day-summary cache hit for %s/%s", device, date)
+        logger.info("day-summary cache hit for %s/%s", device, date)
         cached = DaySummary.model_validate(day_summary.__dict__)
         cached.is_live = is_live
         return cached
@@ -492,7 +501,7 @@ def get_day_summary(
     )
 
     if not need_full_rebuild and dirty_ids:
-        logging.info(
+        logger.info(
             "Incremental segment patch for %s/%s (dirty: %s)",
             device, date, dirty_ids,
         )
@@ -503,7 +512,7 @@ def get_day_summary(
         )
         summary.dirty_segment_ids = []
     elif need_full_rebuild:
-        logging.info("Full day-summary rebuild for %s/%s", device, date)
+        logger.info("Full day-summary rebuild for %s/%s", device, date)
         load_all_segments(session, device, date, skip_annotations=False)
         summary = DaySummary(
             device=device, date=date, segments=[], summary_text="",
@@ -546,10 +555,10 @@ def get_day_summary(
                 notify_novelty(session, device, date, highlight, rep_thumb)
             session.commit()
         except Exception as _nve:
-            logging.warning("Novelty/notification step failed for %s/%s: %s", device, date, _nve)
+            logger.warning("Novelty/notification step failed for %s/%s: %s", device, date, _nve)
 
     elif text_stale and is_live:
-        logging.debug("Skipping LLM text summary: day %s is still live", date)
+        logger.debug("Skipping LLM text summary: day %s is still live", date)
 
     # ── Custom targets (CLIP analysis) — skip on live days ──────────────────
     if not is_live or need_full_rebuild:
