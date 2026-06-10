@@ -30,7 +30,8 @@ limiter = Limiter(rate)
 # Set up ChatGPT generation model
 API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # OPENAI_MODEL = os.environ.get("OPENAI_MODEL_NAME", "")
-OPENAI_MODEL = "gpt-5.4-mini"
+# OPENAI_MODEL = "gpt-5.4-mini"
+OPENAI_MODEL = "gpt-5-mini"  # default to gpt-5.4-mini if not set in env
 print("Using OpenAI Model Name:", OPENAI_MODEL)
 
 def encode_to_base64(data: bytes) -> str:

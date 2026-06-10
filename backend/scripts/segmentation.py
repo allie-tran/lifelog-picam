@@ -91,9 +91,11 @@ def get_boundaries(image_paths: List[str], path_to_time: dict, path_to_location:
 
     for i in range(1, len(image_paths)):
         img1, img2 = image_paths[i - 1], image_paths[i]
-        # check location first (straight forward)
         loc1, loc2 = path_to_location[img1], path_to_location[img2]
-        if (loc1 != loc2):
+        # Only split on location change when both sides have a known location.
+        # A None→value or value→None transition (GPS lock/loss) should not create
+        # a hard boundary — fall through to the time-gap check instead.
+        if loc1 is not None and loc2 is not None and loc1 != loc2:
             boundaries.add(image_paths[i])
         else:
             t1, t2 = path_to_time[img1], path_to_time[img2]
@@ -106,7 +108,7 @@ def segment_images(
     session,
     device_id: str,
     image_paths,
-    reverse=True,
+    reverse=False,
 ) -> list[list[str]]:
     image_paths, features, path_to_time, path_to_location = get_records_for_paths(session, device_id, image_paths)
     if len(features) == 0:
@@ -179,7 +181,10 @@ def segment_images(
             start_new_segment = True
         else:
             similarity = smoothed[i - 1]  # similarity between current and previous
-            if similarity < k or depth_scores[i - 1] > depth_threshold:
+            # Require BOTH a raw drop AND a statistically significant valley — avoids
+            # splitting on transient visual changes (lighting, slight camera movement)
+            # within the same location/activity.
+            if similarity < k and depth_scores[i - 1] > depth_threshold:
                 start_new_segment = True
 
         if start_new_segment:
@@ -206,20 +211,21 @@ def segment_images(
 
         merged_segments.append(segment)
 
-    # Merge small segments
-    merged_segments = []
+    # Merge small segments (uses output of the previous merge pass)
+    small_merged = []
     min_time = timedelta(minutes=2)
-    for segment in segments:
-        if len(segment) < 3 and merged_segments:
+    for segment in merged_segments:
+        if len(segment) < 3 and small_merged:
             # check the time
             start_image = image_paths[segment[0]]
-            end_image = image_paths[merged_segments[-1][-1]]
+            end_image = image_paths[small_merged[-1][-1]]
             t1 = path_to_time[start_image]
             t2 = path_to_time[end_image]
             if abs(t2 - t1) < min_time:
-                merged_segments[-1].extend(segment)
+                small_merged[-1].extend(segment)
                 continue
-        merged_segments.append(segment)
+        small_merged.append(segment)
+    merged_segments = small_merged
 
     # Convert indices back to image paths
     image_segments: list[list[str]] = []

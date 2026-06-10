@@ -177,7 +177,7 @@ def check_if_connected() -> bool:
     if now - _connectivity_cache["ts"] < _CONNECTIVITY_CACHE_TTL and _connectivity_cache["ok"]:
         return True
     try:
-        response = requests.head(BACKEND_URL, timeout=5)
+        response = requests.head("https://www.google.com", timeout=5)
         ok = response.status_code < 500
     except Exception:
         ok = False

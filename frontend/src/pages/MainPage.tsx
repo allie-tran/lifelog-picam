@@ -106,6 +106,7 @@ function MainPage() {
         },
         {
             revalidateOnFocus: false,
+            refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
 
