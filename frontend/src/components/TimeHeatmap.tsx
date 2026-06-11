@@ -63,6 +63,7 @@ const GridView = ({
     onRowClick,
     onColClick,
     onCellClick,
+    cellH = CELL_H,
 }: {
     rowItems: { key: string; label: string; sub: string }[];
     colLabels: string[];
@@ -73,6 +74,7 @@ const GridView = ({
     onRowClick: (i: number) => void;
     onColClick: (i: number) => void;
     onCellClick: (ri: number, ci: number) => void;
+    cellH?: number;
 }) => (
     <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%', userSelect: 'none' }}>
         {/* Column headers */}
@@ -143,7 +145,7 @@ const GridView = ({
                         // priority: individual cell > row+col intersection > partial > density only
                         let bg: string;
                         if (cellActive) {
-                            bg = `rgba(22,162,152,${0.55 + d * 0.35})`;
+                            bg = `rgba(22,162,152,${0.22 + d * 0.38})`;
                         } else if (rowActive && colActive) {
                             bg = `rgba(22,162,152,${0.22 + d * 0.38})`;
                         } else if (rowActive || colActive) {
@@ -159,7 +161,7 @@ const GridView = ({
                                 onClick={() => onCellClick(ri, ci)}
                                 sx={{
                                     flex: 1,
-                                    height: CELL_H,
+                                    height: cellH,
                                     bgcolor: bg,
                                     m: '1px',
                                     borderRadius: '4px',
@@ -191,12 +193,16 @@ const CalendarView = ({
     calendarGrid,
     density,
     selectedDates,
+    highlightedDows,
+    highlightedDowMonthPairs,
     onDateClick,
     onDragSelect,
 }: {
     calendarGrid: (string | null)[][];
     density: (number | null)[][];
     selectedDates: Set<string>;
+    highlightedDows: Set<number>;
+    highlightedDowMonthPairs: Set<string>;
     onDateClick: (d: string) => void;
     onDragSelect: (dates: string[], mode: 'add' | 'remove') => void;
 }) => {
@@ -311,6 +317,12 @@ const CalendarView = ({
                             const inPreview = dragPreviewSet.has(dateStr);
                             const removeMode = dragModeRef.current === 'remove';
 
+                            const dow = (dayjs(dateStr).day() + 6) % 7;
+                            const month = dayjs(dateStr).month();
+                            const cellMatch =
+                                highlightedDows.has(dow) ||
+                                highlightedDowMonthPairs.has(`${dow}:${month}`);
+
                             let bg: string;
                             let border: string;
                             if (inPreview) {
@@ -318,9 +330,16 @@ const CalendarView = ({
                                 border = removeMode
                                     ? '1px dashed rgba(239,68,68,0.9)'
                                     : '1px dashed rgba(22,162,152,0.9)';
+                            } else if (sel) {
+                                bg = `rgba(22,162,152,${0.15 + d * 0.65})`;
+                                border = '1px solid transparent';
+                            } else if (cellMatch) {
+                                bg = d > 0
+                                    ? `rgba(22,162,152,${0.22 + d * 0.55})`
+                                    : 'rgba(22,162,152,0.12)';
+                                border = '1px solid rgba(22,162,152,0.35)';
                             } else if (d > 0) {
-                                if (sel) bg = `rgba(22,162,152,${0.15 + d * 0.65})`;
-                                else bg = `rgba(147,51,234,${0.15 + d * 0.65})`;
+                                bg = `rgba(147,51,234,${0.15 + d * 0.65})`;
                                 border = '1px solid transparent';
                             } else {
                                 bg = 'rgba(0,0,0,0.07)';
@@ -389,14 +408,14 @@ export interface TimeHeatmapProps {
     currentYear: number | null;
     customRanges: { start: string; end: string }[];
     weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
-    monthCells: { timeOfDay: TimeOfDay; month: Month }[];
+    monthCells: { dayOfWeek: DayOfWeek; month: Month }[];
     resultImages: ImageObject[];
     onTimeOfDaysChange: (v: TimeOfDay[]) => void;
     onDayOfWeeksChange: (v: DayOfWeek[]) => void;
     onMonthsChange: (v: Month[]) => void;
     onCustomRangesChange: (v: { start: string; end: string }[]) => void;
     onWeekCellsChange: (v: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[]) => void;
-    onMonthCellsChange: (v: { timeOfDay: TimeOfDay; month: Month }[]) => void;
+    onMonthCellsChange: (v: { dayOfWeek: DayOfWeek; month: Month }[]) => void;
 }
 
 const TimeHeatmap = ({
@@ -415,7 +434,7 @@ const TimeHeatmap = ({
     onWeekCellsChange,
     onMonthCellsChange,
 }: TimeHeatmapProps) => {
-    const [view, setView] = React.useState<ViewMode>('weekday');
+    const [view, setView] = React.useState<ViewMode>('month');
 
     // ── density grids ──────────────────────────────────────────────────────
 
@@ -433,12 +452,12 @@ const TimeHeatmap = ({
     }, [resultImages, currentYear]);
 
     const monthDensity = useMemo(() => {
-        const grid = Array.from({ length: 5 }, () => new Array(12).fill(0));
+        const grid = Array.from({ length: 7 }, () => new Array(12).fill(0));
         for (const img of resultImages) {
             const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
             if (currentYear !== null && ts.year() !== currentYear) continue;
-            const ri = TOD_DISPLAY.findIndex((t) => t.key === hourToTodKey(ts.hour()));
-            if (ri >= 0) grid[ri][ts.month()]++;
+            const ri = (ts.day() + 6) % 7; // 0=Mon..6=Sun
+            grid[ri][ts.month()]++;
         }
         const max = Math.max(...grid.flatMap((r) => r), 1);
         return grid.map((r) => r.map((v) => v / max));
@@ -512,7 +531,7 @@ const TimeHeatmap = ({
         () =>
             new Set(
                 monthCells.map((c) => {
-                    const ri = TOD_DISPLAY.findIndex((d) => d.key === c.timeOfDay);
+                    const ri = dayOfWeekOptions.indexOf(c.dayOfWeek);
                     const ci = monthOptions.indexOf(c.month);
                     return `${ri}:${ci}`;
                 })
@@ -523,6 +542,25 @@ const TimeHeatmap = ({
     const selectedDates = useMemo(
         () => new Set(customRanges.filter((r) => r.start === r.end).map((r) => r.start)),
         [customRanges]
+    );
+
+    // For calendar cross-highlighting (only when a specific year is selected)
+    const calendarHighlightDows = useMemo(
+        () =>
+            currentYear !== null
+                ? new Set(weekCells.map((c) => dayOfWeekOptions.indexOf(c.dayOfWeek)))
+                : new Set<number>(),
+        [weekCells, currentYear]
+    );
+    // monthCells = {dayOfWeek, month} pairs — highlight exact (dow, month) combinations
+    const calendarHighlightDowMonthPairs = useMemo(
+        () =>
+            currentYear !== null
+                ? new Set(monthCells.map((c) =>
+                      `${dayOfWeekOptions.indexOf(c.dayOfWeek)}:${monthOptions.indexOf(c.month)}`
+                  ))
+                : new Set<string>(),
+        [monthCells, currentYear]
     );
 
     // ── toggle callbacks ───────────────────────────────────────────────────
@@ -555,13 +593,13 @@ const TimeHeatmap = ({
     );
     const toggleMonthCell = useCallback(
         (ri: number, ci: number) => {
-            const tod = TOD_DISPLAY[ri].key;
+            const dayOfWeek = dayOfWeekOptions[ri];
             const month = monthOptions[ci];
-            const exists = monthCells.some((c) => c.timeOfDay === tod && c.month === month);
+            const exists = monthCells.some((c) => c.dayOfWeek === dayOfWeek && c.month === month);
             onMonthCellsChange(
                 exists
-                    ? monthCells.filter((c) => !(c.timeOfDay === tod && c.month === month))
-                    : [...monthCells, { timeOfDay: tod, month }]
+                    ? monthCells.filter((c) => !(c.dayOfWeek === dayOfWeek && c.month === month))
+                    : [...monthCells, { dayOfWeek, month }]
             );
         },
         [monthCells, onMonthCellsChange]
@@ -638,20 +676,22 @@ const TimeHeatmap = ({
                     onRowClick={toggleTod}
                     onColClick={toggleDow}
                     onCellClick={toggleWeekCell}
+                    cellH={18}
                 />
             )}
 
             {view === 'month' && (
                 <GridView
-                    rowItems={TOD_DISPLAY}
+                    rowItems={DAY_ABBR.map((label) => ({ key: label, label, sub: '' }))}
                     colLabels={MONTH_ABBR}
-                    selectedRows={selectedTodIndices}
+                    selectedRows={selectedDowIndices}
                     selectedCols={selectedMonthIndices}
                     selectedCells={monthCellSet}
                     density={monthDensity}
-                    onRowClick={toggleTod}
+                    onRowClick={toggleDow}
                     onColClick={toggleMonth}
                     onCellClick={toggleMonthCell}
+                    cellH={16}
                 />
             )}
 
@@ -674,6 +714,8 @@ const TimeHeatmap = ({
                             calendarGrid={calendarGrid}
                             density={calendarDensity}
                             selectedDates={selectedDates}
+                            highlightedDows={calendarHighlightDows}
+                            highlightedDowMonthPairs={calendarHighlightDowMonthPairs}
                             onDateClick={toggleDate}
                             onDragSelect={handleCalendarDragSelect}
                         />

@@ -265,7 +265,7 @@ const TemporalFiltersHook = ({
     );
 
     const renderHeatmap = () => (
-        <Stack alignItems="stretch" mt={4} sx={{ width: '100%' }} px={2}>
+        <Stack alignItems="stretch" sx={{ width: '100%' }} px={2}>
             {/* Year navigation chips */}
             {availableYears && availableYears.length > 1 && (
                 <Stack direction="row" alignItems="center" spacing={1} mb={1.5} flexWrap="wrap">

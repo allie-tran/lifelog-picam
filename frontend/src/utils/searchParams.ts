@@ -34,8 +34,8 @@ export const parseSearchParams = (sp: URLSearchParams): SearchQuery => ({
         ?.split(',')
         .filter(Boolean)
         .map((c) => {
-            const [timeOfDay, month] = c.split(CELL_SEP);
-            return { timeOfDay: timeOfDay as TimeOfDay, month: month as Month };
+            const [dayOfWeek, month] = c.split(CELL_SEP);
+            return { dayOfWeek: dayOfWeek as DayOfWeek, month: month as Month };
         }) ?? [],
     isMoving: sp.get('isMoving') === 'true',
     countries: sp.get('countries')?.split(',').filter(Boolean) ?? [],
@@ -66,7 +66,7 @@ export const applyQueryToParams = (
     if ('weekCells' in partial)
         set('weekCells', partial.weekCells?.map((c) => `${c.timeOfDay}${CELL_SEP}${c.dayOfWeek}`).join(','));
     if ('monthCells' in partial)
-        set('monthCells', partial.monthCells?.map((c) => `${c.timeOfDay}${CELL_SEP}${c.month}`).join(','));
+        set('monthCells', partial.monthCells?.map((c) => `${c.dayOfWeek}${CELL_SEP}${c.month}`).join(','));
     if ('isMoving' in partial) { if (partial.isMoving) sp.set('isMoving', 'true'); else sp.delete('isMoving'); }
     if ('countries' in partial) set('countries', partial.countries?.join(','));
     if ('locationIds' in partial) {

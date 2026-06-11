@@ -249,7 +249,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                     </Stack>
                 </Drawer>
                 {/* Main Content */}
-                <Container maxWidth={false} sx={{ ml: 3, mt: 4 }}>
+                <Container maxWidth={false} sx={{ ml: 3, mt: 1, maxHeight: 'calc(100vh - 88px)', overflow: 'auto' }}>
                     {children}
                 </Container>
             </>

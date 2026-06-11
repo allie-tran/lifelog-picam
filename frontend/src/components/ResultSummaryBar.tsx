@@ -206,7 +206,7 @@ const ResultSummaryBar = ({
     }, [availableFaces]);
 
     return (
-        <Stack spacing={0.75} sx={{ pl: 1 }}>
+        <Stack spacing={0.75} sx={{ p: 1, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <SummaryRow icon={<CalendarTodayRounded sx={{ fontSize: 15 }} />}>
                 <Typography variant="body2">{dateRange}</Typography>
             </SummaryRow>

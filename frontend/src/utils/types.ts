@@ -179,7 +179,7 @@ export type SearchQuery = {
     years: number[];
     customRanges: { start: string; end: string }[];
     weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
-    monthCells: { timeOfDay: TimeOfDay; month: Month }[];
+    monthCells: { dayOfWeek: DayOfWeek; month: Month }[];
 
     // location
     isMoving: boolean,

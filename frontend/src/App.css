@@ -52,14 +52,67 @@ video {
   justify-content: center;
   color: white;
   font-weight: bold;
-  box-shadow: 0 0 10px rgba(0,0,0,0.2);
-  border: 2px solid white;
-  & span {
-    margin: auto;
-    font-size: 12px;
-  }
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  border: 2px solid rgba(255,255,255,0.9);
 }
 
 .cluster-small  { background: rgba(59, 130, 246, 0.8); } /* Blue */
 .cluster-medium { background: rgba(245, 158, 11, 0.8); } /* Orange */
 .cluster-large  { background: rgba(239, 68, 68, 0.8); }  /* Red */
+
+/* MapSearch permanent location name labels */
+.loc-marker-label {
+  background: rgba(30, 30, 30, 0.75) !important;
+  border: none !important;
+  border-radius: 4px !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 2px 6px !important;
+  white-space: nowrap !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4) !important;
+}
+.loc-marker-label::before { display: none !important; }
+
+/* Result map location label markers */
+.loc-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 140px;
+  pointer-events: none;
+}
+.loc-label-pill {
+  width: 140px;
+  color: white;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  box-sizing: border-box;
+}
+.loc-label-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loc-label-count {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.9;
+}
+.loc-label-stem {
+  width: 2px;
+  height: 7px;
+}
+.loc-label-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid white;
+  margin-top: -1px;
+}

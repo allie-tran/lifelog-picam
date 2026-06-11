@@ -62,7 +62,7 @@ const ImageWithDate = ({
         : '';
     const formattedDate = timeOnly
         ? dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('HH:mm z')
-        : dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('dd DD MMM YYYY HH:mm z');
+        : dayjs.utc(image.timestamp).tz(image.timezone || 'UTC').format('dd DD MMM YY HH:mm z');
 
     const handleDelete = async () => {
         setDeleted(true);
@@ -131,7 +131,7 @@ const ImageWithDate = ({
                         width: 'auto',
                         borderRadius: '8px',
                         backgroundColor: '#ccc',
-                        minWidth: '130px',
+                        minWidth: '140px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -158,22 +158,22 @@ const ImageWithDate = ({
                     Not processed
                 </Box>
             )}
-            {image.new && (
-                <Typography
-                    variant="caption"
-                    sx={{
-                        position: 'absolute',
-                        top: 8,
-                        right: 8,
-                        color: 'white',
-                        backgroundColor: 'red',
-                        px: 0.5,
-                        borderRadius: '4px',
-                    }}
-                >
-                    New
-                </Typography>
-            )}
+            {/* {image.new && ( */}
+            {/*     <Typography */}
+            {/*         variant="caption" */}
+            {/*         sx={{ */}
+            {/*             position: 'absolute', */}
+            {/*             top: 8, */}
+            {/*             right: 8, */}
+            {/*             color: 'white', */}
+            {/*             backgroundColor: 'red', */}
+            {/*             px: 0.5, */}
+            {/*             borderRadius: '4px', */}
+            {/*         }} */}
+            {/*     > */}
+            {/*         New */}
+            {/*     </Typography> */}
+            {/* )} */}
             <VideocamRounded
                 sx={{
                     position: 'absolute',

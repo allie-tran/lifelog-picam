@@ -316,8 +316,27 @@ const SearchPage = () => {
 
     const handleTextChange = useCallback((t: string) => { textQueryRef.current = t; }, []);
 
+    // Track last parse output so we only apply a field when the parser's answer changes.
+    // This prevents re-adding a filter the user manually removed while the text stays the same.
+    const lastParsedRef = useRef<Partial<SearchQuery>>({});
+
     const onParseResult = useCallback((extracted: Partial<SearchQuery>) => {
-        setSearchParams((prev) => applyQueryToParams(extracted, new URLSearchParams(prev)), { replace: true });
+        const last = lastParsedRef.current;
+        lastParsedRef.current = extracted;
+        setSearchParams((prev) => {
+            const toApply: Partial<SearchQuery> = {};
+            for (const _key of Object.keys(extracted)) {
+                const key = _key as keyof SearchQuery;
+                const newVal = extracted[key] as unknown[];
+                const lastVal = (last[key] as unknown[]) ?? [];
+                const changed =
+                    newVal.length !== lastVal.length ||
+                    newVal.some((v, i) => v !== lastVal[i]);
+                if (changed) (toApply as any)[key] = extracted[key];
+            }
+            if (!Object.keys(toApply).length) return prev;
+            return applyQueryToParams(toApply, new URLSearchParams(prev));
+        }, { replace: true });
     }, [setSearchParams]);
 
     const onFilterDetected = useCallback((type: 'temporal') => {
@@ -331,6 +350,7 @@ const SearchPage = () => {
             setSearchParams({ device });
             textQueryRef.current = '';
             searchTextBoxRef.current?.setText('');
+            lastParsedRef.current = {};
         }
         prevDeviceRef.current = device;
         dispatch(setDevice(device));
@@ -340,12 +360,6 @@ const SearchPage = () => {
         'temporal' | 'location' | 'faces' | null
     >(null);
 
-    const {
-        renderFilterOptions: LocationFilterOptions,
-        renderMap,
-        renderClearButton: LocationClearButton,
-        nothingIsSelected: locationNothingIsSelected,
-    } = LocationFiltersHook();
     const {
         renderFilterOptions: FaceFilterOptions,
         renderFaceExplorer,
@@ -532,6 +546,16 @@ const SearchPage = () => {
             return p;
         });
     }, [setSearchParams]);
+
+    const {
+        renderFilterOptions: LocationFilterOptions,
+        renderMap,
+        renderClearButton: LocationClearButton,
+        nothingIsSelected: locationNothingIsSelected,
+    } = LocationFiltersHook({
+        resultLocations: searchSummaryData?.topLocations ?? [],
+        onAddLocationFilter: handleAddLocationFilter,
+    });
 
     const handleAddPersonFilter = React.useCallback((id: string) => {
         setSearchParams((prev) => {
@@ -861,33 +885,16 @@ const SearchPage = () => {
 
             <Box sx={{ paddingLeft: '325px', paddingRight: filterShown === 'location' ? '340px' : 0 }}>
                 <Box id="app" sx={{ width: '100%' }} />
-                <Stack direction="row" spacing={0.5} sx={{ width: '100%' }}>
-                    <Box
-                        sx={{
-                            width: 8,
-                            height: 'auto',
-                            backgroundColor: 'primary.main',
-                        }}
-                    />
                     <Stack
                         id="result-summary"
+                        spacing={2}
                         sx={{
                             width: '100%',
                             height: 'auto',
-                            borderLeft: 2,
-                            borderColor: 'primary.main',
                         }}
                     >
                         {resultSummary ? (
                             <Stack direction="row" spacing={1}>
-                                <Typography
-                                    variant="h6"
-                                    color="text.primary"
-                                    paddingLeft={1}
-                                    sx={{ width: 180 }}
-                                >
-                                    Result Summary
-                                </Typography>
                                 <ResultSummaryBar
                                     dateRange={resultSummary.dateRange}
                                     eventCount={resultSummary.eventCount}
@@ -906,7 +913,6 @@ const SearchPage = () => {
                         ) : null}
                         {renderHeatmap()}
                         {filterShown === 'faces' && renderFaceExplorer()}
-                    </Stack>
                 </Stack>
                 <Stack
                     direction="row"
@@ -1075,7 +1081,7 @@ const SearchPage = () => {
                     </>
                 ) : (
                     <>
-                        {currentPageImages.length == 0 ? null : (
+                        {currentPageImages.length === 0 ? null : (
                             <Stack direction="row" alignItems="center" spacing={1}>
                                 <Button
                                     color="error"

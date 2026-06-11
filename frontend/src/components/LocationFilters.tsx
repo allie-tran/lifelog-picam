@@ -1,7 +1,6 @@
 import {
     getAvailableValues,
     getLocations,
-    getMapMarkers,
     getMovingPeriods,
 } from '@apis/searchFilters';
 import {
@@ -16,7 +15,6 @@ import {
     ListSubheader,
     MenuItem,
     Select,
-    Stack,
     TextField,
     Typography,
 } from '@mui/material';
@@ -26,6 +24,7 @@ import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
 import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
+import { LocationSummaryItem } from 'apis/browsing';
 // { countryCode: [countryName, [minLat, minLng, maxLat, maxLng]] }
 
 const countryNameToBounds: Record<string, number[]> = {};
@@ -53,7 +52,13 @@ const getCountryBounds = (countries: string[]) => {
     return [minLat, minLng, maxLat, maxLng] as [number, number, number, number];
 };
 
-const LocationFiltersHook = () => {
+const LocationFiltersHook = ({
+    resultLocations = [],
+    onAddLocationFilter,
+}: {
+    resultLocations?: LocationSummaryItem[];
+    onAddLocationFilter?: (id: string, name: string) => void;
+} = {}) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const { isMoving, countries, locationIds, bounds } = parseSearchParams(searchParams);
@@ -91,13 +96,6 @@ const LocationFiltersHook = () => {
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
 
-    const { data: markersData } = useSWR(
-        device ? [device, locationIds] : null,
-        async () => getMapMarkers(device, countries),
-        
-        { revalidateOnFocus: false, revalidateOnReconnect: false }
-    );
-
     const countriesKey = countries.join(',');
     useEffect(() => {
         const newBounds = getCountryBounds(countries);
@@ -115,18 +113,16 @@ const LocationFiltersHook = () => {
 
     const renderFilterOptions = () => (
         <Box>
-            <Stack spacing={2} mt={1}>
-                {bounds && (
-                    <Chip
-                        label={`Bounds: (${bounds[0].toFixed(
-                            2
-                        )}, ${bounds[1].toFixed(2)}) - (${bounds[2].toFixed(
-                            2
-                        )}, ${bounds[3].toFixed(2)})`}
-                        sx={{ mt: 1 }}
-                    />
-                )}
-            </Stack>
+            {bounds && (
+                <Chip
+                    icon={<span style={{ fontSize: 14, paddingLeft: 4 }}>🗺️</span>}
+                    label={`Map area: ${bounds[0].toFixed(1)}°–${bounds[2].toFixed(1)}°N, ${bounds[1].toFixed(1)}°–${bounds[3].toFixed(1)}°E`}
+                    color="secondary"
+                    variant="outlined"
+                    onDelete={() => update({ bounds: null })}
+                    sx={{ mt: 1, maxWidth: '100%' }}
+                />
+            )}
             <CheckboxWithText
                 label="On the Move"
                 checked={isMoving}
@@ -222,12 +218,18 @@ const LocationFiltersHook = () => {
         [update]
     );
 
+    const handleClearBound = useCallback(() => {
+        update({ bounds: null });
+    }, [update]);
+
     const renderMap = () => {
         return (
             <MapSearch
                 visualBounds={visualBounds}
                 onBoundsChange={handleAddBound}
-                markersData={markersData || []}
+                onClearBounds={handleClearBound}
+                resultLocations={resultLocations}
+                onAddLocationFilter={onAddLocationFilter}
             />
         );
     };
