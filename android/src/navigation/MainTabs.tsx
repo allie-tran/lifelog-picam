@@ -95,14 +95,6 @@ const MainTabs = () => (
       }}
     />
     <Tab.Screen
-      name="DRES"
-      component={DRESScreen}
-      options={{
-        title: 'DRES',
-        tabBarIcon: ({ focused }) => icon('🏆', focused),
-      }}
-    />
-    <Tab.Screen
       name="Notifications"
       component={NotificationsScreen}
       options={{
