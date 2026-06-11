@@ -29,11 +29,13 @@ export const getDaySummary = async (device: string, dateString: string) => {
 }
 
 
-export const getGPSByDate = async (device: string, dateString: string) => {
+export type GpsTrackData = { rawGps: GPSData[]; imageGps: GPSData[] };
+
+export const getGPSByDate = async (device: string, dateString: string): Promise<GpsTrackData> => {
     const response = await axios.get(
         `${BACKEND_URL}/location/get-gps-by-date?date=${encodeURIComponent(dateString)}&device=${encodeURIComponent(device)}`
     );
-    return response.data as GPSData[];
+    return response.data as GpsTrackData;
 }
 
 export const getCurrentStatus = async (device: string) => {

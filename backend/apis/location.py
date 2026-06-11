@@ -39,7 +39,7 @@ class GPSUploadRequest(CamelCaseModel):
     device_id: str
 
 tf = TimezoneFinder()
-_GPS_PIPELINE_GATE_MINUTES = 10
+_GPS_PIPELINE_GATE_MINUTES = 15
 
 @app.put("/upload-gps")
 async def upload_gps(
@@ -142,6 +142,18 @@ async def last_gps(
 
 _GPS_TRACK_CACHE_TTL_TODAY = 60
 _GPS_TRACK_CACHE_TTL_PAST = 600
+# v2 adds rawGps + timestamps — bump the key so old list-format entries aren't served
+_GPS_CACHE_KEY = "gps_track_v2:{device}:{date}"
+
+
+def _to_gps_info(lat: float, lon: float, elev, ts_ms: float | None) -> dict:
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "elevation": elev,
+        "timestamp": ts_ms,
+    }
+
 
 @app.get("/get-gps-by-date")
 def get_gps_by_date(
@@ -154,32 +166,60 @@ def get_gps_by_date(
     _require_owner(access_level)
 
     from datetime import date as _date_cls
+    from sqlalchemy import func as _func
     is_today = (date == _date_cls.today().isoformat())
+    cache_key = _GPS_CACHE_KEY.format(device=device, date=date)
 
     if not nested:
-        cached = _redis_client.get_json(f"gps_track:{device}:{date}")
+        cached = _redis_client.get_json(cache_key)
         if cached is not None:
             return cached
 
-    gps = session.execute(
+    # ── Image GPS (sparse — one point per image) ─────────────────────────────
+    image_gps_rows = session.execute(
         select(ImageGPS)
-        .where(Image.date == date)
-        .where(Image.deleted == False)
-        .where(Image.device == device)
         .join(Image, Image.id == ImageGPS.image_id)
-        .order_by(Image.timestamp.desc())
+        .where(Image.date == date, Image.deleted == False, Image.device == device)
+        .order_by(Image.timestamp.asc())
     ).scalars().all()
 
-    res = [GPSInfo.model_validate(g.__dict__) for g in gps]
-    if len(res) == 0 and not nested and date:
+    image_gps = [
+        _to_gps_info(g.latitude, g.longitude, g.elevation,
+                     g.timestamp * 1000 if g.timestamp is not None else None)
+        for g in image_gps_rows
+        if g.latitude is not None and g.longitude is not None
+    ]
+
+    # Trigger GPS pipeline when there are no image GPS points yet (existing behavior)
+    if not image_gps and not nested:
         run_pipeline(session, device, date)
         return get_gps_by_date(date, device, access_level, session, nested=True)
 
-    if not nested and res:
-        ttl = _GPS_TRACK_CACHE_TTL_TODAY if is_today else _GPS_TRACK_CACHE_TTL_PAST
-        _redis_client.set_json_with_ttl(
-            f"gps_track:{device}:{date}",
-            [r.model_dump(mode="json") for r in res],
-            ttl,
+    # ── Raw GPS (dense — from standalone GPS device/phone) ───────────────────
+    from database.models import Device as DeviceModel
+    from datetime import timezone as _tz
+    raw_gps_rows = session.execute(
+        select(RawGPS)
+        .join(DeviceModel, DeviceModel.id == RawGPS.device_id)
+        .where(DeviceModel.device_id == device)
+        .where(_func.date(RawGPS.timestamp) == date)
+        .order_by(RawGPS.timestamp.asc())
+    ).scalars().all()
+
+    raw_gps = [
+        _to_gps_info(
+            g.latitude, g.longitude, g.elevation,
+            g.timestamp.replace(tzinfo=_tz.utc).timestamp() * 1000
+            if g.timestamp is not None else None,
         )
-    return res
+        for g in raw_gps_rows
+        if g.latitude is not None and g.longitude is not None
+    ]
+
+    result = {"rawGps": raw_gps, "imageGps": image_gps}
+
+    if not nested:
+        ttl = _GPS_TRACK_CACHE_TTL_TODAY if is_today else _GPS_TRACK_CACHE_TTL_PAST
+        _redis_client.set_json_with_ttl(cache_key, result, ttl)
+
+    return result

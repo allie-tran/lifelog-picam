@@ -838,19 +838,6 @@ def run_gps_pipeline_task(device: str, date: str):
             logging.error("run_gps_pipeline_task failed for %s/%s: %s", device, date, e)
 
 
-@celery.task(name="tasks.nightly_location_update_all_devices")
-def nightly_location_update_all_devices():
-    with Session(engine) as session:
-        rows = session.execute(
-            select(Image.device, Image.date)
-            .where(Image.location_id.is_(None), Image.deleted == False)
-            .distinct()
-        ).all()
-
-    for device, date in rows:
-        update_location_task.delay(device, date)
-    logging.info("Queued nightly location updates for %d device/date pairs.", len(rows))
-
 
 @celery.task(name="tasks.nightly_recluster_all_devices")
 def nightly_recluster_all_devices():
@@ -866,8 +853,8 @@ def nightly_recluster_all_devices():
 def nightly_bio_stats_all_devices():
     from database.models import SensorDevice
 
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     with Session(engine) as session:
         device_ids = session.execute(
@@ -879,6 +866,19 @@ def nightly_bio_stats_all_devices():
             compute_bio_day_stats_task.delay(device_id, date)
 
     logging.info("Queued nightly bio_day_stats for %d devices.", len(device_ids))
+
+@celery.task(name="tasks.location_update_all_devices")
+def location_update_all_devices():
+    with Session(engine) as session:
+        rows = session.execute(
+            select(Image.device, Image.date)
+            .where(Image.location_id.is_(None), Image.deleted == False)
+            .distinct()
+        ).all()
+
+    for device, date in rows:
+        update_location_task.delay(device, date)
+    logging.info("Queued nightly location updates for %d device/date pairs.", len(rows))
 
 
 @celery.task(name="tasks.pipeline_catchup_task")
@@ -1094,7 +1094,7 @@ def update_status_summary():
                 "summarising what the person is currently doing. "
                 f"Activities (most recent first): {'; '.join(descriptions)}"
             )
-            summary_text = llm.generate(prompt)
+            summary_text = llm.generate(prompt)  # type: ignore
 
             cache_key = f"status:{device_id}:summary"
             redis_client.set_json_with_ttl(

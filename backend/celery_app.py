@@ -41,24 +41,22 @@ celery.conf.update(
             "task": "tasks.nightly_bio_stats_all_devices",
             "schedule": crontab(hour=2, minute=0),
         },
-        # every 15 min — location assignment for any dates still missing it
-        "location-update": {
-            "task": "tasks.nightly_location_update_all_devices",
-            "schedule": crontab(minute="*/15"),
-        },
         # 03:30 UTC — face cluster catch-up across all devices
         "nightly-face-recluster": {
             "task": "tasks.nightly_recluster_all_devices",
             "schedule": crontab(hour=3, minute=30),
         },
+        # every 15 min — location assignment for any dates still missing it
+        "location-update": {
+            "task": "tasks.location_update_all_devices",
+            "schedule": crontab(minute="*/30"),
+        },
         # every 15 min — LLM status summary for recently-active devices
         "update-status-summary": {
             "task": "tasks.update_status_summary",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute="*/30"),
         },
         # every 60 min — re-queue images that lost pipeline tasks after Celery restart
-        # expires=600: drop if worker hasn't started it within 10 min (prevents stale beats
-        # queuing up ahead of real work tasks when the worker is busy).
         "pipeline-catchup": {
             "task": "tasks.pipeline_catchup_task",
             "schedule": crontab(minute="*/60"),
