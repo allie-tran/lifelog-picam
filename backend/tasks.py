@@ -829,14 +829,6 @@ def compute_bio_day_stats_task(self, device_id: str, date: str):
         logging.error("compute_bio_day_stats_task failed for %s/%s: %s", device_id, date, e)
 
 
-@celery.task(name="tasks.run_gps_pipeline_task")
-def run_gps_pipeline_task(device: str, date: str):
-    with Session(engine) as session:
-        try:
-            run_pipeline(session, device, date)
-        except Exception as e:
-            logging.error("run_gps_pipeline_task failed for %s/%s: %s", device, date, e)
-
 
 
 @celery.task(name="tasks.nightly_recluster_all_devices")

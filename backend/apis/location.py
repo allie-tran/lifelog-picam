@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from typing import  Annotated, Optional
 
+from tasks import update_location_task
 from app_types.general import GPSInfo
 from auth import _require_owner
 from auth.auth_models import auth_dependency
@@ -94,8 +95,7 @@ async def upload_gps(
     if not _redis_client.get_value(gate_key):
         _redis_client.set_with_ttl(gate_key, "1", _GPS_PIPELINE_GATE_MINUTES * 60)
         date = timestamp.strftime("%Y-%m-%d")
-        from tasks import run_gps_pipeline_task
-        run_gps_pipeline_task.delay(user.device_id, date)
+        update_location_task.delay(user.device_id, date)
 
     return {"status": "success", "raw_gps_id": result.scalar()}
 
@@ -104,13 +104,14 @@ async def upload_gps(
 async def process_gps(
     device: str,
     date: str,
-    session: Session = Depends(get_session)
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
 ):
+    _require_owner(access_level)
     if date == "all":
-        # run all
         dates = session.execute(select(Image.date).where(Image.device == device, Image.timezone == None).distinct()).scalars().all()
-        for date in dates:
-            run_pipeline(session, device, date)
+        for d in dates:
+            if d: run_pipeline(session, device, d)
     else:
         run_pipeline(session, device, date)
 

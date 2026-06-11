@@ -42,15 +42,3 @@ export const sendGPS = async (
 
     return response.data;
 };
-
-export const processGPS = async (user: string, date: string, deviceSecureId: string) => {
-    const response = await axios.get(
-        `${BACKEND_URL}/location/process-gps?device=${user}&date=${date}`,
-        {
-            headers: {
-                'X-Device-ID': deviceSecureId,
-            },
-        }
-    );
-    return response.data;
-}

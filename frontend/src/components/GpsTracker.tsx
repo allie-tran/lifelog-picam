@@ -1,4 +1,4 @@
-import { processGPS, sendGPS } from '@apis/controls';
+import { sendGPS } from '@apis/controls';
 import {
     GpsFixedRounded,
     GpsOffRounded
@@ -76,24 +76,9 @@ const GpsTrackerHook = () => {
                         }),
                     15000
                 )();
-                throttle(() => onProcessGps(), 60000)();
             }
         }
     }, [coords, sensorId, disableGps]);
-
-    const onProcessGps = () => {
-        processGPS(
-            user,
-            new Date().toISOString().split('T')[0],
-            sensorId || ''
-        )
-            .then((response) => {
-                console.log('GPS data processed:', response);
-            })
-            .catch((error) => {
-                console.error('Error processing GPS data:', error);
-            });
-    };
 
     const DisableGpsButton = () => (
         <Button
