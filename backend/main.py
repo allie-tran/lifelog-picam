@@ -387,22 +387,7 @@ def process_date(
     # Always reset CLIP analysis state and mark the day for full recompute.
     # Segmentation and LLM annotations in Postgres are left intact unless
     # resegment/reannotate flags are set.
-    DaySummaryRecord.update_one(
-        {"date": date, "device": device},
-        data={
-            "$set": {
-                "updated": True,
-                "text_summary_stale": True,
-                "analysis_checkpoint": None,
-                "binary_metrics": {},
-                "burst_metrics": {},
-                "period_metrics": {},
-                "category_minutes": {},
-                "dirty_segment_ids": [],
-            }
-        },
-        upsert=True,
-    )
+    DaySummaryRecord.delete_many({"date": date, "device": device})
 
     if resegment or reannotate:
         session.execute(
@@ -422,6 +407,7 @@ def process_date(
         print(f"Reset segments for date {date} and device {device}.")
 
     load_all_segments(session, device, date, skip_annotations=not reannotate)
+
     return {"message": f"Processing segments for date {date} in background."}
 
 

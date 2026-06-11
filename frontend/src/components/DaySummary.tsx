@@ -13,6 +13,7 @@ import {
     Grid,
     IconButton,
     LinearProgress,
+    Skeleton,
     Stack,
     styled,
     Tab,
@@ -97,9 +98,11 @@ const DaySummaryComponent = () => {
 
     if (isLoading || dayLoading)
         return (
-            <Stack alignItems="center" p={4}>
-                <LinearProgress />
-            </Stack>
+            <Skeleton 
+                width="100%"
+                height={400}
+                variant="rounded"
+            />
         );
 
     if (isError || !daySummary || isLoading)

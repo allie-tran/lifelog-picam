@@ -106,10 +106,13 @@ export const searchImages = async (
     query: SearchQuery,
     sortBy: 'time' | 'relevance' = 'time'
 ): Promise<SearchResult> => {
+    const { weekCells, monthCells, ...rest } = query;
     const response = await axios.post(
         `${BACKEND_URL}/retrieval/search-images?device=${encodeURIComponent(device)}&sort_by=${sortBy}`,
         {
-            ...query,
+            ...rest,
+            timeDayCells: weekCells,
+            timeMonthCells: monthCells,
         }
     );
     return response.data as SearchResult;

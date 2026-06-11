@@ -64,7 +64,7 @@ const TemporalFiltersHook = ({
     const [startText, setStartText] = useState('');
     const [endText, setEndText] = useState('');
 
-    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges } =
+    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges, weekCells, monthCells } =
         parseSearchParams(searchParams);
 
     const update = useCallback(
@@ -83,7 +83,8 @@ const TemporalFiltersHook = ({
             const parsed = raw.map((y) => parseInt(y));
             setCurrentYear(parsed.length > 0 ? parsed[0] : new Date().getFullYear());
             return parsed;
-        }
+        },
+        { revalidateOnFocus: false }
     );
 
     const nothingIsSelected =
@@ -92,7 +93,9 @@ const TemporalFiltersHook = ({
         seasons.length === 0 &&
         months.length === 0 &&
         years.length === 0 &&
-        customRanges.length === 0;
+        customRanges.length === 0 &&
+        weekCells.length === 0 &&
+        monthCells.length === 0;
 
     // ── date range picker ─────────────────────────────────────────────────
 
@@ -180,6 +183,8 @@ const TemporalFiltersHook = ({
                             update({ years: selected.map(Number) });
                             if (selected.length > 0)
                                 setCurrentYear(Number(selected[selected.length - 1]));
+                            else if (availableYears && availableYears.length > 0)
+                                setCurrentYear(availableYears[0]);
                         }}
                     />
                 )}
@@ -217,7 +222,11 @@ const TemporalFiltersHook = ({
                             <Button
                                 variant="outlined"
                                 size="small"
-                                disabled={!startText.trim() || !parseDate(startText)}
+                                disabled={
+                                    !startText.trim() ||
+                                    !parseDate(startText) ||
+                                    (endText.trim() !== '' && !parseDate(endText))
+                                }
                                 onClick={handleAddRange}
                             >
                                 Add
@@ -257,7 +266,7 @@ const TemporalFiltersHook = ({
     );
 
     const renderHeatmap = () => (
-        <Stack alignItems="stretch" mt={4} sx={{ width: '100%' }}>
+        <Stack alignItems="stretch" mt={4} sx={{ width: '100%' }} px={2}>
             {/* Year navigation chips */}
             {availableYears && availableYears.length > 1 && (
                 <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
@@ -283,11 +292,15 @@ const TemporalFiltersHook = ({
                 months={months}
                 currentYear={currentYear}
                 customRanges={customRanges}
+                weekCells={weekCells}
+                monthCells={monthCells}
                 resultImages={resultImages}
                 onTimeOfDaysChange={(v: TimeOfDay[]) => update({ timeOfDays: v })}
                 onDayOfWeeksChange={(v: DayOfWeek[]) => update({ dayOfWeeks: v })}
                 onMonthsChange={(v: Month[]) => update({ months: v })}
                 onCustomRangesChange={(v) => update({ customRanges: v })}
+                onWeekCellsChange={(v) => update({ weekCells: v })}
+                onMonthCellsChange={(v) => update({ monthCells: v })}
             />
 
             {/* Single-day pinned dates (from calendar view clicks) */}
@@ -336,6 +349,8 @@ const TemporalFiltersHook = ({
                     months: [],
                     years: [],
                     customRanges: [],
+                    weekCells: [],
+                    monthCells: [],
                 });
             }}
         >

@@ -22,8 +22,12 @@ celery = Celery(
     include=["tasks"],
 )
 
-# remove all pending tasks on startup
-celery.control.purge()
+from celery.signals import worker_ready
+
+@worker_ready.connect
+def _purge_stale_tasks(sender, **kwargs):
+    """Discard tasks left in Redis from a previous worker run."""
+    sender.app.control.purge()
 
 celery.conf.update(
     worker_pool="solo",
@@ -52,10 +56,13 @@ celery.conf.update(
             "task": "tasks.update_status_summary",
             "schedule": crontab(minute="*/15"),
         },
-        # every 15 min — re-queue images that lost pipeline tasks after Celery restart
+        # every 60 min — re-queue images that lost pipeline tasks after Celery restart
+        # expires=600: drop if worker hasn't started it within 10 min (prevents stale beats
+        # queuing up ahead of real work tasks when the worker is busy).
         "pipeline-catchup": {
             "task": "tasks.pipeline_catchup_task",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute="*/60"),
+            "options": {"expires": 600},
         },
     },
     timezone="UTC",

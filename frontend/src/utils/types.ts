@@ -175,6 +175,8 @@ export type SearchQuery = {
     months: Month[];
     years: number[];
     customRanges: { start: string; end: string }[];
+    weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
+    monthCells: { timeOfDay: TimeOfDay; month: Month }[];
 
     // location
     isMoving: boolean,
