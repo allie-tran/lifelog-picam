@@ -1,5 +1,4 @@
 from collections import defaultdict
-import time
 from datetime import timezone
 from typing import Optional
 import traceback
@@ -12,8 +11,8 @@ from auth.types import Person
 from constants import DIR
 from pipelines.delete import remove_physical_images
 from scripts.date_utils import parse_date
-from scripts.utils import get_thumbnail_path, make_video_thumbnail
-from tasks import anonymise_image_task, yolo_process_images_task
+from scripts.utils import make_video_thumbnail
+from tasks import yolo_process_images_task
 from visual import clip_model, SIGLIP
 from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
 from sqlalchemy.exc import SQLAlchemyError
@@ -79,48 +78,8 @@ def yolo_process_images(
 
 
 def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=False):
-    thumbnail_path, thumbnail_exists = get_thumbnail_path(
-        f"{DIR}/{device_id}/{relative_path}"
-    )
-
-    # Check until the yolo process has been done
-    done = None
-    while True:
-        session.expire_all()  # Clear the session cache to get the latest data from the database
-        done = session.execute(select(Image).where(Image.image_path == relative_path, Image.device == device_id)).scalars().first()
-        if done and done.proc_yolo:
-            break
-        time.sleep(1)
-
-    # get whitelist people
-    # res = session.execute(
-    #     select(ImagePerson)
-    #     .where(Image.image_path == relative_path, Image.device == device_id)
-    #     .join(Image, Image.id == ImagePerson.image_id)
-    # ).scalars().all()
-    res = session.execute(
-        select(ImagePerson)
-        .where(ImagePerson.image_id == done.id)
-    ).scalars().all()
-
-    boxes = []
-    whitelist_boxes = []
-    for person in res:
-        if person.label != "redacted face" and person.label != "face":
-            whitelist_boxes.append(person.bbox)
-        else:
-            boxes.append(person.bbox)
-
-    if not thumbnail_exists:
-        logging.info(f"YOLO is done for {device_id}/{relative_path}, proceeding with thumbnail creation with {len(boxes)} faces to blur and {len(whitelist_boxes)} whitelist boxes")
-        anonymise_image_task.delay(
-            f"{DIR}/{device_id}/{relative_path}",
-            thumbnail_path,
-            boxes,
-            whitelist_boxes,
-            skip_sam3=skip_sam3,
-        )
-
+    # anonymise_image_task is dispatched by yolo_process_images_task after
+    # detection results are written, so it isn't dispatched here anymore.
     session.execute(
         update(Image)
         .where(Image.image_path == relative_path, Image.device == device_id)

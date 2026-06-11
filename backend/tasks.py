@@ -20,7 +20,7 @@ from scripts.object_detection import ModelWrapper, extract_object_from_images
 from location.gps_pipeline import run_pipeline
 from apis.explore import _FACES_CACHE
 import os
-from constants import _FACE_CLUSTER_THRESHOLD, _FACE_SIMILARITY_THRESHOLD
+from constants import _FACE_CLUSTER_THRESHOLD, _FACE_SIMILARITY_THRESHOLD, DIR, THUMBNAIL_DIR
 
 _MAX_CLUSTER_AGE_DAYS = 1
 
@@ -221,6 +221,8 @@ def yolo_process_images_task(
         object_rows = []
         person_rows = []
         image_rows = []
+        # Collect boxes per image for anonymise dispatch after YOLO write
+        image_boxes: dict[str, tuple[list, list]] = {}
         for r in results:
             image_path = r["image_path"]
             relative_path = image_path.split(f"{device}/")[1]
@@ -238,6 +240,8 @@ def yolo_process_images_task(
                     "rel_bbox": obj["rel_bbox"],
                 })
 
+            blur_boxes = []
+            wl_boxes = []
             for person in r["people"]:
                 person = person.model_dump()
                 person_rows.append({
@@ -248,6 +252,11 @@ def yolo_process_images_task(
                     "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
                 })
+                if person["label"] in ("redacted face", "face"):
+                    blur_boxes.append(person["bbox"])
+                else:
+                    wl_boxes.append(person["bbox"])
+            image_boxes[relative_path] = (blur_boxes, wl_boxes)
             image_rows.append(image_id)
 
         affected_ids = list(image_id_map.values())
@@ -268,6 +277,13 @@ def yolo_process_images_task(
         logging.info("Updated %d images as YOLO/InsightFace processed", len(image_rows))
         session.commit()
         session.flush()
+
+    # Dispatch thumbnail creation for each processed image now that boxes are known.
+    # This replaces the old polling loop inside anonymise_image_task.
+    for rel_path, (blur_boxes, wl_boxes) in image_boxes.items():
+        thumb_path = f"{THUMBNAIL_DIR}/{device}/{rel_path.rsplit('.', 1)[0]}.webp"
+        if not os.path.exists(thumb_path):
+            anonymise_image_task.delay(device, rel_path, thumb_path, blur_boxes, wl_boxes)
 
     recluster_unassigned_faces_task.delay(device)
 
@@ -745,7 +761,7 @@ def relabel_whitelist_faces_task(
         except OSError:
             pass
 
-        anonymise_image_task.delay(src, thumb, boxes, whitelist_boxes, skip_sam3=True)
+        anonymise_image_task.delay(device, image_path, thumb, boxes, whitelist_boxes, skip_sam3=True)
         queued += 1
 
     logging.info(
@@ -754,9 +770,39 @@ def relabel_whitelist_faces_task(
     )
 
 
-@celery.task(name="tasks.anonymise_image_task")
-def anonymise_image_task(path, thumbnail_path, boxes, whitelist_boxes, skip_sam3=False):
-    anonymise_image(path, thumbnail_path, boxes, whitelist_boxes, skip_sam3=skip_sam3)
+@celery.task(name="tasks.anonymise_image_task", bind=True)
+def anonymise_image_task(
+    self,
+    device_id,
+    relative_path,
+    thumbnail_path,
+    blur_face_boxes=None,
+    whitelist_boxes=None,
+    skip_sam3=False,
+):
+    # If boxes weren't passed in (e.g. catchup path), fetch them from DB.
+    # No polling — caller is responsible for dispatching after YOLO is done.
+    if blur_face_boxes is None or whitelist_boxes is None:
+        with Session(engine) as session:
+            img = session.execute(
+                select(Image).where(Image.image_path == relative_path, Image.device == device_id)
+            ).scalars().first()
+            if img:
+                res = session.execute(
+                    select(ImagePerson).where(ImagePerson.image_id == img.id)
+                ).scalars().all()
+                blur_face_boxes = [p.bbox for p in res if p.label in ("redacted face", "face")]
+                whitelist_boxes = [p.bbox for p in res if p.label not in ("redacted face", "face")]
+            else:
+                blur_face_boxes = []
+                whitelist_boxes = []
+
+    logging.info(
+        "Anonymising %s/%s: %d faces to blur, %d whitelisted",
+        device_id, relative_path, len(blur_face_boxes), len(whitelist_boxes),
+    )
+    path = f"{DIR}/{device_id}/{relative_path}"
+    anonymise_image(path, thumbnail_path, blur_face_boxes, whitelist_boxes, skip_sam3=skip_sam3)
     return thumbnail_path
 
 
@@ -829,7 +875,6 @@ def nightly_bio_stats_all_devices():
 @celery.task(name="tasks.pipeline_catchup_task")
 def pipeline_catchup_task():
     from collections import defaultdict as _defaultdict
-    from constants import DIR, THUMBNAIL_DIR
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=1)
     queued_yolo = queued_thumbs = queued_enc = queued_seg = 0
@@ -898,7 +943,7 @@ def pipeline_catchup_task():
             src = f"{DIR}/{device}/{image_path}"
             if not os.path.exists(src):
                 continue
-            anonymise_image_task.delay(src, expected_webp, [], [], skip_sam3=True)
+            anonymise_image_task.delay(device, image_path, expected_webp, [], [], skip_sam3=True)
             queued_thumbs += 1
 
         # Unannotated segments

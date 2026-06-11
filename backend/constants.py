@@ -7,7 +7,7 @@ EMBEDDING_DIR = os.getenv("EMBEDDING_DIR", "/mnt/ssd0/Embeddings")  # Directory 
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/mnt/ssd0/Backup")  # Directory to store backups of deleted images - for the LSC dataset
 LOCAL_PORT = 8082
 SEARCH_MODEL = "conclip"
-SEGMENT_THRESHOLD = 0.85  # Threshold for segmentation, lower means more segments
+SEGMENT_THRESHOLD = 0.80  # Threshold for segmentation, lower means more segments
 
 CATEGORIES_WITH_GROUPS = {
     "Work – Research & Writing": {

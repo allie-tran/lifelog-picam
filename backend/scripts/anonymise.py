@@ -150,11 +150,11 @@ ALL_PRIVATE_LABELS = [
 ]
 
 
-def anonymise_image(image_path, thumbnail_path, boxes, whitelist_boxes, quality=80, skip_sam3=False):
+def anonymise_image(image_path, thumbnail_path, blur_face_boxes, whitelist_boxes, quality=80, skip_sam3=False):
     # Process results
     img = cv2.imread(image_path)
     assert img is not None, f"Failed to read image {image_path}"
-    full_mask = create_blur_mask(boxes, img.shape[0], img.shape[1])
+    full_mask = create_blur_mask(blur_face_boxes, img.shape[0], img.shape[1])
     if not skip_sam3:
         try:
             if not sam3.loaded:

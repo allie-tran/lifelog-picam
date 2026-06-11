@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 import time
 from datetime import datetime
 from tzlocal import get_localzone
@@ -35,13 +36,14 @@ IMAGE_EXTENSION = ".jpg"
 
 
 
+_UPLOAD_TIMEOUT = 30  # seconds — generous for slow Pi WiFi but not infinite
+
 def send_image(image_path, uploaded_files, LOG_FILE):
     if image_path in uploaded_files:
         return "photo"
 
     # Send form-data request
     with open(image_path, "rb") as img_file:
-        # the file is encrypted, so we don't need to encrypt it again. Just send it as is.
         files = {
             "file": (os.path.basename(image_path), img_file, f"image/jpeg"),
         }
@@ -49,6 +51,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
             UPLOAD_URL,
             files=files,
             data={"rotation": -90, "device": device_id, "tz": str(get_localzone())},
+            timeout=_UPLOAD_TIMEOUT,
         )
 
     if response.status_code == 200:
@@ -72,14 +75,15 @@ def send_video(video_path, uploaded_files, LOG_FILE):
     )
     timestamp = int(timestamp.timestamp() * 1000)
 
-    # Send form-data request
     with open(video_path, "rb") as vid_file:
         files = {
             "file": (os.path.basename(video_path), vid_file, "video/h264"),
-            # "timestamp": (None, str(timestamp)),
         }
         response = requests.put(
-            UPLOAD_VIDEO_URL, files=files, headers={"X-Device-ID": device_id}
+            UPLOAD_VIDEO_URL,
+            files=files,
+            headers={"X-Device-ID": device_id},
+            timeout=_UPLOAD_TIMEOUT,
         )
 
     if response.status_code == 200:
@@ -120,7 +124,7 @@ def send_gps(gps_path):
 
 
 def get_latest_gps():
-    response = requests.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}")
+    response = requests.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}", timeout=10)
     if response.status_code == 200:
         gps_data = response.json()
         return gps_data
@@ -129,6 +133,31 @@ def get_latest_gps():
             f"Failed to fetch latest GPS data: {response.status_code} - {response.text}"
         )
         return None
+
+
+def _sync_timezone():
+    """Fetch GPS from server and apply timezone correction. Safe to call from any thread."""
+    try:
+        gps_data = get_latest_gps()
+        if gps_data:
+            tz = gps_data.get("timezone", "UTC")
+            os.environ["TZ"] = tz
+            time.tzset()
+            print(f"Timezone synced to: {time.tzname} ({tz})")
+    except Exception as e:
+        print(f"Timezone sync failed: {e}")
+
+
+def start_timezone_sync(interval_seconds: int = 300):
+    """Start a daemon thread that re-syncs timezone every interval_seconds."""
+    def _loop():
+        while True:
+            _sync_timezone()
+            time.sleep(interval_seconds)
+
+    t = threading.Thread(target=_loop, daemon=True, name="tz-sync")
+    t.start()
+    return t
 
 def load_gps():
     if os.path.exists("latest_gps.josn"):
@@ -140,13 +169,18 @@ def save_gps(gps_data):
     with open("latest_gps.json", "w") as f:
         json.dump(gps_data, f)
 
-def check_if_connected():
-    gps_data = get_latest_gps()
-    if gps_data is None:
-        return False
+_connectivity_cache: dict = {"ok": False, "ts": 0.0}
+_CONNECTIVITY_CACHE_TTL = 30  # seconds
 
-    print(f"Initial GPS Data: Timestamp: {gps_data['timestamp']}, Lat: {gps_data['latitude']}, Lon: {gps_data['longitude']}, Elevation: {gps_data['elevation']}")
-    os.environ['TZ'] = gps_data.get('timezone', 'UTC')  # Set timezone from GPS data if available
-    time.tzset()
-    print(f"System timezone set to: {time.tzname}")
-    return True
+def check_if_connected() -> bool:
+    now = time.monotonic()
+    if now - _connectivity_cache["ts"] < _CONNECTIVITY_CACHE_TTL and _connectivity_cache["ok"]:
+        return True
+    try:
+        response = requests.head("https://www.google.com", timeout=5)
+        ok = response.status_code < 500
+    except Exception:
+        ok = False
+    _connectivity_cache["ok"] = ok
+    _connectivity_cache["ts"] = now
+    return ok
