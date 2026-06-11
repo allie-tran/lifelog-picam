@@ -48,13 +48,30 @@ const DRESSettings = () => {
     const [loadingEvals, setLoadingEvals] = useState(false);
 
     const isLoggedIn = !!sessionId;
+    const handleAutoLogin = async (sid: string) => {
+        dispatch(dresLogin(sid));
+        dispatch(showNotification({ message: 'Logged in to DRES', type: 'success' }));
+        // immediately load evaluations
+        setLoadingEvals(true);
+        try {
+            const evRes = await getActiveEvaluations();
+            const evs = evRes.data as Evaluation[];
+            setEvaluations(evs);
+            autoSelectEvaluation(evs);
+            setLoadingEvals(false);
+        } catch {
+            dispatch(dresLogout());
+            dispatch(showNotification({ message: 'DRES Session expired. Please log in again.', type: 'warning' }));
+            setLoadingEvals(false);
+        }
+    }
 
     useEffect(() => {
         // Automatically log in if sessionId exists (e.g. from previous session)
         if (cachedSessionId) {
             handleAutoLogin(cachedSessionId);
         }
-    }, [cachedSessionId, dispatch]);
+    }, [cachedSessionId]);
 
     // Poll current task when an evaluation is selected
     useEffect(() => {
@@ -94,17 +111,6 @@ const DRESSettings = () => {
         }
     };
 
-    const handleAutoLogin = async (sid: string) => {
-        dispatch(dresLogin(sid));
-        dispatch(showNotification({ message: 'Logged in to DRES', type: 'success' }));
-        // immediately load evaluations
-        setLoadingEvals(true);
-        const evRes = await getActiveEvaluations();
-        const evs = evRes.data as Evaluation[];
-        setEvaluations(evs);
-        autoSelectEvaluation(evs);
-        setLoadingEvals(false);
-    }
 
     const handleLogin = async () => {
         setLoggingIn(true);

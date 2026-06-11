@@ -1,4 +1,4 @@
-import { Box, FormControl, FormLabel, MenuItem, Select, Stack } from '@mui/material';
+import { Box, FormControl, FormLabel, MenuItem, Select, Skeleton, Stack } from '@mui/material';
 import axios from 'apis/defaultAxios';
 import dayjs from 'dayjs';
 import ReactECharts from 'echarts-for-react';
@@ -182,17 +182,11 @@ export const SensorHistory: React.FC = () => {
             )}
 
             {loading && (
-                <div
-                    style={{
-                        height: '200px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#94a3b8',
-                    }}
-                >
-                    Loading data...
-                </div>
+                <Skeleton
+                    height={200}
+                    width="100%"
+                    variant="rounded"
+                />
             )}
 
             {/* Interactive Chart Canvas Block Container */}

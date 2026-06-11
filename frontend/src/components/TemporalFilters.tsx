@@ -28,7 +28,7 @@ import {
     dayOfWeekOptions,
     monthOptions,
     seasonOptions,
-    timeOfDayOptions
+    timeOfDayOptions,
 } from 'types/filters';
 import { ImageObject } from 'utils/types';
 import { THUMBNAIL_HOST_URL } from '../constants/urls';
@@ -59,32 +59,32 @@ const TemporalFiltersHook = ({
 } = {}) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const [tabIndex, setTabIndex] = useState(0);
     const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
-    const [customCells, setCustomCells] = useState<Set<{ row: number; col: number; value: number }>>(new Set());
+    const [tabIndex, setTabIndex] = useState(0);
     const [startText, setStartText] = useState('');
     const [endText, setEndText] = useState('');
 
-    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges } = parseSearchParams(searchParams);
+    const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges, weekCells, monthCells } =
+        parseSearchParams(searchParams);
 
-    const update = useCallback((partial: Parameters<typeof applyQueryToParams>[0]) => {
-        setSearchParams((prev) => applyQueryToParams(partial, new URLSearchParams(prev)));
-    }, [setSearchParams]);
-
-    const { data: availableYears } = useSWR(device ? [device, 'year'] : null, async () => {
-        const years = await getAvailableValues(device, 'year');
-        setCurrentYear(
-            years.length > 0 ? parseInt(years[0]) : new Date().getFullYear()
-        );
-        return years.map((y) => parseInt(y));
-    });
-
-    const { data: availableDates } = useSWR(device ? [device, 'date'] : null, () =>
-        getAvailableValues(device, 'date')
+    const update = useCallback(
+        (partial: Parameters<typeof applyQueryToParams>[0]) => {
+            setSearchParams((prev) =>
+                applyQueryToParams(partial, new URLSearchParams(prev))
+            );
+        },
+        [setSearchParams]
     );
-    const availableDatesSet = useMemo(
-        () => new Set(availableDates ?? []),
-        [availableDates]
+
+    const { data: availableYears } = useSWR(
+        device ? [device, 'year'] : null,
+        async () => {
+            const raw = await getAvailableValues(device, 'year');
+            const parsed = raw.map((y) => parseInt(y));
+            setCurrentYear(parsed.length > 0 ? parsed[0] : new Date().getFullYear());
+            return parsed;
+        },
+        { revalidateOnFocus: false }
     );
 
     const nothingIsSelected =
@@ -94,15 +94,10 @@ const TemporalFiltersHook = ({
         months.length === 0 &&
         years.length === 0 &&
         customRanges.length === 0 &&
-        customCells.size === 0;
+        weekCells.length === 0 &&
+        monthCells.length === 0;
 
-    const noFiltersSelected =
-        timeOfDays.length === 0 &&
-        dayOfWeeks.length === 0 &&
-        seasons.length === 0 &&
-        months.length === 0 &&
-        years.length === 0 &&
-        customRanges.length === 0;
+    // ── date range picker ─────────────────────────────────────────────────
 
     const handleAddRange = useCallback(() => {
         const start = parseDate(startText);
@@ -113,17 +108,22 @@ const TemporalFiltersHook = ({
         setSearchParams((prev) => {
             const current = parseSearchParams(new URLSearchParams(prev)).customRanges;
             if (current.some((r) => r.start === startStr && r.end === endStr)) return prev;
-            return applyQueryToParams({ customRanges: [...current, { start: startStr, end: endStr }] }, new URLSearchParams(prev));
+            return applyQueryToParams(
+                { customRanges: [...current, { start: startStr, end: endStr }] },
+                new URLSearchParams(prev)
+            );
         });
         setStartText('');
         setEndText('');
     }, [startText, endText, setSearchParams]);
 
+    // ── renders ───────────────────────────────────────────────────────────
+
     const renderFilterOptions = () => (
         <Stack direction="row" sx={{ minHeight: 180 }}>
             <Tabs
                 value={tabIndex}
-                onChange={(_, newValue) => setTabIndex(newValue)}
+                onChange={(_, v) => setTabIndex(v)}
                 orientation="vertical"
                 sx={{
                     borderRight: 1,
@@ -179,7 +179,13 @@ const TemporalFiltersHook = ({
                     <ListOfCheckBoxes
                         options={availableYears ? availableYears.map(String) : []}
                         selectedOptions={years.map(String)}
-                        onChange={(selected) => update({ years: selected.map(Number) })}
+                        onChange={(selected) => {
+                            update({ years: selected.map(Number) });
+                            if (selected.length > 0)
+                                setCurrentYear(Number(selected[selected.length - 1]));
+                            else if (availableYears && availableYears.length > 0)
+                                setCurrentYear(availableYears[0]);
+                        }}
                     />
                 )}
                 {tabIndex === 5 && (
@@ -193,7 +199,11 @@ const TemporalFiltersHook = ({
                                 onChange={(e) => setStartText(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
                                 error={startText.trim() !== '' && !parseDate(startText)}
-                                helperText={startText.trim() !== '' && !parseDate(startText) ? 'Unrecognised date' : undefined}
+                                helperText={
+                                    startText.trim() !== '' && !parseDate(startText)
+                                        ? 'Unrecognised date'
+                                        : undefined
+                                }
                             />
                             <TextField
                                 size="small"
@@ -203,39 +213,51 @@ const TemporalFiltersHook = ({
                                 onChange={(e) => setEndText(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleAddRange()}
                                 error={endText.trim() !== '' && !parseDate(endText)}
-                                helperText={endText.trim() !== '' && !parseDate(endText) ? 'Unrecognised date' : undefined}
+                                helperText={
+                                    endText.trim() !== '' && !parseDate(endText)
+                                        ? 'Unrecognised date'
+                                        : undefined
+                                }
                             />
                             <Button
                                 variant="outlined"
                                 size="small"
-                                disabled={!startText.trim() || !parseDate(startText)}
+                                disabled={
+                                    !startText.trim() ||
+                                    !parseDate(startText) ||
+                                    (endText.trim() !== '' && !parseDate(endText))
+                                }
                                 onClick={handleAddRange}
                             >
                                 Add
                             </Button>
                         </Stack>
                         <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                            {customRanges.map((r) => (
-                                <Chip
-                                    key={`${r.start}-${r.end}`}
-                                    label={
-                                        r.start === r.end
-                                            ? dayjs(r.start).format('D MMM YYYY')
-                                            : `${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`
-                                    }
-                                    size="small"
-                                    onDelete={() => {
-                                        const { start: rs, end: re } = r;
-                                        setSearchParams((prev) => {
-                                            const current = parseSearchParams(new URLSearchParams(prev)).customRanges;
-                                            return applyQueryToParams(
-                                                { customRanges: current.filter((x) => !(x.start === rs && x.end === re)) },
-                                                new URLSearchParams(prev)
-                                            );
-                                        });
-                                    }}
-                                />
-                            ))}
+                            {customRanges
+                                .filter((r) => r.start !== r.end)
+                                .map((r) => (
+                                    <Chip
+                                        key={`${r.start}-${r.end}`}
+                                        label={`${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`}
+                                        size="small"
+                                        onDelete={() => {
+                                            const { start: rs, end: re } = r;
+                                            setSearchParams((prev) => {
+                                                const current = parseSearchParams(
+                                                    new URLSearchParams(prev)
+                                                ).customRanges;
+                                                return applyQueryToParams(
+                                                    {
+                                                        customRanges: current.filter(
+                                                            (x) => !(x.start === rs && x.end === re)
+                                                        ),
+                                                    },
+                                                    new URLSearchParams(prev)
+                                                );
+                                            });
+                                        }}
+                                    />
+                                ))}
                         </Stack>
                     </Box>
                 )}
@@ -243,55 +265,98 @@ const TemporalFiltersHook = ({
         </Stack>
     );
 
-    const renderHeatmap = () => {
-        return (
-            <Stack alignItems="center" mt={4} sx={{ width: '100%' }}>
-                <TimeHeatmap
-                    timeOfDays={timeOfDays}
-                    dayOfWeeks={dayOfWeeks}
-                    seasons={seasons}
-                    months={months}
-                    years={years}
-                    currentYear={currentYear}
-                    customCells={customCells}
-                    setCustomCells={setCustomCells}
-                    nothingIsSelected={nothingIsSelected}
-                    noFiltersSelected={noFiltersSelected}
-                    resultImages={resultImages}
-                />
-
-                <Stack direction="row" alignItems="center" spacing={1} mt={2}>
-                    <Typography variant="body2">Year:</Typography>
-                    {availableYears?.map((yr) => (
+    const renderHeatmap = () => (
+        <Stack alignItems="stretch" mt={4} sx={{ width: '100%' }} px={2}>
+            {/* Year navigation chips */}
+            {availableYears && availableYears.length > 1 && (
+                <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
+                    <Typography variant="caption" color="text.secondary">
+                        Viewing:
+                    </Typography>
+                    {availableYears.map((yr) => (
                         <Chip
                             key={yr}
                             label={yr}
-                            variant={currentYear === yr ? 'filled' : 'outlined'}
                             size="small"
+                            variant={currentYear === yr ? 'filled' : 'outlined'}
+                            color={currentYear === yr ? 'secondary' : 'default'}
                             onClick={() => setCurrentYear(yr)}
                         />
                     ))}
                 </Stack>
-            </Stack>
-        );
-    };
+            )}
 
-    const renderClearButton = () => {
-        return (
-            <Button
-                disabled={nothingIsSelected}
-                variant="outlined"
-                color="primary"
-                sx={{ mt: 2 }}
-                onClick={() => {
-                    update({ timeOfDays: [], dayOfWeeks: [], seasons: [], months: [], years: [], customRanges: [] });
-                    setCustomCells(new Set());
-                }}
-            >
-                Clear Filters
-            </Button>
-        );
-    };
+            <TimeHeatmap
+                timeOfDays={timeOfDays}
+                dayOfWeeks={dayOfWeeks}
+                months={months}
+                currentYear={currentYear}
+                customRanges={customRanges}
+                weekCells={weekCells}
+                monthCells={monthCells}
+                resultImages={resultImages}
+                onTimeOfDaysChange={(v: TimeOfDay[]) => update({ timeOfDays: v })}
+                onDayOfWeeksChange={(v: DayOfWeek[]) => update({ dayOfWeeks: v })}
+                onMonthsChange={(v: Month[]) => update({ months: v })}
+                onCustomRangesChange={(v) => update({ customRanges: v })}
+                onWeekCellsChange={(v) => update({ weekCells: v })}
+                onMonthCellsChange={(v) => update({ monthCells: v })}
+            />
+
+            {/* Single-day pinned dates (from calendar view clicks) */}
+            {customRanges.filter((r) => r.start === r.end).length > 0 && (
+                <Stack direction="row" flexWrap="wrap" gap={0.5} mt={1}>
+                    {customRanges
+                        .filter((r) => r.start === r.end)
+                        .map((r) => (
+                            <Chip
+                                key={r.start}
+                                label={dayjs(r.start).format('D MMM YYYY')}
+                                size="small"
+                                onDelete={() => {
+                                    const { start: rs } = r;
+                                    setSearchParams((prev) => {
+                                        const current =
+                                            parseSearchParams(new URLSearchParams(prev)).customRanges;
+                                        return applyQueryToParams(
+                                            {
+                                                customRanges: current.filter(
+                                                    (x) => !(x.start === rs && x.end === rs)
+                                                ),
+                                            },
+                                            new URLSearchParams(prev)
+                                        );
+                                    });
+                                }}
+                            />
+                        ))}
+                </Stack>
+            )}
+        </Stack>
+    );
+
+    const renderClearButton = () => (
+        <Button
+            disabled={nothingIsSelected}
+            variant="outlined"
+            color="primary"
+            sx={{ mt: 2 }}
+            onClick={() => {
+                update({
+                    timeOfDays: [],
+                    dayOfWeeks: [],
+                    seasons: [],
+                    months: [],
+                    years: [],
+                    customRanges: [],
+                    weekCells: [],
+                    monthCells: [],
+                });
+            }}
+        >
+            Clear Filters
+        </Button>
+    );
 
     return {
         renderFilterOptions,
@@ -301,6 +366,31 @@ const TemporalFiltersHook = ({
     };
 };
 
+const CheckboxWithText = ({
+    label,
+    checked,
+    onChange,
+    disabled = false,
+}: {
+    label: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    disabled?: boolean;
+}) => (
+    <Grid size={6} sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
+        <Checkbox
+            size="small"
+            disabled={disabled}
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            sx={{ padding: '4px' }}
+        />
+        <Typography variant="caption" sx={{ display: 'inline-block', ml: -0.5 }}>
+            {label.slice(0, 1).toUpperCase() + label.slice(1)}
+        </Typography>
+    </Grid>
+);
+
 const ListOfCheckBoxes = ({
     options,
     selectedOptions,
@@ -309,49 +399,35 @@ const ListOfCheckBoxes = ({
     options: string[];
     selectedOptions: string[];
     onChange: (selected: string[]) => void;
-}) => {
-    return (
-        <Grid container spacing={1}>
+}) => (
+    <Grid container spacing={1}>
+        <CheckboxWithText
+            label="All"
+            checked={selectedOptions.length === options.length}
+            onChange={(checked) => onChange(checked ? options : [])}
+        />
+        {options.map((option) => (
             <CheckboxWithText
-                label="All"
-                checked={selectedOptions.length === options.length}
-                onChange={(checked) => {
-                    if (checked) {
-                        onChange(options);
-                    } else {
-                        onChange([]);
-                    }
-                }}
+                key={option}
+                label={option}
+                checked={selectedOptions.includes(option)}
+                onChange={(checked) =>
+                    onChange(
+                        checked
+                            ? [...selectedOptions, option]
+                            : selectedOptions.filter((o) => o !== option)
+                    )
+                }
             />
-            {options.map((option) => (
-                <CheckboxWithText
-                    key={option}
-                    label={option}
-                    checked={selectedOptions.includes(option)}
-                    onChange={(checked) => {
-                        if (checked) {
-                            onChange([...selectedOptions, option]);
-                        } else {
-                            onChange(
-                                selectedOptions.filter((o) => o !== option)
-                            );
-                        }
-                    }}
-                />
-            ))}
-            <CheckboxWithText
-                label="None"
-                disabled={selectedOptions.length === 0}
-                checked={false}
-                onChange={(checked) => {
-                    if (checked) {
-                        onChange([]);
-                    }
-                }}
-            />
-        </Grid>
-    );
-};
+        ))}
+        <CheckboxWithText
+            label="None"
+            disabled={selectedOptions.length === 0}
+            checked={false}
+            onChange={(checked) => { if (checked) onChange([]); }}
+        />
+    </Grid>
+);
 
 const PhotoStrip = ({
     images,
@@ -375,7 +451,10 @@ const PhotoStrip = ({
                 const year = new Date(img.timestamp).getFullYear();
                 return year === currentYear && !localDeleted.has(img.imagePath);
             })
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            .sort(
+                (a, b) =>
+                    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
     }, [images, currentYear, localDeleted]);
 
     if (!filtered.length) return null;
@@ -392,45 +471,90 @@ const PhotoStrip = ({
                 width: '100%',
                 alignSelf: 'stretch',
                 '&::-webkit-scrollbar': { height: 4 },
-                '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 2 },
+                '&::-webkit-scrollbar-thumb': {
+                    backgroundColor: 'rgba(0,0,0,0.2)',
+                    borderRadius: 2,
+                },
             }}
         >
             {filtered.map((img) => {
-                const thumbUrl = img.thumbnail ? `${THUMBNAIL_HOST_URL}/${device}/${img.thumbnail}` : '';
+                const thumbUrl = img.thumbnail
+                    ? `${THUMBNAIL_HOST_URL}/${device}/${img.thumbnail}`
+                    : '';
                 const isHovered = hoveredPath === img.imagePath;
                 const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
                 return (
                     <Box
                         key={img.imagePath}
-                        sx={{ position: 'relative', flexShrink: 0, height: 68, cursor: 'pointer' }}
+                        sx={{
+                            position: 'relative',
+                            flexShrink: 0,
+                            height: 68,
+                            cursor: 'pointer',
+                        }}
                         onMouseEnter={() => setHoveredPath(img.imagePath)}
                         onMouseLeave={() => setHoveredPath(null)}
-                        onClick={() => onZoomImage ? onZoomImage(img.imagePath, img.isVideo) : null}
+                        onClick={() =>
+                            onZoomImage ? onZoomImage(img.imagePath, img.isVideo) : null
+                        }
                     >
                         {thumbUrl ? (
                             <Box
                                 component="img"
                                 src={thumbUrl}
-                                sx={{ height: '100%', width: 'auto', borderRadius: '4px', display: 'block', opacity: isHovered ? 0.7 : 1, transition: 'opacity 0.15s' }}
+                                sx={{
+                                    height: '100%',
+                                    width: 'auto',
+                                    borderRadius: '4px',
+                                    display: 'block',
+                                    opacity: isHovered ? 0.7 : 1,
+                                    transition: 'opacity 0.15s',
+                                }}
                             />
                         ) : (
-                            <Box sx={{ height: 68, width: 50, borderRadius: '4px', backgroundColor: 'grey.300' }} />
+                            <Box
+                                sx={{
+                                    height: 68,
+                                    width: 50,
+                                    borderRadius: '4px',
+                                    backgroundColor: 'grey.300',
+                                }}
+                            />
                         )}
                         {isHovered && (
                             <Box
                                 sx={{
-                                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
                                     backgroundColor: 'rgba(0,0,0,0.75)',
                                     borderRadius: '0 0 4px 4px',
-                                    px: 0.5, py: 0.25,
-                                    display: 'flex', flexDirection: 'column',
+                                    px: 0.5,
+                                    py: 0.25,
+                                    display: 'flex',
+                                    flexDirection: 'column',
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                             >
-                                <Typography sx={{ fontSize: '9px', color: 'white', lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                                <Typography
+                                    sx={{
+                                        fontSize: '9px',
+                                        color: 'white',
+                                        lineHeight: 1.2,
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
                                     {ts.format('HH:mm')}
                                 </Typography>
-                                <Typography sx={{ fontSize: '8px', color: 'rgba(255,255,255,0.7)', lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                                <Typography
+                                    sx={{
+                                        fontSize: '8px',
+                                        color: 'rgba(255,255,255,0.7)',
+                                        lineHeight: 1.2,
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
                                     {ts.format('D MMM')}
                                 </Typography>
                                 <Stack direction="row" spacing={0} sx={{ mt: 0.25 }}>
@@ -438,7 +562,10 @@ const PhotoStrip = ({
                                         size="small"
                                         sx={{ p: 0.25, color: 'error.light' }}
                                         onClick={() => {
-                                            setLocalDeleted((prev) => new Set(Array.from(prev).concat(img.imagePath)));
+                                            setLocalDeleted(
+                                                (prev) =>
+                                                    new Set(Array.from(prev).concat(img.imagePath))
+                                            );
                                             onDeleteImage && onDeleteImage(img.imagePath);
                                         }}
                                     >
@@ -454,34 +581,4 @@ const PhotoStrip = ({
     );
 };
 
-const CheckboxWithText = ({
-    label,
-    checked,
-    onChange,
-    disabled = false,
-}: {
-    label: string;
-    checked: boolean;
-    onChange: (checked: boolean) => void;
-    disabled?: boolean;
-}) => {
-    return (
-        <Grid size={6} sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
-            <Checkbox
-                size="small"
-                disabled={disabled}
-                checked={checked}
-                onChange={(e) => onChange(e.target.checked)}
-                sx={{ padding: '4px' }}
-            />
-            <Typography
-                variant="caption"
-                sx={{ display: 'inline-block', ml: -0.5 }}
-            >
-                {label.slice(0, 1).toUpperCase() + label.slice(1)}
-            </Typography>
-        </Grid>
-    );
-};
-
-export { TemporalFiltersHook };
+export { PhotoStrip, TemporalFiltersHook };

@@ -268,6 +268,10 @@ def yolo_process_images_task(
             session.execute(insert(ImageObject).values(object_rows))
             logging.info("Inserted %d objects", len(object_rows))
 
+        if person_rows:
+            session.execute(insert(ImagePerson).values(person_rows))
+            logging.info("Inserted %d people", len(person_rows))
+
         # Mark images as processed by YOLO/InsightFace (but not DeepFace, which is separate)
         session.execute(
             update(Image)
@@ -278,12 +282,17 @@ def yolo_process_images_task(
         session.commit()
         session.flush()
 
-    # Dispatch thumbnail creation for each processed image now that boxes are known.
-    # This replaces the old polling loop inside anonymise_image_task.
+    # Anonymise inline — boxes are in memory so no DB round-trip needed, and
+    # running inline keeps the queue shallow (no N individual tasks queued here).
     for rel_path, (blur_boxes, wl_boxes) in image_boxes.items():
         thumb_path = f"{THUMBNAIL_DIR}/{device}/{rel_path.rsplit('.', 1)[0]}.webp"
         if not os.path.exists(thumb_path):
-            anonymise_image_task.delay(device, rel_path, thumb_path, blur_boxes, wl_boxes)
+            path = f"{DIR}/{device}/{rel_path}"
+            try:
+                anonymise_image(path, thumb_path, blur_boxes, wl_boxes)
+                logging.info("Anonymised %s/%s", device, rel_path)
+            except Exception as exc:
+                logging.warning("Anonymise failed for %s/%s: %s", device, rel_path, exc)
 
     recluster_unassigned_faces_task.delay(device)
 
@@ -820,27 +829,6 @@ def compute_bio_day_stats_task(self, device_id: str, date: str):
         logging.error("compute_bio_day_stats_task failed for %s/%s: %s", device_id, date, e)
 
 
-@celery.task(name="tasks.run_gps_pipeline_task")
-def run_gps_pipeline_task(device: str, date: str):
-    with Session(engine) as session:
-        try:
-            run_pipeline(session, device, date)
-        except Exception as e:
-            logging.error("run_gps_pipeline_task failed for %s/%s: %s", device, date, e)
-
-
-@celery.task(name="tasks.nightly_location_update_all_devices")
-def nightly_location_update_all_devices():
-    with Session(engine) as session:
-        rows = session.execute(
-            select(Image.device, Image.date)
-            .where(Image.location_id.is_(None), Image.deleted == False)
-            .distinct()
-        ).all()
-
-    for device, date in rows:
-        update_location_task.delay(device, date)
-    logging.info("Queued nightly location updates for %d device/date pairs.", len(rows))
 
 
 @celery.task(name="tasks.nightly_recluster_all_devices")
@@ -857,8 +845,8 @@ def nightly_recluster_all_devices():
 def nightly_bio_stats_all_devices():
     from database.models import SensorDevice
 
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     with Session(engine) as session:
         device_ids = session.execute(
@@ -871,43 +859,61 @@ def nightly_bio_stats_all_devices():
 
     logging.info("Queued nightly bio_day_stats for %d devices.", len(device_ids))
 
+@celery.task(name="tasks.location_update_all_devices")
+def location_update_all_devices():
+    with Session(engine) as session:
+        rows = session.execute(
+            select(Image.device, Image.date)
+            .where(Image.location_id.is_(None), Image.deleted == False)
+            .distinct()
+        ).all()
+
+    for device, date in rows:
+        update_location_task.delay(device, date)
+    logging.info("Queued nightly location updates for %d device/date pairs.", len(rows))
+
 
 @celery.task(name="tasks.pipeline_catchup_task")
 def pipeline_catchup_task():
     from collections import defaultdict as _defaultdict
+    logging.info("Starting pipeline catch-up task: checking for unprocessed images...")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    past_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     queued_yolo = queued_thumbs = queued_enc = queued_seg = 0
 
+    # --- Phase 1: YOLO backlog — own session, closed before dispatch ---
+    yolo_by_device: dict[str, list[str]] = _defaultdict(list)
     with Session(engine) as session:
-        # YOLO: images still flagged proc_yolo=False
-        yolo_rows = session.execute(
+        for device, path in session.execute(
             select(Image.device, Image.image_path)
             .where(
                 Image.proc_yolo == False,
                 Image.timestamp < cutoff,
+                Image.timestamp > past_cutoff,
                 Image.deleted == False,
                 Image.is_video == False,
             )
             .order_by(Image.timestamp.asc())
             .limit(100)
-        ).all()
+        ).all():
+            yolo_by_device[device].append(f"{DIR}/{device}/{path}")
 
-        if yolo_rows:
-            by_device = _defaultdict(list)
-            for device, path in yolo_rows:
-                by_device[device].append(f"{DIR}/{device}/{path}")
-            for device, full_paths in by_device.items():
-                yolo_process_images_task.delay(device, full_paths, [], [])
-            queued_yolo = len(yolo_rows)
+    for device, full_paths in yolo_by_device.items():
+        yolo_process_images_task.delay(device, full_paths, [], [])
+        queued_yolo += len(full_paths)
+    if queued_yolo:
+        logging.info("catchup: queued YOLO for %d images across %d devices", queued_yolo, len(yolo_by_device))
 
-        # CLIP embeddings: images with no ImageEmbedding row
+    # --- Phase 2: CLIP embeddings — own session per image so inference doesn't hold the pool ---
+    with Session(engine) as session:
         no_emb_rows = session.execute(
             select(Image.device, Image.image_path)
             .outerjoin(ImageEmbedding, ImageEmbedding.image_id == Image.id)
             .where(
                 ImageEmbedding.image_id.is_(None),
                 Image.timestamp < cutoff,
+                Image.timestamp > past_cutoff,
                 Image.deleted == False,
                 Image.is_video == False,
             )
@@ -915,52 +921,87 @@ def pipeline_catchup_task():
             .limit(50)
         ).all()
 
-        if no_emb_rows:
-            from pipelines.all import encode_image as _encode_image
-            for device, image_path in no_emb_rows:
-                try:
+    if no_emb_rows:
+        from pipelines.all import encode_image as _encode_image
+        for device, image_path in no_emb_rows:
+            try:
+                with Session(engine) as session:
                     _encode_image(session, device, image_path)
-                    queued_enc += 1
-                except Exception as exc:
-                    logging.warning("catchup: encode failed for %s/%s: %s", device, image_path, exc)
+                queued_enc += 1
+            except Exception as exc:
+                logging.warning("catchup: encode failed for %s/%s: %s", device, image_path, exc)
 
-        # Thumbnails: check disk for missing .webp files
+    # --- Phase 3: Missing thumbnails ---
+    # Only check images where YOLO is done (so face boxes are in DB).
+    # Bounded per run to prevent the queue from growing faster than it drains.
+    with Session(engine) as session:
         thumb_rows = session.execute(
-            select(Image.device, Image.image_path)
+            select(Image.device, Image.image_path, Image.thumbnail)
             .where(
+                Image.proc_yolo == True,      # boxes are persisted; anonymise can look them up
+                Image.thumbnail.isnot(None),
                 Image.timestamp < cutoff,
+                Image.timestamp > past_cutoff,
                 Image.deleted == False,
                 Image.is_video == False,
             )
             .order_by(Image.timestamp.desc())
-            .limit(500)
+            .limit(200)
         ).all()
 
-        for device, image_path in thumb_rows:
-            expected_webp = f"{THUMBNAIL_DIR}/{device}/{image_path.rsplit('.', 1)[0]}.webp"
-            if os.path.exists(expected_webp):
-                continue
-            src = f"{DIR}/{device}/{image_path}"
-            if not os.path.exists(src):
-                continue
-            anonymise_image_task.delay(device, image_path, expected_webp, [], [], skip_sam3=True)
-            queued_thumbs += 1
+    # Filesystem checks outside the session so the connection is free while we stat files.
+    # Collect images that genuinely need a thumbnail.
+    missing: list[tuple[str, str, str]] = []  # (device, image_path, thumb_path)
+    for device, image_path, thumbnail in thumb_rows:
+        thumb_path = f"{THUMBNAIL_DIR}/{device}/{thumbnail}"
+        if os.path.exists(thumb_path):
+            continue
+        if not os.path.exists(f"{DIR}/{device}/{image_path}"):
+            continue
+        missing.append((device, image_path, thumb_path))
 
-        # Unannotated segments
-        unannotated_segs = session.execute(
+    if missing:
+        # Load face boxes in one query per device.
+        boxes_map: dict[tuple[str, str], tuple[list, list]] = {}
+        by_device: dict[str, list[str]] = {}
+        for device, image_path, _ in missing:
+            by_device.setdefault(device, []).append(image_path)
+        for device, paths in by_device.items():
+            with Session(engine) as session:
+                for img_path, label, bbox in session.execute(
+                    select(Image.image_path, ImagePerson.label, ImagePerson.bbox)
+                    .outerjoin(ImagePerson, ImagePerson.image_id == Image.id)
+                    .where(Image.device == device, Image.image_path.in_(paths))
+                ).all():
+                    blur_list, wl_list = boxes_map.setdefault((device, img_path), ([], []))
+                    if bbox is not None:
+                        (blur_list if label in ("redacted face", "face") else wl_list).append(bbox)
+
+        for device, image_path, thumb_path in missing:
+            blur_boxes, wl_boxes = boxes_map.get((device, image_path), ([], []))
+            try:
+                anonymise_image(f"{DIR}/{device}/{image_path}", thumb_path, blur_boxes, wl_boxes)
+                queued_thumbs += 1
+            except Exception as exc:
+                logging.warning("catchup anonymise failed %s/%s: %s", device, image_path, exc)
+    logging.info("catchup: created %d thumbnails inline", queued_thumbs)
+
+    # --- Phase 4: Unannotated segments — own session, collect then dispatch ---
+    seg_dispatch: list[tuple] = []
+    with Session(engine) as session:
+        for device, date, segment_id in session.execute(
             select(Image.device, Image.date, Image.segment_id)
             .where(
                 Image.segment_id.isnot(None),
                 or_(Image.activity.is_(None), Image.activity == ""),
                 Image.timestamp < cutoff,
+                Image.timestamp > past_cutoff,
                 Image.deleted == False,
             )
             .group_by(Image.device, Image.date, Image.segment_id)
             .order_by(Image.device, Image.date, Image.segment_id)
             .limit(20)
-        ).all()
-
-        for device, date, segment_id in unannotated_segs:
+        ).all():
             seg_paths = session.execute(
                 select(Image.image_path)
                 .where(
@@ -970,14 +1011,16 @@ def pipeline_catchup_task():
                     Image.deleted == False,
                 )
             ).scalars().all()
-
             if seg_paths:
                 thumb_paths = [
                     f"{THUMBNAIL_DIR}/{device}/{p.rsplit('.', 1)[0]}.webp"
                     for p in seg_paths
                 ]
-                describe_segment_task.delay(device, date, thumb_paths, segment_id)
-                queued_seg += 1
+                seg_dispatch.append((device, date, segment_id, thumb_paths))
+
+    for device, date, segment_id, thumb_paths in seg_dispatch:
+        describe_segment_task.delay(device, date, thumb_paths, segment_id)
+        queued_seg += 1
 
     if queued_yolo or queued_thumbs or queued_enc or queued_seg:
         logging.info(
@@ -1043,7 +1086,7 @@ def update_status_summary():
                 "summarising what the person is currently doing. "
                 f"Activities (most recent first): {'; '.join(descriptions)}"
             )
-            summary_text = llm.generate(prompt)
+            summary_text = llm.generate(prompt)  # type: ignore
 
             cache_key = f"status:{device_id}:summary"
             redis_client.set_json_with_ttl(

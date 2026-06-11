@@ -6,7 +6,7 @@ import {
     Typography,
 } from '@mui/material';
 import { GPSData } from '@utils/types';
-import { getGPSByDate } from 'apis/process';
+import { getGPSByDate, GpsTrackData } from 'apis/process';
 import CurrentStatus from 'components/CurrentStatus';
 import CustomDatePicker from 'components/CustomDatePicker';
 import DeleteRange from 'components/DeleteRange';
@@ -86,29 +86,26 @@ function MainPage() {
         }
     );
 
-    const { data: gpsTrack } = useSWR(
+    const { data: gpsData } = useSWR(
         ['gps-track', device, date, deviceAccess],
-        async () => {
+        async (): Promise<GpsTrackData> => {
             if (
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
-                const data = await getGPSByDate(device, date || '');
-                console.log('GPS data:', data);
-                return data;
-            } else {
-                console.warn(
-                    'User does not have access to GPS data',
-                    deviceAccess
-                );
-                return [] as GPSData[];
+                return getGPSByDate(device, date || '');
             }
+            return { rawGps: [], imageGps: [] };
         },
         {
             revalidateOnFocus: false,
             refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
+    // Prefer the dense raw GPS track; fall back to image-anchored GPS
+    const gpsTrack: GPSData[] = gpsData?.rawGps?.length
+        ? gpsData.rawGps
+        : (gpsData?.imageGps ?? []);
 
     const images = data?.images;
     const segments = data?.segments || [];

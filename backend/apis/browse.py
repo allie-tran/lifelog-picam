@@ -28,7 +28,7 @@ from PIL import Image as PILImage
 logger = logging.getLogger(__name__)
 app = FastAPI()
 
-_SEG_COMPLETE_TTL = 3600  # seconds to cache "all images segmented" per device/date
+_SEG_COMPLETE_TTL = 3600 * 10  # seconds to cache "all images segmented" per device/date
 _BROWSE_CACHE_TTL_TODAY = 60
 _BROWSE_CACHE_TTL_PAST = 600
 

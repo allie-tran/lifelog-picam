@@ -116,6 +116,7 @@ type DaySummary = {
     summaryText: string;
     updated: boolean;
     device: string;
+    processing?: boolean;
 
     // 1. Binary: e.g., {"Social": 120.5, "Focus": 45.0}
     binaryMetrics: Record<string, number>;
@@ -175,6 +176,8 @@ export type SearchQuery = {
     months: Month[];
     years: number[];
     customRanges: { start: string; end: string }[];
+    weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
+    monthCells: { timeOfDay: TimeOfDay; month: Month }[];
 
     // location
     isMoving: boolean,

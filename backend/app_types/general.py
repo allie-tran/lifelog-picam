@@ -131,6 +131,7 @@ class GPSInfo(BaseModel):
     latitude: float
     longitude: float
     elevation: Optional[float] = None
+    timestamp: Optional[float] = None  # ms epoch (UTC)
 
     @field_validator("latitude", "longitude", mode="before")
     @classmethod
@@ -285,3 +286,4 @@ class DaySummary(CamelCaseModel):
     total_images: int = 0
     total_minutes: float = 0.0
     analysis_checkpoint: Optional[str] = None  # image_path of last CLIP-analyzed image
+    processing: bool = False  # True while a background rebuild task is running

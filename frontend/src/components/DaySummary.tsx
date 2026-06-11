@@ -13,6 +13,7 @@ import {
     Grid,
     IconButton,
     LinearProgress,
+    Skeleton,
     Stack,
     styled,
     Tab,
@@ -66,6 +67,7 @@ const DaySummaryComponent = () => {
             revalidateOnFocus: false,
             revalidateIfStale: false,
             shouldRetryOnError: false,
+            refreshInterval: (data) => data?.processing ? 3000 : 0,
         }
     );
 
@@ -97,9 +99,24 @@ const DaySummaryComponent = () => {
 
     if (isLoading || dayLoading)
         return (
-            <Stack alignItems="center" p={4}>
-                <LinearProgress />
-            </Stack>
+            <Skeleton
+                width="100%"
+                height={400}
+                variant="rounded"
+            />
+        );
+
+    // Backend is building the summary — no segments yet
+    if (daySummary?.processing && !daySummary.segments?.length)
+        return (
+            <Card variant="outlined" sx={{ backgroundColor: alpha('#333', 0.2) }}>
+                <CardContent>
+                    <Stack spacing={1} alignItems="center" justifyContent="center" py={4}>
+                        <Typography color="text.secondary">Building day summary…</Typography>
+                        <LinearProgress sx={{ width: '60%' }} />
+                    </Stack>
+                </CardContent>
+            </Card>
         );
 
     if (isError || !daySummary || isLoading)
@@ -154,6 +171,11 @@ const DaySummaryComponent = () => {
                     </Typography>
                 </Box>
                 <Stack direction="row" alignItems="flex-end" spacing={1}>
+                    {daySummary.processing && (
+                        <Tooltip title="Generating summary…">
+                            <LinearProgress sx={{ width: 80, alignSelf: 'center' }} />
+                        </Tooltip>
+                    )}
                     <ReprocessButton
                         onReprocess={handleProcess}
                         isLoading={isLoading}

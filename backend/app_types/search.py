@@ -20,18 +20,31 @@ TimeOfDay = Literal["morning", "afternoon", "evening", "night", "midday"]
 DayOfWeek = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MonthOfYear = Literal["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
+class TimeDayCell(CamelCaseModel):
+    time_of_day: TimeOfDay
+    day_of_week: DayOfWeek
+
+class TimeMonthCell(CamelCaseModel):
+    time_of_day: TimeOfDay
+    month: MonthOfYear
+
+
 class SearchQuery(CamelCaseModel):
     # Text Search
     text: str = ""
     is_image_query: bool = False
 
-    # time
+    # time — row/col (broad) selectors
     time_of_days: List[TimeOfDay] = []
     day_of_weeks: List[DayOfWeek] = []
     seasons: List[Literal["spring", "summer", "autumn", "winter"]] = []
     months: List[MonthOfYear] = []
     years: List[int] = []
     custom_ranges: List[TimeRange] = []
+
+    # time — individual cell selectors (OR'd with row/col selectors)
+    time_day_cells: List[TimeDayCell] = []
+    time_month_cells: List[TimeMonthCell] = []
 
     # location
     is_moving: bool = False
@@ -52,6 +65,8 @@ class SearchQuery(CamelCaseModel):
             self.months,
             self.years,
             self.custom_ranges,
+            self.time_day_cells,
+            self.time_month_cells,
             self.countries,
             self.location_ids,
             self.bounds,

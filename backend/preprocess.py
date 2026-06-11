@@ -77,30 +77,45 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
     else:
         stmt = create_stmt_generic(device_id)
 
-    # Time filters
-    if query.time_of_days:
-        time_conditions = []
-        for time in query.time_of_days:
-            start_hour, end_hour = time_of_days_to_hours[time]
+    # Time/day filters — row/col selectors and individual cell selectors are OR'd together
+    _DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    _MONTHS = ["January", "February", "March", "April", "May", "June",
+               "July", "August", "September", "October", "November", "December"]
 
-            if start_hour < end_hour:
-                # Standard range (e.g., 9 to 17)
-                time_conditions.append(
-                    and_(Image.hour >= start_hour, Image.hour < end_hour)
-                )
-            else:
-                # Wrap-around range (e.g., 22 to 04)
-                # This logic says: Hour is >= 22 OR Hour is < 04
-                time_conditions.append(
-                    or_(Image.hour >= start_hour, Image.hour < end_hour)
-                )
-        # Apply all gathered time ranges as a single OR block
-        stmt = stmt.where(or_(*time_conditions))
+    def _hour_cond(tod: str):
+        start_hour, end_hour = time_of_days_to_hours[tod]
+        if start_hour < end_hour:
+            return and_(Image.hour >= start_hour, Image.hour < end_hour)
+        return or_(Image.hour >= start_hour, Image.hour < end_hour)
 
+    temporal_conds = []
 
-    if query.day_of_weeks:
-        day_nums = [["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(day) + 1 for day in query.day_of_weeks]
-        stmt = stmt.where(or_(*[extract("dow", Image.local_timestamp).in_(day_nums)]))
+    # Row/col based: (time_of_days OR …) AND (day_of_weeks OR …)
+    if query.time_of_days or query.day_of_weeks:
+        row_conds = []
+        if query.time_of_days:
+            row_conds.append(or_(*[_hour_cond(t) for t in query.time_of_days]))
+        if query.day_of_weeks:
+            day_nums = [_DOW.index(d) + 1 for d in query.day_of_weeks]
+            row_conds.append(extract("dow", Image.local_timestamp).in_(day_nums))
+        temporal_conds.append(and_(*row_conds))
+
+    # Individual (time, day-of-week) cells
+    for cell in query.time_day_cells:
+        temporal_conds.append(and_(
+            _hour_cond(cell.time_of_day),
+            extract("dow", Image.local_timestamp) == (_DOW.index(cell.day_of_week) + 1),
+        ))
+
+    # Individual (time, month) cells
+    for cell in query.time_month_cells:
+        temporal_conds.append(and_(
+            _hour_cond(cell.time_of_day),
+            Image.month == (_MONTHS.index(cell.month) + 1),
+        ))
+
+    if temporal_conds:
+        stmt = stmt.where(or_(*temporal_conds))
 
     if query.seasons:
         season_months = {

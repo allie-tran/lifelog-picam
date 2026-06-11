@@ -2,6 +2,7 @@ import { DayOfWeek, Month, Season, TimeOfDay } from 'types/filters';
 import { SearchQuery } from '@utils/types';
 
 const RANGE_SEP = '__';
+const CELL_SEP = ':';
 
 export const parseSearchParams = (sp: URLSearchParams): SearchQuery => ({
     text: sp.get('q') || '',
@@ -18,6 +19,22 @@ export const parseSearchParams = (sp: URLSearchParams): SearchQuery => ({
         .map((r) => {
             const [start, end] = r.split(RANGE_SEP);
             return { start, end: end ?? start };
+        }) ?? [],
+    weekCells: sp
+        .get('weekCells')
+        ?.split(',')
+        .filter(Boolean)
+        .map((c) => {
+            const [timeOfDay, dayOfWeek] = c.split(CELL_SEP);
+            return { timeOfDay: timeOfDay as TimeOfDay, dayOfWeek: dayOfWeek as DayOfWeek };
+        }) ?? [],
+    monthCells: sp
+        .get('monthCells')
+        ?.split(',')
+        .filter(Boolean)
+        .map((c) => {
+            const [timeOfDay, month] = c.split(CELL_SEP);
+            return { timeOfDay: timeOfDay as TimeOfDay, month: month as Month };
         }) ?? [],
     isMoving: sp.get('isMoving') === 'true',
     countries: sp.get('countries')?.split(',').filter(Boolean) ?? [],
@@ -45,6 +62,10 @@ export const applyQueryToParams = (
     if ('years' in partial) set('years', partial.years?.join(','));
     if ('customRanges' in partial)
         set('customRanges', partial.customRanges?.map((r) => `${r.start}${RANGE_SEP}${r.end}`).join(','));
+    if ('weekCells' in partial)
+        set('weekCells', partial.weekCells?.map((c) => `${c.timeOfDay}${CELL_SEP}${c.dayOfWeek}`).join(','));
+    if ('monthCells' in partial)
+        set('monthCells', partial.monthCells?.map((c) => `${c.timeOfDay}${CELL_SEP}${c.month}`).join(','));
     if ('isMoving' in partial) { if (partial.isMoving) sp.set('isMoving', 'true'); else sp.delete('isMoving'); }
     if ('countries' in partial) set('countries', partial.countries?.join(','));
     if ('locationIds' in partial) set('locationIds', partial.locationIds?.join(','));

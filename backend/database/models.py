@@ -338,7 +338,7 @@ class RawGPS(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     elevation: Mapped[float | None] = mapped_column(Float)
-    timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     timezone: Mapped[str | None] = mapped_column(Text)
 
 
