@@ -179,6 +179,10 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [hoveredBox, setHoveredBox] = useState<ObjectDetection | null>(null);
     const [showBBoxes, setShowBBoxes] = useState(true);
+    const [transform, setTransform] = useState({ zoom: 1, x: 0, y: 0 });
+    const [isDraggingState, setIsDraggingState] = useState(false);
+    const isDragging = useRef(false);
+    const lastPos = useRef({ x: 0, y: 0 });
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
 
@@ -205,15 +209,30 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (!showBBoxes) return;
 
-        const scaleX = img.clientWidth / img.naturalWidth;
-        const scaleY = img.clientHeight / img.naturalHeight;
+        // objectFit: contain — actual rendered area may be smaller than element size
+        const elemW = img.clientWidth;
+        const elemH = img.clientHeight;
+        const natAspect = img.naturalWidth / img.naturalHeight;
+        const elemAspect = elemW / elemH;
+        let renderedW: number, renderedH: number, offsetX: number, offsetY: number;
+        if (natAspect > elemAspect) {
+            renderedW = elemW;
+            renderedH = elemW / natAspect;
+            offsetX = 0;
+            offsetY = (elemH - renderedH) / 2;
+        } else {
+            renderedH = elemH;
+            renderedW = elemH * natAspect;
+            offsetX = (elemW - renderedW) / 2;
+            offsetY = 0;
+        }
 
         allDetections.forEach((det) => {
             const [xMin, yMin, xMax, yMax] = det.bbox;
-            const x = xMin * scaleX * img.naturalWidth;
-            const y = yMin * scaleY * img.naturalHeight;
-            const width = (xMax - xMin) * scaleX * img.naturalWidth;
-            const height = (yMax - yMin) * scaleY * img.naturalHeight;
+            const x = offsetX + xMin * renderedW;
+            const y = offsetY + yMin * renderedH;
+            const width = (xMax - xMin) * renderedW;
+            const height = (yMax - yMin) * renderedH;
 
             const isHovered =
                 hoveredBox?.label === det.label &&
@@ -244,6 +263,49 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
         return () => window.removeEventListener('resize', drawBoundingBoxes);
     }, [data, hoveredBox, showBBoxes]);
 
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const rect = el.getBoundingClientRect();
+            const mx = e.clientX - rect.left - rect.width / 2;
+            const my = e.clientY - rect.top - rect.height / 2;
+            setTransform(prev => {
+                const newZoom = Math.min(8, Math.max(1, prev.zoom * factor));
+                if (newZoom === 1) return { zoom: 1, x: 0, y: 0 };
+                return {
+                    zoom: newZoom,
+                    x: mx - (mx - prev.x) * newZoom / prev.zoom,
+                    y: my - (my - prev.y) * newZoom / prev.zoom,
+                };
+            });
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, []);
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        isDragging.current = true;
+        setIsDraggingState(true);
+        lastPos.current = { x: e.clientX, y: e.clientY };
+    };
+    const handleMouseMove = (e: React.MouseEvent) => {
+        if (!isDragging.current) return;
+        const dx = e.clientX - lastPos.current.x;
+        const dy = e.clientY - lastPos.current.y;
+        lastPos.current = { x: e.clientX, y: e.clientY };
+        setTransform(prev => {
+            if (prev.zoom <= 1) return prev;
+            return { ...prev, x: prev.x + dx, y: prev.y + dy };
+        });
+    };
+    const handleMouseUp = () => {
+        isDragging.current = false;
+        setIsDraggingState(false);
+    };
+
     const tz = data.timezone || 'UTC';
     const formattedTime = dayjs.utc(data.timestamp).tz(tz).format('ddd D MMM YYYY, HH:mm z');
 
@@ -265,18 +327,35 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                         overflow: 'hidden',
                         display: 'flex',
                         alignItems: 'center', justifyContent: 'center',
+                        cursor: transform.zoom > 1 ? (isDraggingState ? 'grabbing' : 'grab') : 'default',
+                        userSelect: 'none',
                     }}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
                 >
-                    <img
-                        ref={imageRef}
-                        src={data.imagePath}
-                        alt="Source"
-                        style={{ width: '100%', maxHeight: 'calc(80dvh - 120px)', height: 'auto', display: 'block', objectFit: 'contain' }}
-                    />
-                    <canvas
-                        ref={canvasRef}
-                        style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
-                    />
+                    <Box
+                        style={{
+                            width: '100%',
+                            position: 'relative',
+                            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+                            transformOrigin: 'center center',
+                            transition: isDraggingState ? 'none' : 'transform 0.05s ease-out',
+                        }}
+                    >
+                        <img
+                            ref={imageRef}
+                            src={data.imagePath}
+                            alt="Source"
+                            style={{ width: '100%', maxHeight: 'calc(80dvh - 120px)', height: 'auto', display: 'block', objectFit: 'contain' }}
+                            draggable={false}
+                        />
+                        <canvas
+                            ref={canvasRef}
+                            style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+                        />
+                    </Box>
                     {allDetections.length > 0 && (
                         <Button
                             size="small"
@@ -290,6 +369,21 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                             }}
                         >
                             {showBBoxes ? '🔲 Boxes' : '⬜ Boxes'}
+                        </Button>
+                    )}
+                    {transform.zoom > 1 && (
+                        <Button
+                            size="small"
+                            variant="contained"
+                            onClick={(e) => { e.stopPropagation(); setTransform({ zoom: 1, x: 0, y: 0 }); }}
+                            sx={{
+                                position: 'absolute', bottom: 8, right: 8, zIndex: 10,
+                                minWidth: 0, fontSize: '0.7rem', py: 0.5, px: 1.5,
+                                backgroundColor: 'rgba(0,0,0,0.65)',
+                                '&:hover': { backgroundColor: 'rgba(0,0,0,0.85)' },
+                            }}
+                        >
+                            Reset Zoom
                         </Button>
                     )}
                 </Box>
