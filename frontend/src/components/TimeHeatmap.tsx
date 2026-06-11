@@ -386,7 +386,7 @@ export interface TimeHeatmapProps {
     timeOfDays: TimeOfDay[];
     dayOfWeeks: DayOfWeek[];
     months: Month[];
-    currentYear: number;
+    currentYear: number | null;
     customRanges: { start: string; end: string }[];
     weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
     monthCells: { timeOfDay: TimeOfDay; month: Month }[];
@@ -423,7 +423,7 @@ const TimeHeatmap = ({
         const grid = Array.from({ length: 5 }, () => new Array(7).fill(0));
         for (const img of resultImages) {
             const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
-            if (ts.year() !== currentYear) continue;
+            if (currentYear !== null && ts.year() !== currentYear) continue;
             const ri = TOD_DISPLAY.findIndex((t) => t.key === hourToTodKey(ts.hour()));
             const ci = (ts.day() + 6) % 7;
             if (ri >= 0) grid[ri][ci]++;
@@ -436,7 +436,7 @@ const TimeHeatmap = ({
         const grid = Array.from({ length: 5 }, () => new Array(12).fill(0));
         for (const img of resultImages) {
             const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
-            if (ts.year() !== currentYear) continue;
+            if (currentYear !== null && ts.year() !== currentYear) continue;
             const ri = TOD_DISPLAY.findIndex((t) => t.key === hourToTodKey(ts.hour()));
             if (ri >= 0) grid[ri][ts.month()]++;
         }
@@ -444,9 +444,14 @@ const TimeHeatmap = ({
         return grid.map((r) => r.map((v) => v / max));
     }, [resultImages, currentYear]);
 
+    const calendarYear = currentYear ??
+        (resultImages.length > 0
+            ? Math.max(...resultImages.map((img) => dayjs.utc(img.timestamp).year()))
+            : new Date().getFullYear());
+
     const { calendarGrid, calendarDensity } = useMemo(() => {
-        const start = dayjs(`${currentYear}-01-01`);
-        const daysInYear = dayjs(`${currentYear}-12-31`).diff(start, 'day') + 1;
+        const start = dayjs(`${calendarYear}-01-01`);
+        const daysInYear = dayjs(`${calendarYear}-12-31`).diff(start, 'day') + 1;
         const firstDow = (start.day() + 6) % 7;
         const numWeeks = Math.ceil((daysInYear + firstDow) / 7);
 
@@ -474,7 +479,7 @@ const TimeHeatmap = ({
         );
 
         return { calendarGrid: grid, calendarDensity: density };
-    }, [currentYear, resultImages]);
+    }, [calendarYear, resultImages]);
 
     // ── selected indices (row/col from checkboxes) ─────────────────────────
 
@@ -652,7 +657,7 @@ const TimeHeatmap = ({
 
             {view === 'calendar' && (() => {
                 const hasResultsInYear = resultImages.some(
-                    (img) => dayjs.utc(img.timestamp).tz(img.timezone || 'UTC').year() === currentYear
+                    (img) => dayjs.utc(img.timestamp).tz(img.timezone || 'UTC').year() === calendarYear
                 );
                 return (
                     <>
@@ -662,7 +667,7 @@ const TimeHeatmap = ({
                                 color="text.secondary"
                                 sx={{ display: 'block', mb: 1, fontSize: '0.65rem' }}
                             >
-                                No results in {currentYear} — use the year chips above to navigate.
+                                No results in {calendarYear} — use the year chips above to navigate.
                             </Typography>
                         )}
                         <CalendarView

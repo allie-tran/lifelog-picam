@@ -59,7 +59,7 @@ const TemporalFiltersHook = ({
 } = {}) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
-    const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+    const [currentYear, setCurrentYear] = useState<number | null>(null);
     const [tabIndex, setTabIndex] = useState(0);
     const [startText, setStartText] = useState('');
     const [endText, setEndText] = useState('');
@@ -81,7 +81,6 @@ const TemporalFiltersHook = ({
         async () => {
             const raw = await getAvailableValues(device, 'year');
             const parsed = raw.map((y) => parseInt(y));
-            setCurrentYear(parsed.length > 0 ? parsed[0] : new Date().getFullYear());
             return parsed;
         },
         { revalidateOnFocus: false }
@@ -269,10 +268,17 @@ const TemporalFiltersHook = ({
         <Stack alignItems="stretch" mt={4} sx={{ width: '100%' }} px={2}>
             {/* Year navigation chips */}
             {availableYears && availableYears.length > 1 && (
-                <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
+                <Stack direction="row" alignItems="center" spacing={1} mb={1.5} flexWrap="wrap">
                     <Typography variant="caption" color="text.secondary">
                         Viewing:
                     </Typography>
+                    <Chip
+                        label="All"
+                        size="small"
+                        variant={currentYear === null ? 'filled' : 'outlined'}
+                        color={currentYear === null ? 'secondary' : 'default'}
+                        onClick={() => setCurrentYear(null)}
+                    />
                     {availableYears.map((yr) => (
                         <Chip
                             key={yr}
@@ -437,7 +443,7 @@ const PhotoStrip = ({
     onZoomImage,
 }: {
     images: ImageObject[];
-    currentYear: number;
+    currentYear: number | null;
     device: string;
     onDeleteImage?: (path: string) => void;
     onZoomImage?: (path: string, isVideo: boolean) => void;
@@ -449,7 +455,7 @@ const PhotoStrip = ({
         return images
             .filter((img) => {
                 const year = new Date(img.timestamp).getFullYear();
-                return year === currentYear && !localDeleted.has(img.imagePath);
+                return (currentYear === null || year === currentYear) && !localDeleted.has(img.imagePath);
             })
             .sort(
                 (a, b) =>
