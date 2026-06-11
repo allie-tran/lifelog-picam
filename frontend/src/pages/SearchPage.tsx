@@ -114,7 +114,7 @@ const SearchTextBox = React.memo(
         const submittedRef = useRef(false);
         const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-        useEffect(() => { setTextQuery(initialValue); }, [initialValue]);
+        useEffect(() => { setTextQuery(initialValue); onTextChange(initialValue); }, [initialValue, onTextChange]);
 
         useImperativeHandle(ref, () => ({
             setText: (t: string) => { setTextQuery(t); onTextChange(t); },
@@ -324,22 +324,28 @@ const SearchPage = () => {
         setFilterShown(type);
     }, []);
 
+    const prevDeviceRef = useRef<string | null>(null);
     useEffect(() => {
-        if (device) dispatch(setDevice(device));
-    }, [device]);
+        if (!device) return;
+        if (prevDeviceRef.current !== null && device !== prevDeviceRef.current) {
+            setSearchParams({ device });
+            textQueryRef.current = '';
+            searchTextBoxRef.current?.setText('');
+        }
+        prevDeviceRef.current = device;
+        dispatch(setDevice(device));
+    }, [device]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const [filterShown, setFilterShown] = useState<
         'temporal' | 'location' | 'faces' | null
     >(null);
-
-    const [extraLocationLabels, setExtraLocationLabels] = useState<Record<string, string>>({});
 
     const {
         renderFilterOptions: LocationFilterOptions,
         renderMap,
         renderClearButton: LocationClearButton,
         nothingIsSelected: locationNothingIsSelected,
-    } = LocationFiltersHook({ extraLocationLabels });
+    } = LocationFiltersHook();
     const {
         renderFilterOptions: FaceFilterOptions,
         renderFaceExplorer,
@@ -520,9 +526,11 @@ const SearchPage = () => {
             if (existing.includes(id)) return prev;
             const p = new URLSearchParams(prev);
             p.set('locationIds', [...existing, id].join(','));
+            const labels: Record<string, string> = JSON.parse(p.get('locationLabels') || '{}');
+            labels[id] = name;
+            p.set('locationLabels', JSON.stringify(labels));
             return p;
         });
-        setExtraLocationLabels((prev) => ({ ...prev, [id]: name }));
     }, [setSearchParams]);
 
     const handleAddPersonFilter = React.useCallback((id: string) => {

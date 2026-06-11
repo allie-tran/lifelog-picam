@@ -69,7 +69,19 @@ export const applyQueryToParams = (
         set('monthCells', partial.monthCells?.map((c) => `${c.timeOfDay}${CELL_SEP}${c.month}`).join(','));
     if ('isMoving' in partial) { if (partial.isMoving) sp.set('isMoving', 'true'); else sp.delete('isMoving'); }
     if ('countries' in partial) set('countries', partial.countries?.join(','));
-    if ('locationIds' in partial) set('locationIds', partial.locationIds?.join(','));
+    if ('locationIds' in partial) {
+        const newIds = partial.locationIds ?? [];
+        set('locationIds', newIds.join(','));
+        // Prune orphaned labels when IDs change
+        if (sp.has('locationLabels')) {
+            try {
+                const labels: Record<string, string> = JSON.parse(sp.get('locationLabels')!);
+                const pruned = Object.fromEntries(Object.entries(labels).filter(([k]) => newIds.includes(k)));
+                if (Object.keys(pruned).length > 0) sp.set('locationLabels', JSON.stringify(pruned));
+                else sp.delete('locationLabels');
+            } catch { sp.delete('locationLabels'); }
+        }
+    }
     if ('bounds' in partial) set('bounds', partial.bounds?.join(','));
     if ('peopleIds' in partial) set('peopleIds', partial.peopleIds?.join(','));
     return sp;

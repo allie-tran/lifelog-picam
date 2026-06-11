@@ -51,7 +51,7 @@ function toggle<T>(arr: T[], val: T): T[] {
 // ─── GridView ────────────────────────────────────────────────────────────────
 
 const ROW_LABEL_W = 88;
-const CELL_H = 36;
+const CELL_H = 24;
 
 const GridView = ({
     rowItems,
@@ -151,7 +151,7 @@ const GridView = ({
                         } else if (d > 0) {
                             bg = `rgba(147,51,234,${0.12 + d * 0.48})`;
                         } else {
-                            bg = 'rgba(255,255,255,0.04)';
+                            bg = 'rgba(0,0,0,0.04)';
                         }
                         return (
                             <Box
@@ -161,9 +161,11 @@ const GridView = ({
                                     flex: 1,
                                     height: CELL_H,
                                     bgcolor: bg,
+                                    m: '1px',
+                                    borderRadius: '4px',
                                     border: cellActive
                                         ? '1px solid rgba(22,162,152,0.6)'
-                                        : '1px solid rgba(255,255,255,0.05)',
+                                        : '1px solid rgba(255,255,255,0.12)',
                                     cursor: 'pointer',
                                     transition: 'all 0.1s',
                                     '&:hover': {
@@ -182,7 +184,7 @@ const GridView = ({
 
 // ─── CalendarView ─────────────────────────────────────────────────────────────
 
-const CSIZ = 13;
+const CSIZ = 17;
 const CGAP = 2;
 
 const CalendarView = ({
@@ -316,14 +318,12 @@ const CalendarView = ({
                                 border = removeMode
                                     ? '1px dashed rgba(239,68,68,0.9)'
                                     : '1px dashed rgba(22,162,152,0.9)';
-                            } else if (sel) {
-                                bg = 'rgba(22,162,152,0.9)';
-                                border = '1px solid rgba(22,162,152,1)';
                             } else if (d > 0) {
-                                bg = `rgba(147,51,234,${0.15 + d * 0.65})`;
+                                if (sel) bg = `rgba(22,162,152,${0.15 + d * 0.65})`;
+                                else bg = `rgba(147,51,234,${0.15 + d * 0.65})`;
                                 border = '1px solid transparent';
                             } else {
-                                bg = 'rgba(255,255,255,0.07)';
+                                bg = 'rgba(0,0,0,0.07)';
                                 border = '1px solid transparent';
                             }
 

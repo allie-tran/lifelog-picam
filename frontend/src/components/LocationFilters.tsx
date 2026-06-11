@@ -21,7 +21,7 @@ import {
     Typography,
 } from '@mui/material';
 import countryBoundingBoxes from 'country-bounding-boxes.json';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
@@ -53,11 +53,16 @@ const getCountryBounds = (countries: string[]) => {
     return [minLat, minLng, maxLat, maxLng] as [number, number, number, number];
 };
 
-const LocationFiltersHook = ({ extraLocationLabels = {} }: { extraLocationLabels?: Record<string, string> } = {}) => {
+const LocationFiltersHook = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const { isMoving, countries, locationIds, bounds } = parseSearchParams(searchParams);
     const [locationSearch, setLocationSearch] = useState('');
+
+    const locationLabels = useMemo<Record<string, string>>(() => {
+        try { return JSON.parse(searchParams.get('locationLabels') || '{}'); }
+        catch { return {}; }
+    }, [searchParams]);
 
     const update = useCallback((partial: Parameters<typeof applyQueryToParams>[0]) => {
         setSearchParams((prev) => applyQueryToParams(partial, new URLSearchParams(prev)));
@@ -169,7 +174,7 @@ const LocationFiltersHook = ({ extraLocationLabels = {} }: { extraLocationLabels
                         selected
                             .map((id) => {
                                 const loc = availableLocations?.find((l) => l.id === id);
-                                return loc?.name ?? extraLocationLabels[id] ?? id;
+                                return loc?.name ?? locationLabels[id] ?? id;
                             })
                             .join(', ')
                     }
@@ -187,15 +192,11 @@ const LocationFiltersHook = ({ extraLocationLabels = {} }: { extraLocationLabels
                         />
                     </ListSubheader>
                     {locationIds
-                        .filter(
-                            (id) =>
-                                !availableLocations?.some((l) => l.id === id) &&
-                                (extraLocationLabels[id] ?? id)
-                        )
+                        .filter((id) => !availableLocations?.some((l) => l.id === id))
                         .map((id) => (
                             <MenuItem key={id} value={id}>
                                 <Checkbox checked />
-                                <ListItemText primary={extraLocationLabels[id] ?? id} />
+                                <ListItemText primary={locationLabels[id] ?? id} />
                             </MenuItem>
                         ))}
                     {(availableLocations ?? [])
