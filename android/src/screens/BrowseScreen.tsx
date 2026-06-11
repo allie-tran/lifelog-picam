@@ -24,6 +24,7 @@ import ImageCard from '../components/ImageCard';
 import { useAppSelector } from '../store';
 import { COLORS, config, formatTimeTz } from '../constants';
 import { BrowseSegment, DaySummary, RootStackParamList } from '../types';
+import useSWRNative from '@nandorojo/swr-react-native'
 
 // ── Category colors (subset matching web app) ────────────────────────────────
 const CAT_COLORS: Record<string, string> = {
@@ -390,6 +391,7 @@ const BrowseScreen = () => {
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [processing, setProcessing] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
+  const today = dayjs().format('YYYY-MM-DD');
 
   const totalImages = useMemo(() => segments.reduce((n, s) => n + s.images.length, 0), [segments]);
 
@@ -433,6 +435,19 @@ const BrowseScreen = () => {
     setPage(1);
     loadSegments(selectedDate, selectedHour, 1);
   }, [selectedDate, selectedHour, deviceId]);
+
+
+  const {} = useSWRNative(
+      [selectedDate, selectedHour, deviceId],
+      () => {
+              setPage(1);
+              loadSegments(selectedDate, selectedHour, 1);
+      }, {
+              // refresh only if the date is today
+              refreshInterval: selectedDate === today ? 3 * 60 * 1000 : 0,
+          }
+      )
+
 
   const loadMore = () => {
     if (page < totalPages && !loading) {
