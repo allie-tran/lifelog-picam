@@ -56,3 +56,18 @@ export const addSensorToUser = async (device: string, sensorType: string, sensor
     return response.data;
 }
 
+export const removeDeviceAccess = async (token: string, username: string, deviceId: string) => {
+    const response = await axios.delete(`${BACKEND_URL}/auth/remove-access`, {
+        params: { username, device_id: deviceId },
+        headers: { 'Authorization': `Bearer ${token}` },
+    });
+    return response.data;
+}
+
+export const removeSensorAccess = async (username: string, deviceId: string, sensorType: string) => {
+    const response = await axios.delete(`${BACKEND_URL}/auth/remove-sensor`, {
+        params: { username, device_id: deviceId, sensor_type: sensorType },
+    });
+    return response.data;
+}
+

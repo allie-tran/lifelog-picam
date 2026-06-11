@@ -19,7 +19,7 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import { addSensorToUser, changeUserAccess, getUsers } from 'apis/auth';
+import { addSensorToUser, changeUserAccess, getUsers, removeDeviceAccess, removeSensorAccess } from 'apis/auth';
 import { getAllDeviceSettings, setRecognitionMode } from 'apis/browsing';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React from 'react';
@@ -107,6 +107,16 @@ const Admin = () => {
             deviceNickname,
             associatedUsername
         );
+        mutate();
+    };
+
+    const handleRemoveDeviceAccess = async (username: string, deviceId: string) => {
+        await removeDeviceAccess(cookies.token, username, deviceId);
+        mutate();
+    };
+
+    const handleRemoveSensorAccess = async (username: string, deviceId: string, sensorType: string) => {
+        await removeSensorAccess(username, deviceId, sensorType);
         mutate();
     };
 
@@ -218,19 +228,28 @@ const Admin = () => {
                                             </strong>
                                         </Typography>
                                     </Stack>
-                                    <Button
-                                        variant="text"
-                                        color="error"
-                                        sx={{ ml: 1, textTransform: 'none' }}
-                                        onClick={() => {
-                                            setUserForAccess(user.username);
-                                            setDevice(device.deviceId);
-                                            setAccessLevel(device.accessLevel);
-                                            setOpen(true);
-                                        }}
-                                    >
-                                        Modify
-                                    </Button>
+                                    <Stack direction="row" spacing={1}>
+                                        <Button
+                                            variant="text"
+                                            sx={{ textTransform: 'none' }}
+                                            onClick={() => {
+                                                setUserForAccess(user.username);
+                                                setDevice(device.deviceId);
+                                                setAccessLevel(device.accessLevel);
+                                                setOpen(true);
+                                            }}
+                                        >
+                                            Modify
+                                        </Button>
+                                        <Button
+                                            variant="text"
+                                            color="error"
+                                            sx={{ textTransform: 'none' }}
+                                            onClick={() => handleRemoveDeviceAccess(user.username, device.deviceId)}
+                                        >
+                                            Remove
+                                        </Button>
+                                    </Stack>
                                 </Stack>
                             ))
                         ) : (
@@ -276,25 +295,30 @@ const Admin = () => {
                                             </strong>
                                         </Typography>
                                     </Stack>
-                                    <Button
-                                        variant="text"
-                                        color="error"
-                                        sx={{ ml: 1, textTransform: 'none' }}
-                                        onClick={() => {
-                                            setUserForSensorAccess(
-                                                user.username
-                                            );
-                                            setSensorDeviceId(sensor.deviceId);
-                                            setSensorType(sensor.sensorType);
-                                            setDeviceNickname(
-                                                sensor.deviceNickname
-                                            );
-                                            setSensorSecret(sensor.secret);
-                                            setOpenSensor(true);
-                                        }}
-                                    >
-                                        Modify
-                                    </Button>
+                                    <Stack direction="row" spacing={1}>
+                                        <Button
+                                            variant="text"
+                                            sx={{ textTransform: 'none' }}
+                                            onClick={() => {
+                                                setUserForSensorAccess(user.username);
+                                                setSensorDeviceId(sensor.deviceId);
+                                                setSensorType(sensor.sensorType);
+                                                setDeviceNickname(sensor.deviceNickname);
+                                                setSensorSecret(sensor.secret);
+                                                setOpenSensor(true);
+                                            }}
+                                        >
+                                            Modify
+                                        </Button>
+                                        <Button
+                                            variant="text"
+                                            color="error"
+                                            sx={{ textTransform: 'none' }}
+                                            onClick={() => handleRemoveSensorAccess(user.username, sensor.deviceId, sensor.sensorType)}
+                                        >
+                                            Remove
+                                        </Button>
+                                    </Stack>
                                 </Stack>
                             ))
                         ) : (

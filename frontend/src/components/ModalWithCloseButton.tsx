@@ -20,7 +20,7 @@ const ModalWithCloseButton = ({
             open={open}
             onClose={onClose}
             sx={{
-                zIndex: 2300, // Ensure it appears above other content
+                zIndex: 1300, // Ensure it appears above other content
                 ...sx,
             }}
         >

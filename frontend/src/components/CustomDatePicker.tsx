@@ -1,6 +1,8 @@
 import {
     Badge,
+    Button,
     ButtonProps,
+    Divider,
     IconButton,
     InputAdornment,
     Popover,
@@ -234,6 +236,18 @@ const CustomDatePicker = ({
                         yearButton: (props) => <AvailableYear allYears={allYears} {...props} />,
                     }}
                 />
+                <Divider />
+                <Stack alignItems="center" py={1}>
+                    <Button
+                        size="small"
+                        onClick={() => {
+                            setCalendarAnchor(null);
+                            navigateToDate(dayjs());
+                        }}
+                    >
+                        Today
+                    </Button>
+                </Stack>
             </Popover>
             <IconButton
                 size="small"

@@ -288,3 +288,4 @@ class DaySummary(CamelCaseModel):
     total_minutes: float = 0.0
     analysis_checkpoint: Optional[str] = None  # image_path of last CLIP-analyzed image
     processing: bool = False  # True while a background rebuild task is running
+    text_summary_generated_at: Optional[datetime] = None  # last time LLM text was generated

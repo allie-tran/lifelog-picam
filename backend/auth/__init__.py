@@ -1,9 +1,9 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from database import get_session
 
 from sqlalchemy.dialects.postgresql import insert
@@ -178,3 +178,50 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
         {"$push": {"sensors": {"device_id": device_id, "device_nickname": device_nickname, "sensor_type": sensor_type}}}
     )
     return {"success": True, "message": f"Device {device_id} added/updated and access granted to user {associated_username}"}
+
+
+@auth_app.delete("/remove-access", dependencies=[Depends(get_user)])
+def remove_device_access(
+    username: str = Query(...),
+    device_id: str = Query(...),
+    admin_user: User = Depends(get_user),
+):
+    if not admin_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    user = find_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updated_devices = [d for d in (user.devices or []) if d.device_id != device_id]
+    User.update_one(
+        {"username": username},
+        {"$set": {"devices": [{"device_id": d.device_id, "access_level": d.access_level} for d in updated_devices]}},
+    )
+    return {"success": True}
+
+
+@auth_app.delete("/remove-sensor", dependencies=[Depends(get_user)])
+def remove_sensor_access(
+    username: str = Query(...),
+    device_id: str = Query(...),
+    sensor_type: str = Query(...),
+    admin_user: User = Depends(get_user),
+    db_session: session.Session = Depends(get_session),
+):
+    if not admin_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    db_session.execute(
+        delete(SensorDevice).where(
+            SensorDevice.device_id == device_id,
+            SensorDevice.sensor_type == sensor_type,
+        )
+    )
+    db_session.commit()
+
+    User.update_one(
+        {"username": username},
+        {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}},
+    )
+    return {"success": True}
