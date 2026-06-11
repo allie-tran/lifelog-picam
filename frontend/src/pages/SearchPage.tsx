@@ -51,7 +51,7 @@ import { TemporalFiltersHook } from 'components/TemporalFilters';
 import dayjs from 'dayjs';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
 import { setLoading, showNotification } from 'reducers/feedback';
@@ -89,6 +89,195 @@ const queryFilterChips = (entry: SearchQuery): string[] => {
     return chips;
 };
 
+type SearchTextBoxHandle = { setText: (t: string) => void };
+
+const SearchTextBox = React.memo(
+    React.forwardRef<SearchTextBoxHandle, {
+        initialValue: string;
+        device: string;
+        onTextChange: (text: string) => void;
+        onSearch: () => void;
+        onParseResult: (extracted: Partial<SearchQuery>) => void;
+        onFilterDetected: (type: 'temporal') => void;
+        imageRefs: string[];
+        dragBlobUrls: string[];
+        onRemoveImageRef: (ref: string) => void;
+        onRemoveBlobUrl: (url: string) => void;
+        onAddBlobUrl: (url: string) => void;
+    }>(({
+        initialValue, device, onTextChange, onSearch, onParseResult, onFilterDetected,
+        imageRefs, dragBlobUrls, onRemoveImageRef, onRemoveBlobUrl, onAddBlobUrl,
+    }, ref) => {
+        const [textQuery, setTextQuery] = useState(initialValue);
+        const [useImageInput, setUseImageInput] = useState(false);
+        const [isDragOver, setIsDragOver] = useState(false);
+        const submittedRef = useRef(false);
+        const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+        useEffect(() => { setTextQuery(initialValue); }, [initialValue]);
+
+        useImperativeHandle(ref, () => ({
+            setText: (t: string) => { setTextQuery(t); onTextChange(t); },
+        }), [onTextChange]);
+
+        const handleChange = (t: string) => {
+            submittedRef.current = false;
+            setTextQuery(t);
+            onTextChange(t);
+        };
+
+        const handleDragOver = (e: React.DragEvent) => {
+            const { types } = e.dataTransfer;
+            if (types.includes('Files') || types.includes('text/uri-list')) {
+                e.preventDefault();
+                setIsDragOver(true);
+            }
+        };
+        const handleDragLeave = () => setIsDragOver(false);
+        const handleDrop = (e: React.DragEvent) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            const file = e.dataTransfer.files[0];
+            if (file?.type.startsWith('image/')) { onAddBlobUrl(URL.createObjectURL(file)); return; }
+            const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+            if (url?.startsWith('http')) {
+                fetch(url).then(r => r.blob()).then(blob => {
+                    if (blob.type.startsWith('image/')) onAddBlobUrl(URL.createObjectURL(blob));
+                }).catch(() => {});
+            }
+        };
+
+        useEffect(() => {
+            if (!textQuery.trim() || submittedRef.current) return;
+            const timer = setTimeout(() => {
+                if (submittedRef.current) return;
+                parseQueryFilters(textQuery, device)
+                    .then((parsed) => {
+                        const extracted: Partial<SearchQuery> = {};
+                        if (parsed.timeOfDays?.length) extracted.timeOfDays = parsed.timeOfDays;
+                        if (parsed.dayOfWeeks?.length) extracted.dayOfWeeks = parsed.dayOfWeeks;
+                        if (parsed.seasons?.length) extracted.seasons = parsed.seasons;
+                        if (parsed.months?.length) extracted.months = parsed.months;
+                        if (parsed.years?.length) extracted.years = parsed.years;
+                        if (parsed.customRanges?.length) extracted.customRanges = parsed.customRanges;
+                        if (parsed.countries?.length) extracted.countries = parsed.countries;
+                        if (parsed.locationIds?.length) extracted.locationIds = parsed.locationIds;
+                        if (Object.keys(extracted).length > 0) onParseResult(extracted);
+                        const hasTemporalFilter =
+                            (parsed.timeOfDays?.length ?? 0) > 0 ||
+                            (parsed.dayOfWeeks?.length ?? 0) > 0 ||
+                            (parsed.months?.length ?? 0) > 0 ||
+                            (parsed.years?.length ?? 0) > 0 ||
+                            (parsed.customRanges?.length ?? 0) > 0;
+                        if (hasTemporalFilter) onFilterDetected('temporal');
+                    })
+                    .catch(() => {});
+            }, 800);
+            parseTimerRef.current = timer;
+            return () => { clearTimeout(timer); parseTimerRef.current = null; };
+        }, [textQuery, device, onParseResult, onFilterDetected]);
+
+        return (
+            <>
+                <Box
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    sx={{
+                        borderRadius: 1,
+                        outline: isDragOver ? '2px dashed' : 'none',
+                        outlineColor: 'primary.main',
+                        transition: 'outline 0.1s',
+                    }}
+                >
+                    <TextField
+                        variant="outlined"
+                        multiline
+                        rows={3}
+                        value={textQuery}
+                        onChange={(e) => handleChange(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                submittedRef.current = true;
+                                if (parseTimerRef.current) {
+                                    clearTimeout(parseTimerRef.current);
+                                    parseTimerRef.current = null;
+                                }
+                                onSearch();
+                            }
+                        }}
+                        sx={{ marginY: 1, width: '100%' }}
+                        slotProps={{
+                            input: {
+                                endAdornment: (
+                                    <InputAdornment position="end">
+                                        <IconButton
+                                            onClick={() => setUseImageInput((prev) => !prev)}
+                                            edge="end"
+                                        >
+                                            <AddAPhotoRounded
+                                                color={
+                                                    useImageInput || imageRefs.length > 0 || dragBlobUrls.length > 0
+                                                        ? 'primary'
+                                                        : 'inherit'
+                                                }
+                                            />
+                                        </IconButton>
+                                    </InputAdornment>
+                                ),
+                            },
+                        }}
+                    />
+                </Box>
+                {(imageRefs.length > 0 || dragBlobUrls.length > 0) && (
+                    <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
+                        {imageRefs.map((r) => (
+                            <Box key={r} sx={{ position: 'relative', display: 'inline-flex' }}>
+                                <Box
+                                    component="img"
+                                    src={`${THUMBNAIL_HOST_URL}/${device}/${r.replace(/\.[^.]+$/, '.webp')}`}
+                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'secondary.main', display: 'block' }}
+                                />
+                                <IconButton
+                                    size="small"
+                                    onClick={() => onRemoveImageRef(r)}
+                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
+                                >
+                                    <CloseRounded sx={{ fontSize: 12 }} />
+                                </IconButton>
+                            </Box>
+                        ))}
+                        {dragBlobUrls.map((url) => (
+                            <Box key={url} sx={{ position: 'relative', display: 'inline-flex' }}>
+                                <Box
+                                    component="img"
+                                    src={url}
+                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'primary.main', display: 'block' }}
+                                />
+                                <IconButton
+                                    size="small"
+                                    onClick={() => onRemoveBlobUrl(url)}
+                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
+                                >
+                                    <CloseRounded sx={{ fontSize: 12 }} />
+                                </IconButton>
+                            </Box>
+                        ))}
+                    </Stack>
+                )}
+                <ImageDropSearch
+                    visible={useImageInput}
+                    onImageSelect={(blobUrl) => {
+                        onAddBlobUrl(blobUrl);
+                        setUseImageInput(false);
+                    }}
+                />
+            </>
+        );
+    })
+);
+
 const SearchPage = () => {
     const dispatch = useAppDispatch();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -102,93 +291,42 @@ const SearchPage = () => {
     const [viewMode, setViewMode] = useState<'images' | 'events'>('images');
     const [page, setPage] = useState(1);
 
-    // Search Settings — local draft text; committed to URL on Enter
-    const [textQuery, setTextQuery] = useState(() => searchParams.get('q') || '');
-    const [useImageInput, setUseImageInput] = useState<boolean>(false);
+    // textQuery lives in SearchTextBox child — read via ref to avoid re-renders on typing
+    const textQueryRef = useRef(searchParams.get('q') || '');
+    const searchTextBoxRef = useRef<SearchTextBoxHandle>(null);
 
-    // Drag-and-drop / camera image blobs
+    // Drag-and-drop / camera image blobs (stay here — SWR key depends on them)
     const [dragBlobUrls, setDragBlobUrls] = useState<string[]>([]);
-    const [isDragOver, setIsDragOver] = useState(false);
 
-    const addBlobUrl = (url: string) => setDragBlobUrls((prev) => [...prev, url]);
-    const removeBlobUrl = (url: string) => {
+    const addBlobUrl = useCallback((url: string) => setDragBlobUrls((prev) => [...prev, url]), []);
+    const removeBlobUrl = useCallback((url: string) => {
         URL.revokeObjectURL(url);
         setDragBlobUrls((prev) => prev.filter((u) => u !== url));
-    };
+    }, []);
 
-    const handleDragOver = (e: React.DragEvent) => {
-        const { types } = e.dataTransfer;
-        if (types.includes('Files') || types.includes('text/uri-list')) {
-            e.preventDefault();
-            setIsDragOver(true);
-        }
-    };
-    const handleDragLeave = () => setIsDragOver(false);
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDragOver(false);
+    const removeImageRef = useCallback((ref: string) => {
+        setSearchParams((prev) => {
+            const p = new URLSearchParams(prev);
+            const rest = p.getAll('imageRef').filter((r) => r !== ref);
+            p.delete('imageRef');
+            rest.forEach((r) => p.append('imageRef', r));
+            return p;
+        });
+    }, [setSearchParams]);
 
-        // File drop (OS file manager)
-        const file = e.dataTransfer.files[0];
-        if (file?.type.startsWith('image/')) {
-            addBlobUrl(URL.createObjectURL(file));
-            return;
-        }
+    const handleTextChange = useCallback((t: string) => { textQueryRef.current = t; }, []);
 
-        // URL drop (browser image drag)
-        const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-        if (url?.startsWith('http')) {
-            fetch(url)
-                .then((r) => r.blob())
-                .then((blob) => {
-                    if (blob.type.startsWith('image/')) {
-                        addBlobUrl(URL.createObjectURL(blob));
-                    }
-                })
-                .catch(() => {});
-        }
-    };
+    const onParseResult = useCallback((extracted: Partial<SearchQuery>) => {
+        setSearchParams((prev) => applyQueryToParams(extracted, new URLSearchParams(prev)), { replace: true });
+    }, [setSearchParams]);
+
+    const onFilterDetected = useCallback((type: 'temporal') => {
+        setFilterShown(type);
+    }, []);
 
     useEffect(() => {
         if (device) dispatch(setDevice(device));
     }, [device]);
-
-    // Keep textQuery in sync on browser back/forward
-    useEffect(() => {
-        setTextQuery(searchParams.get('q') || '');
-    }, [searchParams.get('q')]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        if (!textQuery.trim()) return;
-        const timer = setTimeout(() => {
-            parseQueryFilters(textQuery, device)
-                .then((parsed) => {
-                    // Only apply filters actually extracted from the text — never
-                    // clear URL params that were set via the filter UI
-                    const extracted: Partial<SearchQuery> = {};
-                    if (parsed.timeOfDays?.length) extracted.timeOfDays = parsed.timeOfDays;
-                    if (parsed.dayOfWeeks?.length) extracted.dayOfWeeks = parsed.dayOfWeeks;
-                    if (parsed.seasons?.length) extracted.seasons = parsed.seasons;
-                    if (parsed.months?.length) extracted.months = parsed.months;
-                    if (parsed.years?.length) extracted.years = parsed.years;
-                    if (parsed.customRanges?.length) extracted.customRanges = parsed.customRanges;
-                    if (parsed.countries?.length) extracted.countries = parsed.countries;
-                    if (parsed.locationIds?.length) extracted.locationIds = parsed.locationIds;
-                    if (Object.keys(extracted).length > 0) {
-                        setSearchParams((prev) => applyQueryToParams(extracted, new URLSearchParams(prev)), { replace: true });
-                    }
-                    const hasTemporalFilter =
-                        (parsed.timeOfDays?.length ?? 0) > 0 ||
-                        (parsed.dayOfWeeks?.length ?? 0) > 0 ||
-                        (parsed.months?.length ?? 0) > 0 ||
-                        (parsed.years?.length ?? 0) > 0 ||
-                        (parsed.customRanges?.length ?? 0) > 0;
-                    if (hasTemporalFilter) setFilterShown('temporal');
-                })
-                .catch(() => {});
-        }, 800);
-        return () => clearTimeout(timer);
-    }, [textQuery, device, setSearchParams]);
 
     const [filterShown, setFilterShown] = useState<
         'temporal' | 'location' | 'faces' | null
@@ -341,35 +479,40 @@ const SearchPage = () => {
         };
     }, [images, results, searchSummaryData]);
 
-    const triggerSearch = React.useCallback(() => {
-        const full = { ...searchQuery, text: textQuery };
+    const triggerSearch = useCallback(() => {
+        const text = textQueryRef.current;
+        const full = { ...searchQuery, text };
         dispatch(pushToHistory(full));
         setSearchParams((prev) => {
             const p = new URLSearchParams(prev);
-            if (textQuery) p.set('q', textQuery); else p.delete('q');
+            if (text) p.set('q', text); else p.delete('q');
             return p;
-        }); // push — new browser history entry
-    }, [searchQuery, textQuery, dispatch, setSearchParams]);
+        });
+    }, [searchQuery, dispatch, setSearchParams]);
 
-    const restoreFromHistory = React.useCallback((entry: SearchQuery) => {
-        setTextQuery(entry.text || '');
+    const restoreFromHistory = useCallback((entry: SearchQuery) => {
+        const text = entry.text || '';
+        textQueryRef.current = text;
+        searchTextBoxRef.current?.setText(text);
         setSearchParams((prev) => {
             const p = applyQueryToParams(entry, new URLSearchParams());
             const device = prev.get('device');
             if (device) p.set('device', device);
             return p;
-        }); // push
+        });
     }, [setSearchParams]);
 
-    const handleAppendToQuery = React.useCallback((text: string) => {
-        const newText = textQuery.trim() ? `${textQuery.trim()} ${text}` : text;
-        setTextQuery(newText);
+    const handleAppendToQuery = useCallback((text: string) => {
+        const current = textQueryRef.current;
+        const newText = current.trim() ? `${current.trim()} ${text}` : text;
+        textQueryRef.current = newText;
+        searchTextBoxRef.current?.setText(newText);
         setSearchParams((prev) => {
             const p = new URLSearchParams(prev);
             if (newText) p.set('q', newText); else p.delete('q');
             return p;
         });
-    }, [textQuery, setSearchParams]);
+    }, [setSearchParams]);
 
     const handleAddLocationFilter = React.useCallback((id: string, name: string) => {
         setSearchParams((prev) => {
@@ -470,110 +613,19 @@ const SearchPage = () => {
                 <Typography variant="caption">
                     Type in a prompt in natural language
                 </Typography>
-                <Box
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    sx={{
-                        borderRadius: 1,
-                        outline: isDragOver ? '2px dashed' : 'none',
-                        outlineColor: 'primary.main',
-                        transition: 'outline 0.1s',
-                    }}
-                >
-                    <TextField
-                        variant="outlined"
-                        multiline
-                        rows={3}
-                        value={textQuery}
-                        onChange={(e) => setTextQuery(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                triggerSearch();
-                            }
-                        }}
-                        sx={{ marginY: 1, width: '100%' }}
-                        slotProps={{
-                            input: {
-                                endAdornment: (
-                                    <InputAdornment position="end">
-                                        <IconButton
-                                            onClick={() =>
-                                                setUseImageInput((prev) => !prev)
-                                            }
-                                            edge="end"
-                                        >
-                                            <AddAPhotoRounded
-                                                color={
-                                                    useImageInput || imageRefs.length > 0 || dragBlobUrls.length > 0
-                                                        ? 'primary'
-                                                        : 'inherit'
-                                                }
-                                            />
-                                        </IconButton>
-                                    </InputAdornment>
-                                ),
-                            },
-                        }}
-                    />
-                </Box>
-                {(imageRefs.length > 0 || dragBlobUrls.length > 0) && (
-                    <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
-                        {imageRefs.map((ref) => (
-                            <Box
-                                key={ref}
-                                sx={{ position: 'relative', display: 'inline-flex' }}
-                            >
-                                <Box
-                                    component="img"
-                                    src={`${THUMBNAIL_HOST_URL}/${device}/${ref.replace(/\.[^.]+$/, '.webp')}`}
-                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'secondary.main', display: 'block' }}
-                                />
-                                <IconButton
-                                    size="small"
-                                    onClick={() =>
-                                        setSearchParams((prev) => {
-                                            const p = new URLSearchParams(prev);
-                                            const rest = p.getAll('imageRef').filter((r) => r !== ref);
-                                            p.delete('imageRef');
-                                            rest.forEach((r) => p.append('imageRef', r));
-                                            return p;
-                                        })
-                                    }
-                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
-                                >
-                                    <CloseRounded sx={{ fontSize: 12 }} />
-                                </IconButton>
-                            </Box>
-                        ))}
-                        {dragBlobUrls.map((url) => (
-                            <Box
-                                key={url}
-                                sx={{ position: 'relative', display: 'inline-flex' }}
-                            >
-                                <Box
-                                    component="img"
-                                    src={url}
-                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'primary.main', display: 'block' }}
-                                />
-                                <IconButton
-                                    size="small"
-                                    onClick={() => removeBlobUrl(url)}
-                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
-                                >
-                                    <CloseRounded sx={{ fontSize: 12 }} />
-                                </IconButton>
-                            </Box>
-                        ))}
-                    </Stack>
-                )}
-                <ImageDropSearch
-                    visible={useImageInput}
-                    onImageSelect={(blobUrl) => {
-                        addBlobUrl(blobUrl);
-                        setUseImageInput(false);
-                    }}
+                <SearchTextBox
+                    ref={searchTextBoxRef}
+                    initialValue={searchParams.get('q') || ''}
+                    device={device}
+                    onTextChange={handleTextChange}
+                    onSearch={triggerSearch}
+                    onParseResult={onParseResult}
+                    onFilterDetected={onFilterDetected}
+                    imageRefs={imageRefs}
+                    dragBlobUrls={dragBlobUrls}
+                    onRemoveImageRef={removeImageRef}
+                    onRemoveBlobUrl={removeBlobUrl}
+                    onAddBlobUrl={addBlobUrl}
                 />
                 {searchHistory.length > 0 && (
                     <Box sx={{ mt: 0.5, mb: 0.5 }}>
