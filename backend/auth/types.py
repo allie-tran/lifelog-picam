@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from app_types import CustomTarget
 from dependencies import CamelCaseModel
 from mongodb_odm import Document
@@ -74,6 +75,15 @@ class Person(CamelCaseModel):
     name: str
     embeddings: list[list[float]] = []
     cropped: list[str]
+    cluster_id: str | None = None
+
+    # convert cluster_id to string for easier storage in MongoDB, since it can be None or a string
+    @field_validator("cluster_id", mode="before")
+    def validate_cluster_id(cls, v):
+        if v is None:
+            return None
+        return str(v)
+
 
 # class Device(Document):
 #     device_id: str

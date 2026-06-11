@@ -126,7 +126,7 @@ async def last_gps(
         logger.warning("No associated user found for device %s", device)
         raise HTTPException(status_code=404, detail="Device not found or not associated with a user")
 
-    last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == associated_user).order_by(RawGPS.timestamp.desc())).scalars().first()
+    last_gps = session.execute(select(RawGPS).where(RawGPS.device_id == associated_user).order_by(RawGPS.timestamp.desc()).limit(1)).scalars().first()
     if not last_gps:
         raise HTTPException(status_code=404, detail="No GPS data found for device")
     logger.debug(
@@ -165,6 +165,9 @@ def get_gps_by_date(
     nested=False,
 ):
     _require_owner(access_level)
+
+    if not date:
+        raise HTTPException(status_code=400, detail="Date parameter is required")
 
     from datetime import date as _date_cls
     from sqlalchemy import func as _func

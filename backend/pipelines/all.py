@@ -5,6 +5,7 @@ import traceback
 
 from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import select
 from auth.ortho import apply_transformation, get_matrix
 from auth.types import Person
@@ -14,7 +15,7 @@ from scripts.date_utils import parse_date
 from scripts.utils import make_video_thumbnail
 from tasks import yolo_process_images_task
 from visual import clip_model, SIGLIP
-from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson
+from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson, PeopleCluster
 from sqlalchemy.exc import SQLAlchemyError
 from visual.siglip import SIGLIP
 import logging
@@ -74,6 +75,7 @@ def yolo_process_images(
         paths,
         [person.name for person in white_list],
         [person.embeddings for person in white_list],
+        [person.cluster_id for person in white_list],
     )
 
 
@@ -158,6 +160,7 @@ def process_image(
         white_list_entrys = session.execute(
             select(DeviceWhitelistEntry)
             .where(DeviceWhitelistEntry.device_id == session.execute(select(Device.id).where(Device.device_id == device_id)).scalar_one())
+            .options(joinedload(DeviceWhitelistEntry.people_cluster))
         ).scalars().all()
         ids = [entry.id for entry in white_list_entrys]
 
@@ -175,6 +178,7 @@ def process_image(
                     name=entry.name,
                     cropped=entry.cropped,
                     embeddings=embeddings_by_entry.get(entry.id, []),
+                    cluster_id=entry.people_cluster.id if entry.people_cluster else None,
                 )
             )
 

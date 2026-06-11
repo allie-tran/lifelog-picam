@@ -1,8 +1,8 @@
-"""Fix CLIP
+"""Add embedding added time
 
-Revision ID: 973f2a7144b7
-Revises: 0820bcbf9fa4
-Create Date: 2026-04-08 15:33:36.761999
+Revision ID: dab3d8842e9a
+Revises: c314c1c2540c
+Create Date: 2026-06-11 11:12:42.645519
 
 """
 from typing import Sequence, Union
@@ -13,8 +13,8 @@ import pgvector.sqlalchemy  # <--- Add this line here
 
 
 # revision identifiers, used by Alembic.
-revision: str = '973f2a7144b7'
-down_revision: Union[str, Sequence[str], None] = '0820bcbf9fa4'
+revision: str = 'dab3d8842e9a'
+down_revision: Union[str, Sequence[str], None] = 'c314c1c2540c'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -49,7 +49,7 @@ celery.conf.update(
         # every 15 min — location assignment for any dates still missing it
         "location-update": {
             "task": "tasks.location_update_all_devices",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="*/10"),
         },
         # every 15 min — LLM status summary for recently-active devices
         "update-status-summary": {
@@ -62,10 +62,15 @@ celery.conf.update(
             "schedule": crontab(minute="*/60"),
             "options": {"expires": 600},
         },
+        # every 5 min — enforce 30-min TTL on non-whitelisted face embeddings
+        "purge-face-embeddings": {
+            "task": "tasks.purge_expired_face_embeddings_task",
+            "schedule": crontab(minute="*/5"),
+            "options": {"expires": 240},
+        },
     },
     timezone="UTC",
 )
-
 
 
 # Patch Celery classes to support subscriptable type hints (e.g., AsyncResult[MyResultType])

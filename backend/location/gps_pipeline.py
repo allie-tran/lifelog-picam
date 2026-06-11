@@ -4,7 +4,6 @@ import logging
 import uuid
 import pandas as pd
 import numpy as np
-from zoneinfo import ZoneInfo
 from datetime import timedelta
 from sklearn.cluster import DBSCAN
 from sqlalchemy.dialects.postgresql import insert
@@ -14,9 +13,10 @@ from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
-import pytz
 
 from scripts.segmentation import load_all_segments
+
+logger = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 # DBSCAN params (haversine expects radians)
@@ -591,64 +591,54 @@ def enrich_and_index_segments(
         if location_id and start_ts is not None and end_ts is not None:
             start_dt = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else start_ts
             end_dt = end_ts.to_pydatetime() if hasattr(end_ts, "to_pydatetime") else end_ts
-            result = session.execute(
+            session.execute(
                 update(Image)
                 .where(Image.device == device)
                 .where(Image.timestamp.between(start_dt, end_dt))
                 .values(location_id=location_id)
-            )
-
-            print(
-                f"   Linked {result.rowcount} images to location '{name}' (stop={is_stop})"
             )
     session.commit()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def run_pipeline(session: Session, device: str, date: str):
-    print("1. Loading GPX files…")
+    logger.info(f"Processing device={device} date={date}")
     df = load_all_points(session, device, date)
-    print(f"   {len(df)} raw points loaded")
     if len(df) == 0:
-        print("No GPS data found for this date/device. Exiting.")
+        logger.warning(f"No GPS data found for device={device} date={date}, skipping.")
         return
 
-    print("2. Re-splitting tracks by time gap…")
+    # 2. Re-splitting tracks by time gap…
     df = assign_tracks_by_gap(df)
-    print(f"   {df['track_id'].nunique()} tracks after re-splitting")
 
-    print("3. Filtering speed outliers…")
-    before = len(df)
+    # 3. Filter out GPS points with extreme speeds (e.g. >200 km/h) which can break DBSCAN and skew stop centroids.
     df = filter_speed_outliers(df)
-    print(f"   Removed {before - len(df)} outlier points")
 
-    print("4. Running DBSCAN + stop/move labelling per track…")
+    # 4. Running DBSCAN + stop/move labelling per track…
     df = pd.concat(
         [annotate_track(grp) for _, grp in df.groupby("track_id")],
         ignore_index=True,
     )
 
-    print("5. Merging stop centroids…")
+    # 5. Assigning stop_id and place_id, so we can group by them when building segments.
     df = assign_stop_and_place_ids(df)
     df["interpolated"] = df.get("interpolated", False)  # Ensure the column exists
 
-    print("   Filling gaps between tracks…")
+    # Fill in gaps between tracks with interpolated points, so we can build segments that span the whole day and not just individual tracks.
     gap_df = analyze_track_gaps(df)
     df = pd.concat([df, gap_df], ignore_index=True)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
-    print("6. Building segment list…")
+    # 6. Building segments by grouping consecutive points with the same stop_id or place_id, and calculating centroids for stop segments.
     df, segments = build_segments(df)
-    print(f"   {len(segments)} segments total")
 
-    print("7. Assigning GPS points to images…")
+    # 7. Assigning GPS points to images by finding the nearest GPS point (or interpolated point in a gap) for each image timestamp, and calculating the corresponding timezone.
     all_points = df.to_dict(orient="records")
     point_timestamps = df["timestamp"].tolist()
     image_data = []
     session.rollback()
 
     # Insert assigned GPS data for images in batches
-    print(point_timestamps[-10:])
     data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
 
     rows = []
@@ -700,9 +690,7 @@ def run_pipeline(session: Session, device: str, date: str):
     image_data.extend(data)
     session.commit()
 
-    print(f"   GPS assignment to images complete with {len(image_data)} matches")
-
-    print("8. Enriching segments and indexing locations…")
+    # 8. Enriching segments with place info and indexing them for search.
     enrich_and_index_segments(session, segments, df, device)
     session.commit()
     # session.execute(
@@ -719,4 +707,5 @@ def run_pipeline(session: Session, device: str, date: str):
     # session.commit()
     # print(f"Reset segments for date {date} and device {device}.")
     load_all_segments(session, device, date, skip_annotations=False)
+    logger.info(f"Finished processing device={device} date={date}")
     session.flush()

@@ -1,32 +1,41 @@
-import asyncio
-import base64
+from constants import DIR, LOCAL_PORT
+
+# Utils
 import io
 import os
-from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+import asyncio
+import base64
+import time
+from tqdm.auto import tqdm
 from datetime import datetime, timezone
+import logging
+
+# App imports
+from dependencies import CamelCaseModel
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary
+from auth.types import AccessLevel, User
+
+# FastAPI and related imports
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from typing import Annotated, List, Optional
 
-from PIL import Image
-import uvicorn
-from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+# SQLAlchemy imports
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
-from tqdm.auto import tqdm
-
-from biometrics import mqtt_consumer
-from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary
-from auth import auth_app, _require_admin, _require_any_access, _require_owner
-from auth.auth_models import auth_dependency, get_user
-from auth.types import AccessLevel, User
-from constants import DIR, LOCAL_PORT
+from sqlalchemy import select, desc, update
 from database import close_db, init_db, get_session, engine as _db_engine
 from database.types import DaySummaryRecord, ImageRecord
 from database.models import Image as ImageModel, Device
-from dependencies import CamelCaseModel
+
+# Misc imports
+from PIL import Image
+from biometrics import mqtt_consumer
+from auth import auth_app, _require_admin, _require_any_access, _require_owner
+from auth.auth_models import auth_dependency, get_user
 from tasks import describe_segment_task
-from ingest import app as ingest_app
 from pipelines.all import process_video
 from pipelines.hourly import update_app
 from preprocess import  load_features
@@ -34,12 +43,14 @@ from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
     update_dirty_segments,
-    summarize_day_by_text,
-    summarize_lifelog_by_day,
+    summarize_day_by_text, summarize_lifelog_by_day,
 )
-from scripts.utils import CustomFormatter, get_thumbnail_path
-from settings import control_app
+from scripts.utils import CustomFormatter
 from settings.utils import create_device
+
+# API imports
+from settings import control_app
+from ingest import app as ingest_app
 from apis.explore import app as explore_app
 from apis.location import app as location_app
 from apis.browse import app as browse_app
@@ -51,32 +62,21 @@ from apis.delete import app as delete_app
 from apis.notifications import app as notifications_app
 from apis.status import app as status_app
 
-from sqlalchemy import select, desc, update
-from datetime import datetime
-import logging
 
+load_dotenv()
+picam_username = os.getenv("PICAM_USERNAME", "default_user")
+
+ch = logging.StreamHandler()
+ch.setFormatter(CustomFormatter())
+
+# Inject it straight into the root configuration
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
-    force=True
+    force=True,
+    handlers=[ch]  # <-- Force the root logger to use your custom colored handler
 )
-logger = logging.getLogger("lifelog-picam")
-logger.setLevel(logging.INFO)
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(CustomFormatter())
-
-logger.addHandler(ch)
-
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(CustomFormatter())
-
-logger = logging.getLogger("lifelog-picam")
-logger.setLevel(logging.INFO)
-logger.addHandler(ch)
-
+logger = logging.getLogger(__name__)  # No extra addHandler() needed!
 
 
 # ---------------------------------------------------------------------------
@@ -88,15 +88,9 @@ class ChangeSegmentActivityRequest(CamelCaseModel):
     new_activity_info: str
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-load_dotenv()
-picam_username = os.getenv("PICAM_USERNAME", "default_user")
-
-
 DEFAULT_TARGETS = [
     CustomTarget(
         "Phone",
@@ -367,18 +361,72 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=3600, # cache preflight response for 1 hour
 )
 
+def _get_time_color(process_time: float) -> str:
+    """Return a color code based on the process time."""
+    if process_time < 0.5:
+        return "\x1b[32m"  # Green for fast responses
+    elif process_time < 1.0:
+        return "\x1b[33m"  # Yellow for moderate responses
+    else:
+        return "\x1b[31m"  # Red for slow responses
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+
+    start_time: float = time.perf_counter()
+    response = await call_next(request)
+    process_time: float = time.perf_counter() - start_time
+
+    response.headers["X-Process-Time"] = str(process_time)
+
+    # Keep the raw plain text in the scope if other filters need it
+    request.scope["process_time"] = f"{process_time:.4f}s"
+
+    # Colorize the brackets and the time string right here inside the logger line!
+    color = _get_time_color(process_time)
+    reset = "\x1b[0m"
+    logger.info(
+        f"{request.method} {request.url.path} {color}[{process_time:.4f}s]{reset}"
+    )
+
+    return response
 
 # ---------------------------------------------------------------------------
 # Root
 # ---------------------------------------------------------------------------
 
-
 @app.get("/")
 async def root():
     return {"message": "Hello, World!"}
 
+@app.get("/_debug/tasks")
+async def get_running_tasks():
+    tasks = asyncio.all_tasks()
+    task_list = []
+
+    for i, task in enumerate(tasks):
+        # Skip this current request task to avoid clutter
+        if task == asyncio.current_task():
+            continue
+
+        # Extract where the task is currently halted
+        stack = task.get_stack()
+        formatted_stack = [
+            f"{f.f_code.co_filename}:{f.f_lineno} in {f.f_code.co_name}"
+            for f in stack
+        ]
+
+        task_list.append({
+            "task_id": i,
+            "name": task.get_name(),
+            "coro": str(task.get_coro()),
+            "current_stack": formatted_stack
+        })
+
+    return {"running_tasks_count": len(task_list), "tasks": task_list}
 
 # ---------------------------------------------------------------------------
 # Upload endpoints
@@ -472,31 +520,6 @@ def create_device_endpoint(
     return {"message": f"Device {device} created successfully."}
 
 
-@app.get("/get-image")
-def get_image(
-    device: str,
-    filename: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
-    session: Session = Depends(get_session),
-):
-    _require_any_access(access_level)
-
-    image = ImageRecord.find_one(session, device=device, image_path=filename)
-    if not image:
-        raise HTTPException(status_code=404, detail="Image not found.")
-
-    image_path = os.path.join(DIR, device, filename)
-    thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
-    if not thumbnail_exists:
-        raise HTTPException(status_code=404, detail="Thumbnail not found.")
-
-    img = Image.open(thumbnail_path)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    return f"data:image/jpeg;base64, {base64.b64encode(buf.getvalue()).decode('utf-8')}"
-
-
-
 # ---------------------------------------------------------------------------
 # Segment processing
 # ---------------------------------------------------------------------------
@@ -560,7 +583,7 @@ def process_date(
     device: str,
     resegment: bool = False,
     reannotate: bool = False,
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks = None,  # type: ignore
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
@@ -610,7 +633,7 @@ _LIVE_THRESHOLD_MINUTES = 20  # day is "live" if last image arrived within this 
 def get_day_summary(
     date: str,
     device: str,
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks = None,  # type: ignore
     user=Depends(get_user),
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
@@ -871,4 +894,5 @@ async def change_segment_activity(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=LOCAL_PORT, reload=True)

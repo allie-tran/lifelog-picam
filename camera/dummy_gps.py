@@ -11,10 +11,10 @@ load_dotenv()
 
 device_id = os.getenv("DEVICE_ID", "omi")
 tf = TimezoneFinder()
-
+from_date = datetime(2025, 5, 15, tzinfo=timezone.utc)
 
 def get_points():
-    json_file = "Timeline.json"
+    json_file = "Timeline-Jun.json"
     with open(json_file, "r") as f:
         timeline = json.load(f)
         timeline = timeline["semanticSegments"]
@@ -142,18 +142,21 @@ if __name__ == "__main__":
         all_points = df.to_dict(orient="records")
 
     all_dates = sorted(set(p["date"] for p in all_points))
+    end_point = "http://localhost:8082/location/upload-gps"
     for date in all_dates:
-        end_point = "http://localhost:8082/location/upload-gps"
+        if date < from_date.date().isoformat():
+            continue
         for point in all_points:
             if point["date"] == date:
                 payload = {
                     "latitude": point["latitude"],
                     "longitude": point["longitude"],
                     "timestamp": point["timestamp"],
+                    "device_id": device_id,
                 }
                 response = requests.put(
                     end_point,
-                    json=payload, timeout=10, headers={"X-Device-ID": device_id}
+                    json=payload, timeout=10
                 )
                 print(f"Sent point: {payload}, Response: {response.status_code}")
                 if response.status_code != 200:

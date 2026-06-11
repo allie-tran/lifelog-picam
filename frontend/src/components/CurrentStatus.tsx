@@ -60,6 +60,10 @@ export default function CurrentStatus({ device }: { device: string }) {
         ? dayjs.utc(data.segmentSince).fromNow()
         : null;
 
+    const locationSinceText = data.locationSince
+        ? dayjs.utc(data.locationSince).fromNow()
+        : null;
+
     return (
         <Paper
             variant="outlined"
@@ -156,15 +160,20 @@ export default function CurrentStatus({ device }: { device: string }) {
                                         data.currentLocation.name !== data.currentLocation.city &&
                                         `, ${data.currentLocation.city}`}
                                 </Typography>
+                                {locationSinceText && (
+                                    <Typography variant="caption" color="text.disabled">
+                                        · since {locationSinceText}
+                                    </Typography>
+                                )}
                             </Stack>
                         )}
 
-                        {/* Since when */}
+                        {/* Last photo */}
                         {segmentSinceText && (
                             <Stack direction="row" spacing={0.5} alignItems="center">
                                 <AccessTimeIcon fontSize="inherit" color="action" />
                                 <Typography variant="caption" color="text.secondary">
-                                    Since {segmentSinceText}
+                                    Last photo {segmentSinceText}
                                 </Typography>
                             </Stack>
                         )}

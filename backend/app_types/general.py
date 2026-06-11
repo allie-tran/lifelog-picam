@@ -118,6 +118,7 @@ class ObjectDetection(BaseModel):
     rel_bbox: Optional[list[float]] = None  # [x_min_rel, y_min_rel, x_max_rel, y_max_rel]
     embedding: Optional[list[float]] = None
     cluster_label: Optional[int] = None
+    cluster_id: Optional[str] = None
 
 
 class ProcessedInfo(BaseModel):

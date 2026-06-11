@@ -20,10 +20,14 @@ from database import get_session
 from database.models import HeartRateData as HeartRateTable, Image, ImagePerson, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
 from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
+from pipelines.all import process_image
+from scripts.anonymise import anonymise_image
 from scripts.segmentation import load_all_segments
 from scripts.utils import get_thumbnail_path
 from sessions.redis import redis_client
 from PIL import Image as PILImage
+
+from tasks import anonymise_image_task
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
@@ -399,13 +403,32 @@ def get_image(
 ):
     _require_any_access(access_level)
 
-    image = ImageRecord.find_one(session, device=device, image_path=filename)
+    # image = ImageRecord.find_one(session, device=device, image_path=filename)
+    image = session.execute(
+        select(Image).where(Image.device == device).where(Image.image_path == filename)
+    ).scalar_one_or_none()
     if not image:
         raise HTTPException(status_code=404, detail="Image not found.")
 
     image_path = os.path.join(DIR, device, filename)
     thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
     if not thumbnail_exists:
+        if not image.proc_yolo:
+            logger.info("Scheduling processing for image %s device %s", filename, device)
+            process_image(
+                session,
+                device,
+                filename.split("/")[0],
+                filename.split("/")[-1],
+                "UTC"
+            )
+        else:
+            logger.info("Scheduling anonymisation for image %s device %s", filename, device)
+            anonymise_image_task.delay(
+                device,
+                image.image_path,
+                image.thumbnail
+            )
         raise HTTPException(status_code=404, detail="Thumbnail not found.")
 
     img = PILImage.open(thumbnail_path)
@@ -445,7 +468,7 @@ def get_image(
         ] if image_metadata and image_metadata.objects else [],
         people=[
             PersonData(
-                label=person.cluster.cluster_label if person.cluster else (person.label or 'person'),
+                label=person.cluster.cluster_label if person.cluster else (person.label or 'Unknown'),
                 confidence=person.confidence,
                 bbox=person.rel_bbox or [],
                 cluster_id=str(person.cluster_id) if person.cluster_id else None,

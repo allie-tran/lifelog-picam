@@ -1,5 +1,7 @@
 from collections import defaultdict
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 DIR = os.getenv("DIR", "/mnt/ssd0/LifelogPicam")  # Directory to store images
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "/mnt/ssd0/Images/LifelogPicam")  # Directory to store thumbnails
