@@ -49,7 +49,7 @@ celery.conf.update(
         # every 15 min — location assignment for any dates still missing it
         "location-update": {
             "task": "tasks.location_update_all_devices",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="*/10"),
         },
         # every 15 min — LLM status summary for recently-active devices
         "update-status-summary": {
@@ -71,7 +71,6 @@ celery.conf.update(
     },
     timezone="UTC",
 )
-
 
 
 # Patch Celery classes to support subscriptable type hints (e.g., AsyncResult[MyResultType])

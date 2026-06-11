@@ -4,11 +4,8 @@ from typing import List
 from app_types import ObjectDetection
 from constants import DIR, THUMBNAIL_DIR
 from PIL import Image, ImageDraw, ImageFilter
-
 # from settings.types import PiCamControl
 import logging
-
-os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 class CustomFormatter(logging.Formatter):
     # Your original custom color palette
@@ -38,8 +35,11 @@ class CustomFormatter(logging.Formatter):
         # 3. Left-align the raw text to 9 spaces first, then apply color strings
         padded_level = f"{color}{raw_level:<9}{self.reset}"
 
-        # 4. Layout starting with the aligned level tag
-        log_fmt = f"{padded_level} %(asctime)s - %(message)s"
+        # 4. Combine filename and lineno into a single string
+        file_info = f"[{record.filename:<8}:{record.lineno:>4}]"
+
+        # 5. Layout starting with the aligned level tag
+        log_fmt = f"{padded_level} {file_info} -  %(asctime)s - %(message)s"
 
         formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
         return formatter.format(record)

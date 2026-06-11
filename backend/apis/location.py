@@ -166,6 +166,9 @@ def get_gps_by_date(
 ):
     _require_owner(access_level)
 
+    if not date:
+        raise HTTPException(status_code=400, detail="Date parameter is required")
+
     from datetime import date as _date_cls
     from sqlalchemy import func as _func
     is_today = (date == _date_cls.today().isoformat())

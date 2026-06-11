@@ -158,6 +158,7 @@ export type CurrentStatus = {
     currentLocation?: LocationData;
     currentThumbnail?: string;
     segmentSince?: string;
+    locationSince?: string;
     currentLat?: number;
     currentLon?: number;
     sensors: SensorStatus[];

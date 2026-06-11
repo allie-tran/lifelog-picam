@@ -35,6 +35,7 @@ const ImageWithDate = ({
     fontSize,
     disableDelete = false,
     timeOnly = false,
+    device: deviceProp,
 }: {
     image: ImageObject;
     onClick?: () => void;
@@ -44,13 +45,14 @@ const ImageWithDate = ({
     fontSize?: number | string;
     disableDelete?: boolean;
     timeOnly?: boolean;
+    device?: string;
 }) => {
     const [deleted, setDeleted] = useState(false);
     const [showAnnotator, setShowAnnotator] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const dispatch = useAppDispatch();
     const [searchParams] = useSearchParams();
-    const device = searchParams.get('device') || '';
+    const device = deviceProp ?? searchParams.get('device') ?? '';
     const { evaluationId, sessionId, currentTask, submittedImages } = useAppSelector((state) => state.dres);
     const isDresSubmitted = submittedImages.includes(image.imagePath);
     const imageUrl = image.thumbnail

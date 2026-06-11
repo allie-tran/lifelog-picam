@@ -83,10 +83,12 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
 
                         label = "redacted face"
                         confidence = float(face.confidence)
+                        cluster_id = None
                         face_embedding = np.array(face.embedding)
                         face_embedding = face_embedding / np.linalg.norm(face_embedding)  # normalize the face embedding
 
                         for whitelist_person in whitelist:
+                            matched = False
                             embeddings = []
                             for embedding in whitelist_person.embeddings:
                                 embedding = np.array(embedding)
@@ -97,9 +99,11 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                                 if sim > _FACE_SIMILARITY_THRESHOLD:
                                     confidence = sim
                                     label = whitelist_person.name
+                                    cluster_id = whitelist_person.cluster_id
+                                    matched = True
                                     break
 
-                            if embeddings:
+                            if not matched and embeddings:
                                 avg_embedding = np.mean(embeddings, axis=0)
                                 avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
                                 sim = np.dot(avg_embedding, face_embedding)
@@ -107,6 +111,11 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                                 if sim > _FACE_SIMILARITY_THRESHOLD:
                                     confidence = sim
                                     label = whitelist_person.name
+                                    cluster_id = whitelist_person.cluster_id
+                                    matched = True
+
+                            if matched:
+                                break
 
 
                         people.append(
@@ -121,6 +130,7 @@ def extract_object_from_images(image_paths, whitelist: list[Person] = [], models
                                     adjusted_bbox[3] / h,
                                 ],
                                 embedding=face.embedding,
+                                cluster_id=cluster_id,
                             )
                         )
         final_results.append(

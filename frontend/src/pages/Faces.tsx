@@ -28,8 +28,10 @@ import FaceEnroll from 'components/FaceEnroll';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import useSWR from 'swr';
+import ImageWithDate from 'components/ImageWithDate';
+import { useAppDispatch } from 'reducers/hooks';
+import { setZoomedImage } from 'reducers/zoomedImage';
 
 // ---------------------------------------------------------------------------
 // Person photos modal
@@ -46,6 +48,7 @@ const PersonPhotosModal = ({
     open: boolean;
     onClose: () => void;
 }) => {
+    const dispatch = useAppDispatch();
     const { data: photos, isLoading } = useSWR(
         open && device ? ['person-photos', device, name] : null,
         () => getImagesByPerson(device, name),
@@ -69,12 +72,17 @@ const PersonPhotosModal = ({
                             title={photo.timestamp ? new Date(photo.timestamp).toLocaleString() : ''}
                             placement="top"
                         >
-                            <Box
-                                component="img"
-                                src={`${THUMBNAIL_HOST_URL}/${device}/${photo.thumbnail}`}
-                                alt={photo.imagePath}
-                                sx={{ width: 120, height: 90, objectFit: 'cover', borderRadius: 1 }}
-                                onClick={() => window.open(`${THUMBNAIL_HOST_URL}/${device}/${photo.imagePath}`, '_blank')}
+                            <ImageWithDate
+                                image={{...photo, timezone: 'UTC', isVideo: false}}
+                                device={device}
+                                onClick={() => {
+                                dispatch(
+                                    setZoomedImage({
+                                        image: photo.imagePath,
+                                        isVideo: false,
+                                    })
+                                );
+                            }}
                             />
                         </Tooltip>
                     ))}

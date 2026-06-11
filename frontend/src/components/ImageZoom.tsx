@@ -16,6 +16,7 @@ import {
     Chip,
     CircularProgress,
     Grid,
+    Skeleton,
     Stack,
     Typography
 } from '@mui/material';
@@ -104,6 +105,7 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
         <ModalWithCloseButton
             open={true}
             onClose={() => dispatch(clearZoomedImage())}
+            sx={{ zIndex: 3300 }} // Ensure it appears above other content
         >
             <Stack direction="row" spacing={2} alignItems="center" marginBottom={2}>
                 <Button variant="outlined" onClick={handleSimilarImages}>
@@ -157,10 +159,15 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
                     />
                 </video>
             ) : isLoading ? (
-                <CircularProgress size="3rem" />
-            ) : (
+                <Skeleton
+                    variant="rounded"
+                    width="100%"
+                    height="80vh"
+                    sx={{ borderRadius: 2 }}
+                />
+            ) : imageData ? (
                 <ImageVisualizer data={imageData as any} />
-            )}
+            ) : <Typography color="error">Failed to load image data.</Typography>}
         </ModalWithCloseButton>
     );
 };

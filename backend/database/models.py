@@ -148,6 +148,13 @@ class DeviceWhitelistEntry(Base):
         "DeviceWhitelistEmbedding", back_populates="entry", cascade="all, delete-orphan"
     )
 
+    # 1 to 1
+    people_cluster = relationship(
+        "PeopleCluster",
+        back_populates="whitelist_entry",
+        uselist=False,
+    )
+
 
 class DeviceWhitelistEmbedding(Base):
     __tablename__ = "device_whitelist_embeddings"
@@ -168,7 +175,6 @@ class DeviceWhitelistEmbedding(Base):
         nullable=False,
     )
     embedding: Mapped[Any] = mapped_column(Vector(512), nullable=False)
-
     entry = relationship("DeviceWhitelistEntry", back_populates="embeddings")
 
 
@@ -257,7 +263,7 @@ class Image(Base):
     image_path: Mapped[str] = mapped_column(Text, nullable=False)
     thumbnail: Mapped[str] = mapped_column(Text, nullable=False)
     is_video: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     local_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timezone: Mapped[str | None] = mapped_column(Text)
     date: Mapped[str | None] = mapped_column(Text)

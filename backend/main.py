@@ -1,33 +1,41 @@
-import asyncio
-import base64
-from contextvars import ContextVar
+from constants import DIR, LOCAL_PORT
+
+# Utils
 import io
 import os
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-import time
-from typing import Annotated, List, Optional
-
-from PIL import Image
 from dotenv import load_dotenv
+import asyncio
+import base64
+import time
+from tqdm.auto import tqdm
+from datetime import datetime, timezone
+import logging
+
+# App imports
+from dependencies import CamelCaseModel
+from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary
+from auth.types import AccessLevel, User
+
+# FastAPI and related imports
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from typing import Annotated, List, Optional
+
+# SQLAlchemy imports
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
-from tqdm.auto import tqdm
-
-from biometrics import mqtt_consumer
-from app_types import ActionType, CustomFastAPI, CustomTarget, DaySummary
-from auth import auth_app, _require_admin, _require_any_access, _require_owner
-from auth.auth_models import auth_dependency, get_user
-from auth.types import AccessLevel, User
-from constants import DIR, LOCAL_PORT
+from sqlalchemy import select, desc, update
 from database import close_db, init_db, get_session, engine as _db_engine
 from database.types import DaySummaryRecord, ImageRecord
 from database.models import Image as ImageModel, Device
-from dependencies import CamelCaseModel
+
+# Misc imports
+from PIL import Image
+from biometrics import mqtt_consumer
+from auth import auth_app, _require_admin, _require_any_access, _require_owner
+from auth.auth_models import auth_dependency, get_user
 from tasks import describe_segment_task
-from ingest import app as ingest_app
 from pipelines.all import process_video
 from pipelines.hourly import update_app
 from preprocess import  load_features
@@ -35,12 +43,14 @@ from scripts.segmentation import load_all_segments
 from scripts.summary import (
     create_day_timeline,
     update_dirty_segments,
-    summarize_day_by_text,
-    summarize_lifelog_by_day,
+    summarize_day_by_text, summarize_lifelog_by_day,
 )
-from scripts.utils import CustomFormatter, get_thumbnail_path
-from settings import control_app
+from scripts.utils import CustomFormatter
 from settings.utils import create_device
+
+# API imports
+from settings import control_app
+from ingest import app as ingest_app
 from apis.explore import app as explore_app
 from apis.location import app as location_app
 from apis.browse import app as browse_app
@@ -52,9 +62,9 @@ from apis.delete import app as delete_app
 from apis.notifications import app as notifications_app
 from apis.status import app as status_app
 
-from sqlalchemy import select, desc, update
-from datetime import datetime
-import logging
+
+load_dotenv()
+picam_username = os.getenv("PICAM_USERNAME", "default_user")
 
 ch = logging.StreamHandler()
 ch.setFormatter(CustomFormatter())
@@ -81,11 +91,6 @@ class ChangeSegmentActivityRequest(CamelCaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-load_dotenv()
-picam_username = os.getenv("PICAM_USERNAME", "default_user")
-
-
 DEFAULT_TARGETS = [
     CustomTarget(
         "Phone",
@@ -356,6 +361,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=3600, # cache preflight response for 1 hour
 )
 
 def _get_time_color(process_time: float) -> str:
@@ -512,31 +518,6 @@ def create_device_endpoint(
     _require_admin(access_level)
     create_device(session, device)
     return {"message": f"Device {device} created successfully."}
-
-
-@app.get("/get-image")
-def get_image(
-    device: str,
-    filename: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
-    session: Session = Depends(get_session),
-):
-    _require_any_access(access_level)
-
-    image = ImageRecord.find_one(session, device=device, image_path=filename)
-    if not image:
-        raise HTTPException(status_code=404, detail="Image not found.")
-
-    image_path = os.path.join(DIR, device, filename)
-    thumbnail_path, thumbnail_exists = get_thumbnail_path(image_path)
-    if not thumbnail_exists:
-        raise HTTPException(status_code=404, detail="Thumbnail not found.")
-
-    img = Image.open(thumbnail_path)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    return f"data:image/jpeg;base64, {base64.b64encode(buf.getvalue()).decode('utf-8')}"
-
 
 
 # ---------------------------------------------------------------------------

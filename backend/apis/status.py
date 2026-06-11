@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 
 from fastapi import Depends, FastAPI
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app_types.general import LocationInfo
@@ -38,6 +38,7 @@ class CurrentStatusResponse(CamelCaseModel):
     current_location: Optional[LocationInfo] = None
     current_thumbnail: Optional[str] = None
     segment_since: Optional[datetime] = None
+    location_since: Optional[datetime] = None
     current_lat: Optional[float] = None
     current_lon: Optional[float] = None
     sensors: List[SensorStatus] = []
@@ -92,7 +93,7 @@ def get_current_status(
             camera_last_seen                = max(camera_last_seen, s_last_seen) if camera_last_seen else s_last_seen  # type: ignore
             camera_online = camera_online or s_online
 
-    latest_image = session.execute(
+    latest_image_with_info = session.execute(
         select(Image)
         .where(
             Image.device == device,
@@ -103,40 +104,70 @@ def get_current_status(
         .limit(1)
     ).scalar_one_or_none()
 
+    latest_image = session.execute(
+        select(Image)
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+        )
+        .order_by(Image.timestamp.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
     current_activity = None
     current_activity_description = None
     current_thumbnail = None
     segment_since = None
+    location_since = None
     current_location: Optional[LocationInfo] = None
 
-    if latest_image:
-        current_activity = latest_image.activity or None
-        current_activity_description = latest_image.activity_description or None
-        current_thumbnail = latest_image.thumbnail
+    if latest_image_with_info:
+        current_activity = latest_image_with_info.activity or None
+        current_activity_description = latest_image_with_info.activity_description or None
+        current_thumbnail = latest_image.thumbnail if latest_image else None
+        segment_since = latest_image.timestamp if latest_image else None
 
-        if latest_image.segment_id is not None:
-            seg_start = session.execute(
-                select(Image.timestamp)
-                .where(
-                    Image.device == device,
-                    Image.segment_id == latest_image.segment_id,
-                    Image.date == latest_image.date,
-                    Image.deleted == False,
-                )
-                .order_by(Image.timestamp.asc())
-                .limit(1)
-            ).scalar_one_or_none()
-            segment_since = seg_start
-
-        if latest_image.location_id is not None:
+        if latest_image_with_info.location_id is not None:
             loc_row = session.execute(
-                select(Location).where(Location.id == latest_image.location_id)
+                select(Location).where(Location.id == latest_image_with_info.location_id)
             ).scalar_one_or_none()
             if loc_row:
                 try:
                     current_location = LocationInfo.model_validate(loc_row.__dict__)
                 except Exception:
                     pass
+
+            # Find when the current continuous stay at this location started.
+            # Step 1: most recent image with a different/null location_id.
+            last_different_ts = session.execute(
+                select(Image.timestamp)
+                .where(
+                    Image.device == device,
+                    Image.deleted == False,
+                    or_(
+                        Image.location_id != latest_image_with_info.location_id,
+                        Image.location_id.is_(None),
+                    ),
+                )
+                .order_by(Image.timestamp.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            # Step 2: earliest image at this location after the last departure.
+            loc_since_filters = [
+                Image.device == device,
+                Image.deleted == False,
+                Image.location_id == latest_image_with_info.location_id,
+            ]
+            if last_different_ts is not None:
+                loc_since_filters.append(Image.timestamp > last_different_ts)
+
+            location_since = session.execute(
+                select(Image.timestamp)
+                .where(*loc_since_filters)
+                .order_by(Image.timestamp.asc())
+                .limit(1)
+            ).scalar_one_or_none()
 
     latest_gps = session.execute(
         select(RawGPS)
@@ -174,6 +205,7 @@ def get_current_status(
         current_location=current_location,
         current_thumbnail=current_thumbnail,  # type: ignore
         segment_since=segment_since,
+        location_since=location_since,
         current_lat=current_lat,  # type: ignore
         current_lon=current_lon,  # type: ignore
         sensors=sensors,

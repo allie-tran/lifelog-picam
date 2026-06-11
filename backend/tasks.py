@@ -7,7 +7,7 @@ from celery_app import celery
 from collections import Counter
 from database.models import (
     Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry,
-    Image, ImageEmbedding, ImageObject, ImagePerson, PeopleCluster, Location,
+    Image, ImageEmbedding, ImageGPS, ImageObject, ImagePerson, PeopleCluster, Location,
 )
 from scripts.anonymise import anonymise_image
 from scripts.describe_segments import describe_segment, simple_describe_segment
@@ -194,14 +194,15 @@ def yolo_process_images_task(
     paths,
     whitelist_names: list[str] = [],
     whitelist_embeddings: list[list[list[float]]] = [],
+    whitelist_cluster_ids: list[str] = [],
 ):
     logging.info("Starting YOLO processing for device %s with %d images", device, len(paths))
     if not paths:
         return
 
     whitelist = [
-        Person(name=name, embeddings=embedding, cropped=[""])
-        for name, embedding in zip(whitelist_names, whitelist_embeddings)
+        Person(name=name, embeddings=embedding, cropped=[""], cluster_id=cluster_id)
+        for name, embedding, cluster_id in zip(whitelist_names, whitelist_embeddings, whitelist_cluster_ids)
     ]
 
     # Heavy inference — no DB connection held
@@ -251,7 +252,8 @@ def yolo_process_images_task(
                     "bbox": person["bbox"],
                     "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
-                    "embedding_created_at": datetime.utcnow() if person["embedding"] is not None else None,
+                    "embedding_created_at": datetime.now(timezone.utc),
+                    "cluster_id": person["cluster_id"],
                 })
                 if person["label"] in ("redacted face", "face"):
                     blur_boxes.append(person["bbox"])
@@ -518,42 +520,33 @@ def _non_whitelisted_condition(device: str | None = None):
 @celery.task(name="tasks.delete_unknown_face_embeddings_task")
 def delete_unknown_face_embeddings_task(device: str):
     """Delete non-whitelisted face records older than the TTL for one device."""
-    threshold = datetime.utcnow() - timedelta(minutes=_FACE_EMBEDDING_TTL_MINUTES)
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=_FACE_EMBEDDING_TTL_MINUTES)
     with Session(engine) as session:
         result = session.execute(
-            delete(ImagePerson)
+            update(ImagePerson)
             .where(
                 ImagePerson.image_id.in_(select(Image.id).where(Image.device == device)),
                 ImagePerson.embedding_created_at.isnot(None),
                 ImagePerson.embedding_created_at < threshold,
                 _non_whitelisted_condition(device),
             )
+            .values(embedding=None, cluster_id=None, label=None)
         )
         session.commit()
-    logging.info("Deleted %d expired face records for device %s", result.rowcount, device)
 
+    logging.info("Deleted %d expired face records for device %s", result.rowcount, device)  # type: ignore
 
 @celery.task(name="tasks.purge_expired_face_embeddings_task")
 def purge_expired_face_embeddings_task():
     """Global 5-minute TTL enforcement: delete all non-whitelisted face records older than 30 min."""
-    threshold = datetime.utcnow() - timedelta(minutes=_FACE_EMBEDDING_TTL_MINUTES)
     with Session(engine) as session:
-        result = session.execute(
-            delete(ImagePerson)
-            .where(
-                ImagePerson.embedding_created_at.isnot(None),
-                ImagePerson.embedding_created_at < threshold,
-                _non_whitelisted_condition(),
-            )
-        )
-        session.commit()
-    logging.info("TTL sweep: deleted %d expired face records across all devices", result.rowcount)
-
+        devices = session.execute(select(Device.device_id).where(Device.keep_face_recognition == True)).scalars().all()
+        for device in devices:
+            delete_unknown_face_embeddings_task.delay(device)  # Schedule per-device cleanup
 
 # ---------------------------------------------------------------------------
 # Cluster rebuild tasks (triggered when toggling recognition mode)
 # ---------------------------------------------------------------------------
-
 def _kmeans_numpy(embeddings: np.ndarray, k: int, max_iter: int = 100):
     """Spherical KMeans on L2-normalised embeddings using cosine distance."""
     n = embeddings.shape[0]
@@ -912,8 +905,14 @@ def location_update_all_devices():
     with Session(engine) as session:
         rows = session.execute(
             select(Image.device, Image.date)
-            .where(Image.location_id.is_(None), Image.deleted == False)
+            .outerjoin(ImageGPS, ImageGPS.image_id == Image.id)
+            .where(
+                Image.location_id.is_(None),
+                Image.deleted == False,
+                ImageGPS.image_id.is_(None),
+            )
             .distinct()
+            .order_by(Image.date.desc())
         ).all()
 
     for device, date in rows:
