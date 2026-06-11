@@ -68,7 +68,6 @@ def get_current_status(
     if not content_device:
         return CurrentStatusResponse()
 
-
     sensors_rows = session.execute(
         select(SensorDevice).where(SensorDevice.associated_user == content_device.id)
     ).scalars().all()
@@ -93,17 +92,12 @@ def get_current_status(
             camera_last_seen                = max(camera_last_seen, s_last_seen) if camera_last_seen else s_last_seen  # type: ignore
             camera_online = camera_online or s_online
 
-    latest_image_with_info = session.execute(
-        select(Image)
-        .where(
-            Image.device == device,
-            Image.deleted == False,
-            Image.activity.isnot(None) | Image.location_id.isnot(None) | Image.segment_id.isnot(None)
-        )
-        .order_by(Image.timestamp.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-
+    current_activity = None
+    current_activity_description = None
+    current_thumbnail = None
+    segment_since = None
+    location_since = None
+    current_location: Optional[LocationInfo] = None
     latest_image = session.execute(
         select(Image)
         .where(
@@ -113,61 +107,84 @@ def get_current_status(
         .order_by(Image.timestamp.desc())
         .limit(1)
     ).scalar_one_or_none()
-
-    current_activity = None
-    current_activity_description = None
-    current_thumbnail = None
-    segment_since = None
-    location_since = None
-    current_location: Optional[LocationInfo] = None
-
-    if latest_image_with_info:
-        current_activity = latest_image_with_info.activity or None
-        current_activity_description = latest_image_with_info.activity_description or None
+    if latest_image:
         current_thumbnail = latest_image.thumbnail if latest_image else None
         segment_since = latest_image.timestamp if latest_image else None
 
-        if latest_image_with_info.location_id is not None:
-            loc_row = session.execute(
-                select(Location).where(Location.id == latest_image_with_info.location_id)
-            ).scalar_one_or_none()
-            if loc_row:
-                try:
-                    current_location = LocationInfo.model_validate(loc_row.__dict__)
-                except Exception:
-                    pass
+    latest_image_with_location = session.execute(
+        select(Image)
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+            Image.location_id.is_not(None),
+        )
+        .order_by(Image.timestamp.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_image_with_location:
+        loc_row = session.execute(
+            select(Location).where(Location.id == latest_image_with_location.location_id)
+        ).scalar_one_or_none()
+        if loc_row:
+            try:
+                current_location = LocationInfo.model_validate(loc_row.__dict__)
+            except Exception:
+                pass
 
-            # Find when the current continuous stay at this location started.
-            # Step 1: most recent image with a different/null location_id.
-            last_different_ts = session.execute(
-                select(Image.timestamp)
-                .where(
-                    Image.device == device,
-                    Image.deleted == False,
-                    or_(
-                        Image.location_id != latest_image_with_info.location_id,
-                        Image.location_id.is_(None),
-                    ),
-                )
-                .order_by(Image.timestamp.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-
-            # Step 2: earliest image at this location after the last departure.
-            loc_since_filters = [
+        logger.debug(f"Latest image with location: {latest_image_with_location.timestamp}, location_id: {latest_image_with_location.location_id}")
+        # Find when the current continuous stay at this location started.
+        # Step 1: most recent image with a different/null location_id.
+        last_different_ts = session.execute(
+            select(Image.timestamp)
+            .where(
                 Image.device == device,
                 Image.deleted == False,
-                Image.location_id == latest_image_with_info.location_id,
-            ]
-            if last_different_ts is not None:
-                loc_since_filters.append(Image.timestamp > last_different_ts)
+                or_(
+                    Image.location_id != latest_image_with_location.location_id,
+                    Image.location_id.is_(None),
+                ),
+                Image.timestamp < latest_image_with_location.timestamp,
+            )
+            .order_by(Image.timestamp.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        logger.debug(f"Last different location timestamp: {last_different_ts}")
 
-            location_since = session.execute(
-                select(Image.timestamp)
-                .where(*loc_since_filters)
-                .order_by(Image.timestamp.asc())
-                .limit(1)
-            ).scalar_one_or_none()
+        # Step 2: earliest image at this location after the last departure.
+        loc_since_filters = [
+            Image.device == device,
+            Image.deleted == False,
+            Image.location_id == latest_image_with_location.location_id,
+        ]
+        if last_different_ts is not None:
+            loc_since_filters.append(Image.timestamp > last_different_ts)
+
+        logger.debug(f"Location since filters: {loc_since_filters}")
+
+        location_since = session.execute(
+            select(Image.timestamp)
+            .where(*loc_since_filters)
+            .order_by(Image.timestamp.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+        logger.debug(f"Location since: {location_since}")
+
+    latest_image_with_info = session.execute(
+        select(Image)
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+            or_(
+                Image.activity.is_not(None),
+                Image.activity_description.is_not(None),
+            ),
+        )
+        .order_by(Image.timestamp.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_image_with_info:
+        current_activity = latest_image_with_info.activity or None
+        current_activity_description = latest_image_with_info.activity_description or None
 
     latest_gps = session.execute(
         select(RawGPS)

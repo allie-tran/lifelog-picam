@@ -7,6 +7,7 @@ const CELL_SEP = ':';
 export const parseSearchParams = (sp: URLSearchParams): SearchQuery => ({
     text: sp.get('q') || '',
     isImageQuery: false,
+    imageRef: null,
     timeOfDays: (sp.get('timeOfDays')?.split(',').filter(Boolean) ?? []) as TimeOfDay[],
     dayOfWeeks: (sp.get('dayOfWeeks')?.split(',').filter(Boolean) ?? []) as DayOfWeek[],
     seasons: (sp.get('seasons')?.split(',').filter(Boolean) ?? []) as Season[],

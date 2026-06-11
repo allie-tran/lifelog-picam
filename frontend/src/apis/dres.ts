@@ -95,9 +95,9 @@ export const submitImages = async ({
     evaluationId: string
     sessionId: string
 }): Promise<SubmitResult> => {
-    const answers = images.map((img) => ({ mediaItemName: toMediaItemName(img) }))
+    const answers = images.map((img) => ({answers: [{ mediaItemName: toMediaItemName(img) }] }))
     const url = `${DRES_URL}/submit/${evaluationId}?session=${sessionId}`
-    const res = await axios.post(url, { answerSets: [{ answers }] })
+    const res = await axios.post(url, { answerSets: answers })
     return mapDresResponse(res.data)
 }
 

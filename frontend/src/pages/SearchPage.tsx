@@ -40,7 +40,7 @@ import {
     parseQueryFilters,
     searchImages,
 } from 'apis/browsing';
-import { submitImage } from 'apis/dres';
+import { submitImages } from 'apis/dres';
 import ResultSummaryBar from 'components/ResultSummaryBar';
 import { FaceFiltersHook } from 'components/FaceFilters';
 import ImageDropSearch from 'components/ImageDropSearch';
@@ -64,6 +64,8 @@ import useSWR from 'swr';
 import { SearchQuery } from '@utils/types';
 import '../App.css';
 import { ImageZoom } from '../components/ImageZoom';
+import { parseErrorResponse } from '@utils/misc';
+import { THUMBNAIL_HOST_URL } from '../constants/urls';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -103,6 +105,49 @@ const SearchPage = () => {
     // Search Settings — local draft text; committed to URL on Enter
     const [textQuery, setTextQuery] = useState(() => searchParams.get('q') || '');
     const [useImageInput, setUseImageInput] = useState<boolean>(false);
+
+    // Drag-and-drop / camera image blobs
+    const [dragBlobUrls, setDragBlobUrls] = useState<string[]>([]);
+    const [isDragOver, setIsDragOver] = useState(false);
+
+    const addBlobUrl = (url: string) => setDragBlobUrls((prev) => [...prev, url]);
+    const removeBlobUrl = (url: string) => {
+        URL.revokeObjectURL(url);
+        setDragBlobUrls((prev) => prev.filter((u) => u !== url));
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        const { types } = e.dataTransfer;
+        if (types.includes('Files') || types.includes('text/uri-list')) {
+            e.preventDefault();
+            setIsDragOver(true);
+        }
+    };
+    const handleDragLeave = () => setIsDragOver(false);
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+
+        // File drop (OS file manager)
+        const file = e.dataTransfer.files[0];
+        if (file?.type.startsWith('image/')) {
+            addBlobUrl(URL.createObjectURL(file));
+            return;
+        }
+
+        // URL drop (browser image drag)
+        const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+        if (url?.startsWith('http')) {
+            fetch(url)
+                .then((r) => r.blob())
+                .then((blob) => {
+                    if (blob.type.startsWith('image/')) {
+                        addBlobUrl(URL.createObjectURL(blob));
+                    }
+                })
+                .catch(() => {});
+        }
+    };
 
     useEffect(() => {
         if (device) dispatch(setDevice(device));
@@ -174,32 +219,51 @@ const SearchPage = () => {
         topPeople: CountItem[];
     } | null>(null);
 
+    const imageRefs = searchParams.getAll('imageRef');
+    const blobQuery = searchParams.get('mode') === 'similar' ? (searchParams.get('query') || undefined) : undefined;
+    const hasSearchInput = !!(
+        imageRefs.length || blobQuery || dragBlobUrls.length ||
+        searchQuery.text ||
+        searchQuery.timeOfDays?.length || searchQuery.dayOfWeeks?.length ||
+        searchQuery.months?.length || searchQuery.years?.length ||
+        searchQuery.customRanges?.length || searchQuery.countries?.length ||
+        searchQuery.locationIds?.length || searchQuery.bounds ||
+        searchQuery.peopleIds?.length
+    );
+
     // Endpoints
     const {
         data: searchEvents,
         isLoading,
         mutate,
     } = useSWR(
-        ['search', sortBy, searchParams.toString()],
-        () =>
-            searchImages(device, searchQuery, sortBy).then(
-                ({ segments, topLocations, topCountries, topPeople }) => {
-                    dispatch(setLoading(false));
-                    setPage(1);
-                    setSearchSummaryData({
-                        topLocations,
-                        topCountries,
-                        topPeople,
-                    });
-                    if (sortBy === 'relevance') {
-                        setSortOrder('desc');
-                        return segments.slice().reverse();
-                    } else {
-                        setSortOrder('desc'); // time: newest first by default
-                    }
-                    return segments;
+        hasSearchInput ? ['search', sortBy, searchParams.toString(), dragBlobUrls.join(',')] : null,
+        async () => {
+            const blobUrls = dragBlobUrls.length > 0 ? dragBlobUrls : (blobQuery ? [blobQuery] : []);
+            const imageBlobs: Blob[] = [];
+            for (const url of blobUrls) {
+                try {
+                    const r = await fetch(url);
+                    imageBlobs.push(await r.blob());
+                } catch {
+                    // expired or invalid — skip
                 }
-            ),
+            }
+            const options = (imageRefs.length || imageBlobs.length)
+                ? { imagePaths: imageRefs, imageBlobs }
+                : undefined;
+            const { segments, topLocations, topCountries, topPeople } =
+                await searchImages(device, searchQuery, sortBy, options);
+            dispatch(setLoading(false));
+            setPage(1);
+            setSearchSummaryData({ topLocations, topCountries, topPeople });
+            if (sortBy === 'relevance') {
+                setSortOrder('desc');
+                return segments.slice().reverse();
+            }
+            setSortOrder('desc');
+            return segments;
+        },
         { revalidateOnFocus: false }
     );
 
@@ -358,17 +422,14 @@ const SearchPage = () => {
         // Fire requests in the background without blocking interaction
         (async () => {
             try {
-                let lastResult = null;
-                for (const imagePath of toSubmit) {
-                    lastResult = await submitImage({ image: imagePath, evaluationId: evaluationId!, sessionId: sessionId! });
-                }
-                const r = lastResult!;
+                const r = await submitImages({ images: toSubmit, evaluationId: evaluationId!, sessionId: sessionId! });
                 dispatch(showNotification({
                     message: `DRES: ${r.verdict} — submitted ${toSubmit.length} images`,
                     type: r.severity,
                 }));
-            } catch {
-                dispatch(showNotification({ message: 'DRES submit failed', type: 'error' }));
+            } catch (err: any) {
+                const reason = err.response.data?.description || parseErrorResponse(err) || 'Unknown error';
+                dispatch(showNotification({ message: reason, type: 'error' }));
             }
         })();
     };
@@ -409,43 +470,111 @@ const SearchPage = () => {
                 <Typography variant="caption">
                     Type in a prompt in natural language
                 </Typography>
-                <TextField
-                    variant="outlined"
-                    multiline
-                    rows={3}
-                    value={textQuery}
-                    onChange={(e) => setTextQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            triggerSearch();
-                        }
+                <Box
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    sx={{
+                        borderRadius: 1,
+                        outline: isDragOver ? '2px dashed' : 'none',
+                        outlineColor: 'primary.main',
+                        transition: 'outline 0.1s',
                     }}
-                    sx={{ marginY: 1 }}
-                    slotProps={{
-                        input: {
-                            endAdornment: (
-                                <InputAdornment position="end">
-                                    <IconButton
-                                        onClick={() =>
-                                            setUseImageInput((prev) => !prev)
-                                        }
-                                        edge="end"
-                                    >
-                                        <AddAPhotoRounded
-                                            color={
-                                                useImageInput
-                                                    ? 'primary'
-                                                    : 'inherit'
+                >
+                    <TextField
+                        variant="outlined"
+                        multiline
+                        rows={3}
+                        value={textQuery}
+                        onChange={(e) => setTextQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                triggerSearch();
+                            }
+                        }}
+                        sx={{ marginY: 1, width: '100%' }}
+                        slotProps={{
+                            input: {
+                                endAdornment: (
+                                    <InputAdornment position="end">
+                                        <IconButton
+                                            onClick={() =>
+                                                setUseImageInput((prev) => !prev)
                                             }
-                                        />
-                                    </IconButton>
-                                </InputAdornment>
-                            ),
-                        },
+                                            edge="end"
+                                        >
+                                            <AddAPhotoRounded
+                                                color={
+                                                    useImageInput || imageRefs.length > 0 || dragBlobUrls.length > 0
+                                                        ? 'primary'
+                                                        : 'inherit'
+                                                }
+                                            />
+                                        </IconButton>
+                                    </InputAdornment>
+                                ),
+                            },
+                        }}
+                    />
+                </Box>
+                {(imageRefs.length > 0 || dragBlobUrls.length > 0) && (
+                    <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
+                        {imageRefs.map((ref) => (
+                            <Box
+                                key={ref}
+                                sx={{ position: 'relative', display: 'inline-flex' }}
+                            >
+                                <Box
+                                    component="img"
+                                    src={`${THUMBNAIL_HOST_URL}/${device}/${ref.replace(/\.[^.]+$/, '.webp')}`}
+                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'secondary.main', display: 'block' }}
+                                />
+                                <IconButton
+                                    size="small"
+                                    onClick={() =>
+                                        setSearchParams((prev) => {
+                                            const p = new URLSearchParams(prev);
+                                            const rest = p.getAll('imageRef').filter((r) => r !== ref);
+                                            p.delete('imageRef');
+                                            rest.forEach((r) => p.append('imageRef', r));
+                                            return p;
+                                        })
+                                    }
+                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
+                                >
+                                    <CloseRounded sx={{ fontSize: 12 }} />
+                                </IconButton>
+                            </Box>
+                        ))}
+                        {dragBlobUrls.map((url) => (
+                            <Box
+                                key={url}
+                                sx={{ position: 'relative', display: 'inline-flex' }}
+                            >
+                                <Box
+                                    component="img"
+                                    src={url}
+                                    sx={{ height: 64, width: 'auto', borderRadius: 1, border: '2px solid', borderColor: 'primary.main', display: 'block' }}
+                                />
+                                <IconButton
+                                    size="small"
+                                    onClick={() => removeBlobUrl(url)}
+                                    sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: '2px', '&:hover': { bgcolor: 'error.light' } }}
+                                >
+                                    <CloseRounded sx={{ fontSize: 12 }} />
+                                </IconButton>
+                            </Box>
+                        ))}
+                    </Stack>
+                )}
+                <ImageDropSearch
+                    visible={useImageInput}
+                    onImageSelect={(blobUrl) => {
+                        addBlobUrl(blobUrl);
+                        setUseImageInput(false);
                     }}
                 />
-                <ImageDropSearch visible={useImageInput} />
                 {searchHistory.length > 0 && (
                     <Box sx={{ mt: 0.5, mb: 0.5 }}>
                         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.25 }}>

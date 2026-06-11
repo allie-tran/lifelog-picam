@@ -2,6 +2,7 @@ import {
     Button,
     Container,
     Pagination,
+    Skeleton,
     Stack,
     Typography,
 } from '@mui/material';
@@ -11,7 +12,7 @@ import CurrentStatus from 'components/CurrentStatus';
 import CustomDatePicker from 'components/CustomDatePicker';
 import DeleteRange from 'components/DeleteRange';
 import GpsTrack from 'components/GpsTrack';
-import LifelogEvent from 'components/LifelogEvent';
+import LifelogEvent, { LifelogEventSkeleton } from 'components/LifelogEvent';
 import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
@@ -21,11 +22,7 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
-import {
-    deleteImages,
-    getAllDates,
-    getImagesByHour
-} from '../apis/browsing';
+import { deleteImages, getAllDates, getImagesByHour } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 
 function MainPage() {
@@ -44,7 +41,7 @@ function MainPage() {
         if (device) dispatch(setDevice(device));
     }, [device]);
 
-    const { data, mutate } = useSWR(
+    const { data, mutate, isLoading } = useSWR(
         [page, date, hour, device, deviceAccess],
         async () => {
             if (
@@ -178,6 +175,7 @@ function MainPage() {
                     onDelete={() => mutate()}
                     date={date || dayjs().format('YYYY-MM-DD')}
                 />
+
                 {segments.length === 0 &&
                     images &&
                     images.length === 0 &&
@@ -204,6 +202,10 @@ function MainPage() {
                             alignItems: 'flex-start',
                         }}
                     >
+                        {isLoading &&
+                            Array.from({ length: 5 }).map((_, index) => (
+                                <LifelogEventSkeleton key={index} />
+                            ))}
                         {segments.map((segment, index) => (
                             <LifelogEvent
                                 key={index}
@@ -241,5 +243,7 @@ function MainPage() {
         </>
     );
 }
+
+
 
 export default MainPage;

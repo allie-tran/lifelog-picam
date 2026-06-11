@@ -118,7 +118,13 @@ const applyMaskToImage = async (
     });
 };
 
-const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
+const ImageDropSearch = ({
+    visible = true,
+    onImageSelect,
+}: {
+    visible?: boolean;
+    onImageSelect?: (blobUrl: string) => void;
+}) => {
     const navigate = useNavigate();
     const dispatch = useAppDispatch();
     const webcamRef = useRef<Webcam>(null);
@@ -152,16 +158,24 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
             const imageSrc = webcamRef.current.getScreenshot();
             if (imageSrc) {
                 setUrl(imageSrc);
+                if (onImageSelect) {
+                    onImageSelect(base64ToBlobUrl(imageSrc));
+                }
             }
         }
-    }, [webcamRef]);
+    }, [webcamRef, onImageSelect]);
 
-    const onSearch = (blobUrl: string | null) => {
-        if (!blobUrl) return;
-        setUrl(blobUrl);
-        searchParams.set('mode', 'similar');
-        searchParams.set('query', blobUrl);
-        navigate({ search: searchParams.toString() });
+    const onSearch = (src: string | null) => {
+        if (!src) return;
+        setUrl(src);
+        const blobUrl = src.startsWith('data:') ? base64ToBlobUrl(src) : src;
+        if (onImageSelect) {
+            onImageSelect(blobUrl);
+        } else {
+            searchParams.set('mode', 'similar');
+            searchParams.set('query', blobUrl);
+            navigate({ search: searchParams.toString() });
+        }
     };
 
     const onSegment = async (blobUrl: string | null) => {
@@ -318,8 +332,8 @@ const ImageDropSearch = ({ visible = true }: { visible?: boolean }) => {
                                         mirrored
                                         screenshotFormat="image/jpeg"
                                         disablePictureInPicture
-                                        height={300}
-                                        width={400}
+                                        height={200}
+                                        width={300}
                                         ref={webcamRef}
                                         videoConstraints={
                                             flipCamera

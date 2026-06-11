@@ -51,7 +51,7 @@ function toggle<T>(arr: T[], val: T): T[] {
 // ─── GridView ────────────────────────────────────────────────────────────────
 
 const ROW_LABEL_W = 88;
-const CELL_H = 48;
+const CELL_H = 36;
 
 const GridView = ({
     rowItems,
@@ -182,7 +182,7 @@ const GridView = ({
 
 // ─── CalendarView ─────────────────────────────────────────────────────────────
 
-const CSIZ = 11;
+const CSIZ = 13;
 const CGAP = 2;
 
 const CalendarView = ({

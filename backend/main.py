@@ -29,7 +29,7 @@ from sqlalchemy import func, update, select
 from sqlalchemy.orm import Session
 from database import close_db, init_db, get_session
 from database.types import DaySummaryRecord, ImageRecord
-from database.models import Image as ImageModel, Device
+from database.models import Image as ImageModel
 
 from biometrics import mqtt_consumer
 from auth import auth_app, _require_admin, _require_any_access, _require_owner
@@ -247,22 +247,15 @@ def get_devices(user=Depends(get_user)):
 def get_all_dates(
     device: str,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session)
 ):
     _require_any_access(access_level)
 
-    device_dir = f"{DIR}/{device}"
-    if not os.path.exists(device_dir):
-        return []
+    all_dates = session.execute(
+        select(ImageModel.date).where(ImageModel.device == device).distinct()
+    ).scalars().all()
+    return sorted([d for d in all_dates if d])
 
-    dates = []
-    for entry in os.listdir(device_dir):
-        full = os.path.join(DIR, device, entry)
-        if os.path.isdir(full):
-            if not os.listdir(full):
-                os.rmdir(full)
-            else:
-                dates.append(entry)
-    return sorted(dates)
 
 @app.get("/create-device")
 def create_device_endpoint(

@@ -1,6 +1,7 @@
 import {
     DeleteRounded,
     EditRounded,
+    ImageSearchRounded,
     SendRounded,
     TimerRounded,
     VideocamRounded,
@@ -15,7 +16,7 @@ import { submitImage } from 'apis/dres';
 import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { addSubmittedImages } from 'reducers/dres';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useEffect, useState } from 'react';
 import { showNotification } from 'reducers/feedback';
 import Annotator from './Annotator';
@@ -51,6 +52,7 @@ const ImageWithDate = ({
     const [showAnnotator, setShowAnnotator] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const dispatch = useAppDispatch();
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const device = deviceProp ?? searchParams.get('device') ?? '';
     const { evaluationId, sessionId, currentTask, submittedImages } = useAppSelector((state) => state.dres);
@@ -98,7 +100,7 @@ const ImageWithDate = ({
                 type: result.severity,
             }));
         } catch (err: any) {
-            const reason = err.data?.description || parseErrorResponse(err) || 'Unknown error';
+            const reason = err.response.data?.description || parseErrorResponse(err) || 'Unknown error';
             dispatch(showNotification({ message: reason, type: 'error' }));
         } finally {
             setSubmitting(false);
@@ -129,14 +131,14 @@ const ImageWithDate = ({
                         width: 'auto',
                         borderRadius: '8px',
                         backgroundColor: '#ccc',
-                        minWidth: '100px',
+                        minWidth: '130px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                     }}
                     onClick={onClick}
                     src={imageUrl}
-                    alt={image.imagePath}
+                    alt={formattedDate}
                 />
             ) : (
                 <Box
@@ -242,6 +244,20 @@ const ImageWithDate = ({
                 >
                     <TimerRounded />
                 </Button>
+                <Tooltip title="Find Similar">
+                    <Button
+                        color="secondary"
+                        size="small"
+                        sx={{ fontSize: '12px', minWidth: 24 }}
+                        onClick={() => {
+                            const params = new URLSearchParams(searchParams);
+                            params.append('imageRef', image.imagePath);
+                            navigate(`/search?${params.toString()}`);
+                        }}
+                    >
+                        <ImageSearchRounded />
+                    </Button>
+                </Tooltip>
                 {evaluationId && sessionId && (
                     <Tooltip title={currentTask ? `Submit to: ${currentTask.name}` : 'Submit to DRES'}>
                         <span>

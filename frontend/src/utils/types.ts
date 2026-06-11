@@ -169,6 +169,7 @@ export type CurrentStatus = {
 export type SearchQuery = {
     text: string;
     isImageQuery: boolean;
+    imageRef: string | null;
 
     // temporal
     timeOfDays: TimeOfDay[];

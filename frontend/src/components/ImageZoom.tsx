@@ -89,12 +89,9 @@ const ImageZoom = ({ onDelete }: { onDelete?: (imgPath?: string) => void }) => {
 
     const handleSimilarImages = () => {
         dispatch(clearZoomedImage());
-        navigate(
-            '/search?mode=id&&query=' +
-                encodeURIComponent(imagePath || '') +
-                '&device=' +
-                device
-        );
+        const params = new URLSearchParams(searchParams);
+        params.append('imageRef', imagePath || '');
+        navigate(`/search?${params.toString()}`);
     };
 
     if (!imagePath) {

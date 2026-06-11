@@ -16,6 +16,9 @@ import { THUMBNAIL_HOST_URL } from '../constants/urls';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import useSWR from 'swr';
+import { MapContainer, Marker, TileLayer } from 'react-leaflet';
+import * as L from 'leaflet';
+import { useEffect, useRef } from 'react';
 
 dayjs.extend(relativeTime);
 
@@ -65,22 +68,32 @@ export default function CurrentStatus({ device }: { device: string }) {
         : null;
 
     return (
-        <Paper
-            variant="outlined"
-            sx={{ p: 2, width: '100%', borderRadius: 2 }}
-        >
+        <Paper variant="outlined" sx={{ p: 2, width: '100%', borderRadius: 2 }}>
             <Stack spacing={1.5}>
                 {/* Header row */}
-                <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
+                <Stack
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="center"
+                    justifyContent="space-between"
+                >
                     <Stack direction="row" spacing={1} alignItems="center">
                         <OnlineDot online={data.cameraOnline} />
                         <Typography variant="subtitle1" fontWeight="bold">
                             Current Status
                         </Typography>
                         {data.cameraOnline ? (
-                            <Chip label="Live" size="small" color="success" sx={{ height: 18, fontSize: '0.65rem' }} />
+                            <Chip
+                                label="Live"
+                                size="small"
+                                color="success"
+                                sx={{ height: 18, fontSize: '0.65rem' }}
+                            />
                         ) : (
-                            <Typography variant="caption" color="text.secondary">
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
                                 Last seen {cameraLastSeenText}
                             </Typography>
                         )}
@@ -94,10 +107,20 @@ export default function CurrentStatus({ device }: { device: string }) {
                                 title={`${s.nickname || SENSOR_LABELS[s.sensorType] || s.sensorType}: ${s.lastSeen ? dayjs.utc(s.lastSeen).fromNow() : 'never'}`}
                                 arrow
                             >
-                                <Stack direction="row" spacing={0.3} alignItems="center" sx={{ cursor: 'default' }}>
+                                <Stack
+                                    direction="row"
+                                    spacing={0.3}
+                                    alignItems="center"
+                                    sx={{ cursor: 'default' }}
+                                >
                                     <OnlineDot online={s.online} />
-                                    <Typography variant="caption" color="text.secondary">
-                                        {s.nickname || SENSOR_LABELS[s.sensorType] || s.sensorType}
+                                    <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                    >
+                                        {s.nickname ||
+                                            SENSOR_LABELS[s.sensorType] ||
+                                            s.sensorType}
                                     </Typography>
                                 </Stack>
                             </Tooltip>
@@ -109,6 +132,32 @@ export default function CurrentStatus({ device }: { device: string }) {
 
                 {/* Activity + location */}
                 <Stack direction="row" spacing={2} alignItems="flex-start">
+                    {data.currentLat && data.currentLon && (
+                        <Box
+                            width={180}
+                            height={72}
+                            flexShrink={0}
+                            sx={{ borderRadius: 1, overflow: 'hidden' }}
+                        >
+                            <MapContainer
+                                center={[data.currentLat, data.currentLon]}
+                                zoom={15}
+                                style={{ height: '100%', width: '100%' }}
+                                zoomControl={false}
+                                scrollWheelZoom={false}
+                                attributionControl={false}
+                            >
+                                <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH" />
+                                <CustomMarker
+                                    position={[
+                                        data.currentLat,
+                                        data.currentLon,
+                                    ]}
+                                />
+                            </MapContainer>
+                        </Box>
+                    )}
+
                     {thumbnailUrl && (
                         <Box
                             component="img"
@@ -128,40 +177,57 @@ export default function CurrentStatus({ device }: { device: string }) {
                                 {data.currentActivity}
                             </Typography>
                         )}
-                        {data.currentActivityDescription && (
-                            <Typography
-                                variant="caption"
-                                color="text.secondary"
-                                sx={{
-                                    overflow: 'hidden',
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                }}
-                            >
-                                {data.currentActivityDescription}
-                            </Typography>
-                        )}
+                        {/* {data.currentActivityDescription && ( */}
+                        {/*     <Typography */}
+                        {/*         variant="caption" */}
+                        {/*         color="text.secondary" */}
+                        {/*         sx={{ */}
+                        {/*             overflow: 'hidden', */}
+                        {/*             display: '-webkit-box', */}
+                        {/*             WebkitLineClamp: 2, */}
+                        {/*             WebkitBoxOrient: 'vertical', */}
+                        {/*         }} */}
+                        {/*     > */}
+                        {/*         {data.currentActivityDescription} */}
+                        {/*     </Typography> */}
+                        {/* )} */}
 
                         {/* Location */}
                         {data.currentLocation && (
-                            <Stack direction="row" spacing={0.5} alignItems="center">
+                            <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                            >
                                 {data.currentLocation.stop === false ? (
-                                    <DirectionsWalkIcon fontSize="inherit" color="action" />
+                                    <DirectionsWalkIcon
+                                        fontSize="inherit"
+                                        color="action"
+                                    />
                                 ) : (
-                                    <LocationOnIcon fontSize="inherit" color="primary" />
+                                    <LocationOnIcon
+                                        fontSize="inherit"
+                                        color="primary"
+                                    />
                                 )}
-                                <Typography variant="caption" color="text.secondary">
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                >
                                     {data.currentLocation.name ||
                                         data.currentLocation.suburb ||
                                         data.currentLocation.city ||
                                         'Unknown location'}
                                     {data.currentLocation.city &&
-                                        data.currentLocation.name !== data.currentLocation.city &&
+                                        data.currentLocation.name !==
+                                            data.currentLocation.city &&
                                         `, ${data.currentLocation.city}`}
                                 </Typography>
                                 {locationSinceText && (
-                                    <Typography variant="caption" color="text.disabled">
+                                    <Typography
+                                        variant="caption"
+                                        color="text.disabled"
+                                    >
                                         · since {locationSinceText}
                                     </Typography>
                                 )}
@@ -170,9 +236,19 @@ export default function CurrentStatus({ device }: { device: string }) {
 
                         {/* Last photo */}
                         {segmentSinceText && (
-                            <Stack direction="row" spacing={0.5} alignItems="center">
-                                <AccessTimeIcon fontSize="inherit" color="action" />
-                                <Typography variant="caption" color="text.secondary">
+                            <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                            >
+                                <AccessTimeIcon
+                                    fontSize="inherit"
+                                    color="action"
+                                />
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                >
                                     Last photo {segmentSinceText}
                                 </Typography>
                             </Stack>
@@ -184,7 +260,11 @@ export default function CurrentStatus({ device }: { device: string }) {
                 {data.summary && (
                     <>
                         <Divider />
-                        <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                        <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ fontStyle: 'italic' }}
+                        >
                             {data.summary}
                         </Typography>
                     </>
@@ -193,3 +273,33 @@ export default function CurrentStatus({ device }: { device: string }) {
         </Paper>
     );
 }
+
+// just a dot
+const CustomMarkerIcon = new L.Icon({
+    iconUrl:
+        'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSI4IiBmaWxsPSIjRkY1NTU1IiAvPjwvc3ZnPg==',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+});
+
+const CustomMarker = ({ position }: { position: [number, number] }) => {
+    const markerRef = useRef(null);
+
+    useEffect(() => {
+        if (markerRef.current) {
+            const el = (markerRef.current as any)._icon as HTMLElement;
+            if (el) {
+                el.style.backgroundColor = 'rgba(255, 85, 85, 0.8)';
+                el.style.borderRadius = '50%';
+                el.style.width = '16px';
+                el.style.height = '16px';
+                el.style.border = '2px solid white';
+                el.style.boxShadow = '0 0 4px rgba(255, 85, 85, 0.8)';
+            }
+        }
+    }, []);
+
+    return (
+        <Marker ref={markerRef} position={position} icon={CustomMarkerIcon} />
+    );
+};

@@ -2,6 +2,7 @@ import {
     Button,
     Chip,
     Divider,
+    Skeleton,
     Stack,
     TextField,
     Tooltip,
@@ -12,7 +13,7 @@ import LocationOnIcon from '@mui/icons-material/LocationOn';
 import SendRounded from '@mui/icons-material/SendRounded';
 import { GPSData, ImageObject, LocationData } from '@utils/types';
 import { changeSegmentActivity } from 'apis/process';
-import { submitImage } from 'apis/dres';
+import { submitImages } from 'apis/dres';
 import ModalWithCloseButton from 'components/ModalWithCloseButton';
 import { CONFIDENCE_COLOURS, THEME_COLORS } from 'constants/activityColors';
 import dayjs from 'dayjs';
@@ -26,6 +27,7 @@ import '../App.css';
 import ImageWithDate from '../components/ImageWithDate';
 import { useOnInView } from 'react-intersection-observer';
 import { setHighlightedTrack } from 'reducers/map';
+import { parseErrorResponse } from '@utils/misc';
 
 const LifelogEvent = ({
     segment,
@@ -61,14 +63,11 @@ const LifelogEvent = ({
         dispatch(addSubmittedImages(paths));
         (async () => {
             try {
-                let lastResult = null;
-                for (const img of segment) {
-                    lastResult = await submitImage({ image: img.imagePath, evaluationId: evaluationId!, sessionId: sessionId! });
-                }
-                const r = lastResult!;
+                const r = await submitImages({ images: segment.map((img) => img.imagePath), evaluationId: evaluationId!, sessionId: sessionId! });
                 dispatch(showNotification({ message: `DRES: ${r.verdict} — submitted ${segment.length} images`, type: r.severity }));
-            } catch {
-                dispatch(showNotification({ message: 'DRES submit failed', type: 'error' }));
+            } catch (err: any) {
+                const reason = err.response.data?.description || parseErrorResponse(err) || 'Unknown error';
+                dispatch(showNotification({ message: reason, type: 'error' }));
             }
         })();
     };
@@ -321,5 +320,36 @@ const LifelogEvent = ({
         </React.Fragment>
     );
 };
+
+
+export const LifelogEventSkeleton = () => {
+    return (
+        <Stack spacing={1} sx={{ height: 'fit-content', width: '100%', padding: 2 }}>
+            <Divider />
+            <Stack direction="row" spacing={1} alignItems="center">
+                <Skeleton variant="circular" width={40} height={40} />
+                <Stack spacing={0.5} flexGrow={1}>
+                    <Skeleton variant="text" width="60%" />
+                    <Skeleton variant="text" width="40%" />
+                </Stack>
+            </Stack>
+            <Stack direction="row" spacing={1} justifyContent="space-between">
+                <Skeleton variant="text" width="30%" />
+                <Skeleton variant="text" width="20%" />
+            </Stack>
+            <Skeleton variant="text" width="80%" />
+            <Stack direction="row" spacing={2}>
+                <Skeleton variant="text" width={100} />
+                <Skeleton variant="text" width={100} />
+                <Skeleton variant="text" width={120} />
+            </Stack>
+            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+                {Array.from({ length: 4 }).map((_, idx) => (
+                    <Skeleton key={idx} variant="rounded" width={130} height={200} />
+                ))}
+            </Stack>
+        </Stack>
+    );
+}
 
 export default LifelogEvent;

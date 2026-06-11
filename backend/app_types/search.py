@@ -32,6 +32,7 @@ class TimeMonthCell(CamelCaseModel):
 class SearchQuery(CamelCaseModel):
     # Text Search
     text: str = ""
+    image_path: Optional[str] = None
     is_image_query: bool = False
 
     # time — row/col (broad) selectors
@@ -60,6 +61,7 @@ class SearchQuery(CamelCaseModel):
     def empty(self) -> bool:
         return not any([
             self.text,
+            self.image_path,
             self.time_of_days,
             self.day_of_weeks,
             self.months,

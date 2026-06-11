@@ -1,20 +1,23 @@
 import os
 import re
 from typing import Annotated, List, Optional
+import numpy as np
 from PIL import UnidentifiedImageError
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app_types.search import SearchQuery
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
+from auth.ortho import apply_transformation, get_matrix
 from constants import DIR
 from database import get_session
 from database.models import Image as ImageModel, Location
 from auth import _require_owner
-from preprocess import get_similar_images, retrieve_image_with_filters
+from preprocess import get_similar_images, retrieve_image_with_filters, search_model, search_table, relationship
 from dependencies import CamelCaseModel
+from scripts.utils import make_video_thumbnail
 from query_parse.time import (
     time_tagger,
     get_day_month,
@@ -22,8 +25,10 @@ from query_parse.time import (
     seasons as season_to_months,
     months as month_list,
 )
+import logging
 
 app = FastAPI()
+logger = logging.getLogger("__name__")
 
 WORD_TO_TIMEOFDAY = {
     "morning": "morning", "afternoon": "afternoon", "midday": "midday",
@@ -165,32 +170,65 @@ def health_check():
     return {"status": "ok"}
 
 @app.post("/search-images")
-def search(
+async def search(
     device: str,
-    request: SearchQuery,
+    query: str = Form(...),
+    image_paths: List[str] = Form(default=[]),
+    files: List[UploadFile] = File(default=[]),
     sort_by: str = "relevance",
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
 
-    print(f"Received search query for device {device}: {request}")
-    if request.empty:
+    request = SearchQuery.model_validate_json(query)
+    matrix = get_matrix(session, device)
+    all_embs: List[np.ndarray] = []
+
+    for image_path in image_paths:
+        stored = session.execute(
+            select(search_table.embedding)
+            .join(relationship)
+            .where(ImageModel.device == device)
+            .where(ImageModel.image_path == image_path)
+        ).scalar_one_or_none()
+        if stored is not None:
+            all_embs.append(np.array(stored, dtype=np.float32).flatten())
+
+    for file in files:
+        temp_path = f"{DIR}/{device}/temp_{file.filename}"
+        with open(temp_path, "wb") as f_:
+            f_.write(await file.read())
+        try:
+            img_path = temp_path
+            if temp_path.endswith(".mp4") or temp_path.endswith(".h264"):
+                new_path = make_video_thumbnail(temp_path)
+                if new_path:
+                    img_path = new_path
+            raw = search_model.encode_image(img_path)
+            raw = raw / np.linalg.norm(raw)
+            all_embs.append(apply_transformation(raw.flatten(), matrix))
+        except UnidentifiedImageError:
+            pass
+        finally:
+            os.remove(temp_path)
+
+    image_emb = None
+    if all_embs:
+        averaged = np.mean(all_embs, axis=0)
+        norm = np.linalg.norm(averaged)
+        image_emb = averaged / norm if norm > 0 else averaged
+
+    if request.empty and image_emb is None:
         return []
 
-    # return retrieve_image(
-    #     session,
-    #     device,
-    #     request.text,
-    #     sort_by,
-    #     k=1000,
-    # )
     segments, summary = retrieve_image_with_filters(
         session,
         device,
         request,
         sort_by,
         k=1000,
+        image_emb=image_emb,
     )
     return {"segments": segments, **summary}
 

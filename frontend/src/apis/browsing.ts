@@ -104,16 +104,24 @@ export type SearchResult = {
 export const searchImages = async (
     device: string,
     query: SearchQuery,
-    sortBy: 'time' | 'relevance' = 'time'
+    sortBy: 'time' | 'relevance' = 'time',
+    options?: { imagePaths?: string[]; imageBlobs?: Blob[] }
 ): Promise<SearchResult> => {
     const { weekCells, monthCells, ...rest } = query;
+    const queryJson = JSON.stringify({
+        ...rest,
+        timeDayCells: weekCells,
+        timeMonthCells: monthCells,
+    });
+
+    const formData = new FormData();
+    formData.append('query', queryJson);
+    options?.imagePaths?.forEach((p) => formData.append('image_paths', p));
+    options?.imageBlobs?.forEach((b, i) => formData.append('files', b, `query_image_${i}`));
+
     const response = await axios.post(
         `${BACKEND_URL}/retrieval/search-images?device=${encodeURIComponent(device)}&sort_by=${sortBy}`,
-        {
-            ...rest,
-            timeDayCells: weekCells,
-            timeMonthCells: monthCells,
-        }
+        formData,
     );
     return response.data as SearchResult;
 };

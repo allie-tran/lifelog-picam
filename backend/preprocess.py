@@ -67,13 +67,23 @@ def create_stmt_generic(device_id):
     )
     return stmt
 
-def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sort_by, k):
+def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sort_by, k, image_emb: np.ndarray | None = None):
     # Do auto_filters later TODO!!
+    text_emb = None
     if query.text:
-        emb = search_model.encode_text(query.text)
+        text_emb = search_model.encode_text(query.text)
         matrix = get_matrix(session, device_id)
-        emb = apply_transformation(emb, matrix)
+        text_emb = apply_transformation(text_emb, matrix)
+
+    if text_emb is not None and image_emb is not None:
+        combined = text_emb + image_emb
+        norm = np.linalg.norm(combined)
+        emb = combined / norm if norm > 0 else combined
         stmt = create_stmt_with_embedding(emb, device_id)
+    elif text_emb is not None:
+        stmt = create_stmt_with_embedding(text_emb, device_id)
+    elif image_emb is not None:
+        stmt = create_stmt_with_embedding(image_emb, device_id)
     else:
         stmt = create_stmt_generic(device_id)
 
