@@ -415,6 +415,7 @@ class ImagePerson(Base):
     bbox: Mapped[Any] = mapped_column(JSONB, nullable=True)
     rel_bbox: Mapped[Any] = mapped_column(JSONB, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(512), nullable=True)
+    embedding_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     cluster_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("people_clusters.id", ondelete="SET NULL"),

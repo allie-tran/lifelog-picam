@@ -1,15 +1,16 @@
 import asyncio
 import base64
+from contextvars import ContextVar
 import io
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import time
 from typing import Annotated, List, Optional
 
 from PIL import Image
-import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
@@ -55,28 +56,17 @@ from sqlalchemy import select, desc, update
 from datetime import datetime
 import logging
 
+ch = logging.StreamHandler()
+ch.setFormatter(CustomFormatter())
+
+# Inject it straight into the root configuration
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
-    force=True
+    force=True,
+    handlers=[ch]  # <-- Force the root logger to use your custom colored handler
 )
-logger = logging.getLogger("lifelog-picam")
-logger.setLevel(logging.INFO)
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(CustomFormatter())
-
-logger.addHandler(ch)
-
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(CustomFormatter())
-
-logger = logging.getLogger("lifelog-picam")
-logger.setLevel(logging.INFO)
-logger.addHandler(ch)
-
+logger = logging.getLogger(__name__)  # No extra addHandler() needed!
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +76,6 @@ class ChangeSegmentActivityRequest(CamelCaseModel):
     date: str
     segment_id: int
     new_activity_info: str
-
 
 
 # ---------------------------------------------------------------------------
@@ -369,16 +358,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _get_time_color(process_time: float) -> str:
+    """Return a color code based on the process time."""
+    if process_time < 0.5:
+        return "\x1b[32m"  # Green for fast responses
+    elif process_time < 1.0:
+        return "\x1b[33m"  # Yellow for moderate responses
+    else:
+        return "\x1b[31m"  # Red for slow responses
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+
+    start_time: float = time.perf_counter()
+    response = await call_next(request)
+    process_time: float = time.perf_counter() - start_time
+
+    response.headers["X-Process-Time"] = str(process_time)
+
+    # Keep the raw plain text in the scope if other filters need it
+    request.scope["process_time"] = f"{process_time:.4f}s"
+
+    # Colorize the brackets and the time string right here inside the logger line!
+    color = _get_time_color(process_time)
+    reset = "\x1b[0m"
+    logger.info(
+        f"{request.method} {request.url.path} {color}[{process_time:.4f}s]{reset}"
+    )
+
+    return response
 
 # ---------------------------------------------------------------------------
 # Root
 # ---------------------------------------------------------------------------
 
-
 @app.get("/")
 async def root():
     return {"message": "Hello, World!"}
 
+@app.get("/_debug/tasks")
+async def get_running_tasks():
+    tasks = asyncio.all_tasks()
+    task_list = []
+
+    for i, task in enumerate(tasks):
+        # Skip this current request task to avoid clutter
+        if task == asyncio.current_task():
+            continue
+
+        # Extract where the task is currently halted
+        stack = task.get_stack()
+        formatted_stack = [
+            f"{f.f_code.co_filename}:{f.f_lineno} in {f.f_code.co_name}"
+            for f in stack
+        ]
+
+        task_list.append({
+            "task_id": i,
+            "name": task.get_name(),
+            "coro": str(task.get_coro()),
+            "current_stack": formatted_stack
+        })
+
+    return {"running_tasks_count": len(task_list), "tasks": task_list}
 
 # ---------------------------------------------------------------------------
 # Upload endpoints
@@ -560,7 +602,7 @@ def process_date(
     device: str,
     resegment: bool = False,
     reannotate: bool = False,
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks = None,  # type: ignore
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
@@ -610,7 +652,7 @@ _LIVE_THRESHOLD_MINUTES = 20  # day is "live" if last image arrived within this 
 def get_day_summary(
     date: str,
     device: str,
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks = None,  # type: ignore
     user=Depends(get_user),
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
@@ -871,4 +913,5 @@ async def change_segment_activity(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=LOCAL_PORT, reload=True)

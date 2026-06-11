@@ -24,10 +24,10 @@ from pipelines.all import process_image
 from pipelines.delete import mark_error
 from scripts.date_utils import parse_date
 from database.models import SensorDevice
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+import logging
 
-from scripts.face_recognition import delete_old_faces
-
+logger = logging.getLogger(__name__)
 
 class FastAPIWithTime(FastAPI):
     last_update: dict[str, datetime] = {}
@@ -70,7 +70,7 @@ def decrypt_image(box: Box, file: UploadFile):
     file_bytes = file.file.read()
     try:
         decrypted = box.decrypt(file_bytes)
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise HTTPException(status_code=400, detail="Decryption failed.")
     return PILImage.open(io.BytesIO(decrypted))
@@ -98,7 +98,7 @@ async def upload_image(
     if not file_name:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
-    print(f"Received upload for device {username} with filename {file_name}.")
+    logger.info(f"Received upload for device {username} with filename {file_name}.")
     timestamp = parse_date(file_name.split(".")[0])
     date = timestamp.strftime("%Y-%m-%d")
     folder = f"{DIR}/{username}/{date}"
@@ -139,13 +139,6 @@ async def upload_image(
             tz or "UTC"
         )
     now = datetime.now()
-
-    last_updated = app.last_update.get(username)
-    if last_updated is None or (now - last_updated) > timedelta(minutes=10):
-        app.last_update[username] = now
-        an_hour_ago = datetime.now() - timedelta(hours=1)
-        delete_old_faces(session, username, an_hour_ago)
-
     return {"status": "success", "timestamp": now.isoformat()}
 
 

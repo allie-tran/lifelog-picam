@@ -1,45 +1,48 @@
 import base64
 import os
 from typing import List
-
-from fastapi import HTTPException, Request, UploadFile
-from sqlalchemy import select
-
 from app_types import ObjectDetection
-from auth.devices import verify_device_token
 from constants import DIR, THUMBNAIL_DIR
 from PIL import Image, ImageDraw, ImageFilter
 
-from database import get_session
-from database.models import Device
 # from settings.types import PiCamControl
+import logging
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
-import logging
-
 class CustomFormatter(logging.Formatter):
+    # Your original custom color palette
+    grey: str = "\x1b[38;20m"
+    green: str = "\x1b[32;20m"
+    yellow: str = "\x1b[33;20m"
+    red: str = "\x1b[31;20m"
+    bold_red: str = "\x1b[31;1m"
+    reset: str = "\x1b[0m"
 
-    grey = "\x1b[38;20m"
-    yellow = "\x1b[33;20m"
-    red = "\x1b[31;20m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
-    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"  # type: ignore
-
-    FORMATS = {
-        logging.DEBUG: grey + format + reset,  # type: ignore
-        logging.INFO: grey + format + reset,  # type: ignore
-        logging.WARNING: yellow + format + reset,  # type: ignore
-        logging.ERROR: red + format + reset,  # type: ignore
-        logging.CRITICAL: bold_red + format + reset  # type: ignore
+    # Strict explicit color mapping dictionary
+    COLOR_MAP = {
+        logging.DEBUG: grey,
+        logging.INFO: green,
+        logging.WARNING: yellow,
+        logging.ERROR: red,
+        logging.CRITICAL: bold_red
     }
 
     def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno)
-        formatter = logging.Formatter(log_fmt)
-        return formatter.format(record)
+        # 1. Create the raw level string with the colon (e.g., "INFO:")
+        raw_level = f"{record.levelname}:"
 
+        # 2. Get the color for the current log level from the COLOR_MAP
+        color = self.COLOR_MAP.get(record.levelno, self.grey)
+
+        # 3. Left-align the raw text to 9 spaces first, then apply color strings
+        padded_level = f"{color}{raw_level:<9}{self.reset}"
+
+        # 4. Layout starting with the aligned level tag
+        log_fmt = f"{padded_level} %(asctime)s - %(message)s"
+
+        formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
+        return formatter.format(record)
 
 def to_base64(image_data: bytes) -> str:
     """Convert image data to base64 string."""
@@ -147,5 +150,3 @@ def to_absolute_bbox(bbox, image_width, image_height):
     abs_x2 = max(0, min(abs_x2, image_width - 1))
     abs_y2 = max(0, min(abs_y2, image_height - 1))
     return abs_x1, abs_y1, abs_x2, abs_y2
-
-

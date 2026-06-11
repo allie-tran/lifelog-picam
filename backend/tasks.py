@@ -251,6 +251,7 @@ def yolo_process_images_task(
                     "bbox": person["bbox"],
                     "rel_bbox": person["rel_bbox"],
                     "embedding": person["embedding"],
+                    "embedding_created_at": datetime.utcnow() if person["embedding"] is not None else None,
                 })
                 if person["label"] in ("redacted face", "face"):
                     blur_boxes.append(person["bbox"])
@@ -500,10 +501,53 @@ def _recluster_whitelist_mode(device: str, days_back: int = 90):
     logging.info("Face re-cluster (whitelist mode) %s: %d assigned to whitelist", device, assigned)
 
 
+_FACE_EMBEDDING_TTL_MINUTES = 30
+
+def _non_whitelisted_condition(device: str | None = None):
+    """SQLAlchemy condition: face is not assigned to a whitelisted cluster."""
+    wl_cluster_ids = select(PeopleCluster.id).where(
+        PeopleCluster.whitelist_entry_id.isnot(None),
+        *([PeopleCluster.device == device] if device else []),
+    )
+    return or_(
+        ImagePerson.cluster_id.is_(None),
+        ImagePerson.cluster_id.notin_(wl_cluster_ids),
+    )
+
+
 @celery.task(name="tasks.delete_unknown_face_embeddings_task")
 def delete_unknown_face_embeddings_task(device: str):
-    """Stub: purge embeddings for unknown faces older than 24h in whitelist mode."""
-    logging.debug("delete_unknown_face_embeddings_task: stub called for device %s", device)
+    """Delete non-whitelisted face records older than the TTL for one device."""
+    threshold = datetime.utcnow() - timedelta(minutes=_FACE_EMBEDDING_TTL_MINUTES)
+    with Session(engine) as session:
+        result = session.execute(
+            delete(ImagePerson)
+            .where(
+                ImagePerson.image_id.in_(select(Image.id).where(Image.device == device)),
+                ImagePerson.embedding_created_at.isnot(None),
+                ImagePerson.embedding_created_at < threshold,
+                _non_whitelisted_condition(device),
+            )
+        )
+        session.commit()
+    logging.info("Deleted %d expired face records for device %s", result.rowcount, device)
+
+
+@celery.task(name="tasks.purge_expired_face_embeddings_task")
+def purge_expired_face_embeddings_task():
+    """Global 5-minute TTL enforcement: delete all non-whitelisted face records older than 30 min."""
+    threshold = datetime.utcnow() - timedelta(minutes=_FACE_EMBEDDING_TTL_MINUTES)
+    with Session(engine) as session:
+        result = session.execute(
+            delete(ImagePerson)
+            .where(
+                ImagePerson.embedding_created_at.isnot(None),
+                ImagePerson.embedding_created_at < threshold,
+                _non_whitelisted_condition(),
+            )
+        )
+        session.commit()
+    logging.info("TTL sweep: deleted %d expired face records across all devices", result.rowcount)
 
 
 # ---------------------------------------------------------------------------
@@ -833,12 +877,16 @@ def compute_bio_day_stats_task(self, device_id: str, date: str):
 
 @celery.task(name="tasks.nightly_recluster_all_devices")
 def nightly_recluster_all_devices():
+    # Only whitelist-mode devices retain face embeddings beyond the 30-min TTL,
+    # so reclustering is only meaningful for them.
     with Session(engine) as session:
-        device_ids = session.execute(select(Device.device_id)).scalars().all()
+        device_ids = session.execute(
+            select(Device.device_id).where(Device.keep_face_recognition == True)
+        ).scalars().all()
 
     for device_id in device_ids:
         recluster_unassigned_faces_task.delay(device_id)
-    logging.info("Queued nightly face re-cluster for %d devices.", len(device_ids))
+    logging.info("Queued nightly face re-cluster for %d whitelist-mode devices.", len(device_ids))
 
 
 @celery.task(name="tasks.nightly_bio_stats_all_devices")
