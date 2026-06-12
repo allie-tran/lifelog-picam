@@ -11,7 +11,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
 from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image, Location
-from location.enrich_stops import enrich_stop
+from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
 
 from scripts.segmentation import load_all_segments
@@ -500,7 +500,18 @@ def enrich_and_index_segments(
     Upserts a Location row (keyed on OSM element id or rounded coords) and
     bulk-updates Image.location_id for all images in the segment's time window.
     """
-    for seg in segments:
+    # Pass 1: enrich all stop segments up front so move segments can reference
+    # their neighbours' names when building "StopBefore → StopAfter" labels.
+    stop_geos: dict[int, dict] = {}
+    for i, seg in enumerate(segments):
+        lat = seg.get("centroid_lat")
+        lon = seg.get("centroid_lon")
+        if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
+            continue
+        if bool(seg.get("is_stop")):
+            stop_geos[i] = enrich_stop(float(lat), float(lon))
+
+    for i, seg in enumerate(segments):
         lat = seg.get("centroid_lat")
         lon = seg.get("centroid_lon")
         if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
@@ -510,7 +521,31 @@ def enrich_and_index_segments(
         start_ts = seg.get("start_ts")
         end_ts = seg.get("end_ts")
 
-        geo = enrich_stop(float(lat), float(lon))
+        if is_stop:
+            geo = stop_geos.get(i) or enrich_stop(float(lat), float(lon))
+        else:
+            seg_df = (
+                df[(df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)]
+                if start_ts is not None and end_ts is not None
+                else pd.DataFrame()
+            )
+            gps_pts = (
+                list(zip(seg_df["latitude"].tolist(), seg_df["longitude"].tolist()))
+                if not seg_df.empty else []
+            )
+            geo = enrich_move(gps_pts, fallback_lat=float(lat), fallback_lon=float(lon))
+
+            # Override move name with adjacent stop names when available.
+            prev_stop = next((stop_geos[j] for j in range(i - 1, -1, -1) if j in stop_geos), None)
+            next_stop = next((stop_geos[j] for j in range(i + 1, len(segments)) if j in stop_geos), None)
+            from_name = prev_stop.get("name") if prev_stop else None
+            to_name = next_stop.get("name") if next_stop else None
+            if from_name and to_name:
+                geo = {**geo, "name": f"{from_name} → {to_name}"}
+            elif from_name:
+                geo = {**geo, "name": f"From {from_name}"}
+            elif to_name:
+                geo = {**geo, "name": f"To {to_name}"}
 
         # Dedup key — in priority: OSM element id → Wikidata QID → 5-decimal coords
         # 5 decimal places ≈ 1 m precision, preventing false merges of nearby places
