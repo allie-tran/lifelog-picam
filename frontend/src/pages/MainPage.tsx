@@ -123,6 +123,13 @@ function MainPage() {
     const daySegments = daySegmentsData?.segments || [];
     const availableHours = data?.available_hours || [];
 
+    const activeSegmentIds = React.useMemo(() => {
+        const ids = segments
+            .map((s) => s.segmentId)
+            .filter((id): id is number => id != null);
+        return ids.length > 0 ? new Set(ids) : undefined;
+    }, [segments]);
+
     useEffect(() => {
         setPage(1);
         setHour(null);
@@ -208,6 +215,7 @@ function MainPage() {
                         imageGps={imageGps}
                         currentTrack={data?.gps || []}
                         segments={daySegments}
+                        activeSegmentIds={activeSegmentIds}
                     />
                     <Stack
                         sx={{

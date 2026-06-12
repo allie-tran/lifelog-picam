@@ -5,7 +5,7 @@ import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import 'leaflet/dist/leaflet.css';
 import { useCallback, useEffect, useState } from 'react';
-import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
+import { CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
 import {
     SelectArea,
     SelectAreaBounds,
@@ -137,32 +137,6 @@ const createClusterIcon = (cluster: any) => {
     });
 };
 
-const MOVE_COLOR = 'rgba(124, 58, 237, 0.85)';
-
-const createMoveIcon = (name: string, count: number) => {
-    const label = name.length > 24 ? name.slice(0, 23) + '…' : name;
-    return L.divIcon({
-        className: '',
-        iconSize: [160, 36],
-        iconAnchor: [80, 18],
-        popupAnchor: [0, -24],
-        html: `<div style="
-            display:inline-flex;align-items:center;gap:5px;
-            background:${MOVE_COLOR};
-            border:2px dashed rgba(255,255,255,0.7);
-            border-radius:20px;padding:4px 10px;
-            box-shadow:0 2px 6px rgba(0,0,0,0.25);
-            white-space:nowrap;max-width:160px;
-        ">
-            <span style="color:#fff;font-size:13px;">🚗</span>
-            <div style="overflow:hidden;">
-                <div style="color:#fff;font-size:11px;font-weight:700;font-family:sans-serif;line-height:1.2;max-width:110px;overflow:hidden;text-overflow:ellipsis;">${label}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:10px;font-family:sans-serif;">${count} image${count !== 1 ? 's' : ''}</div>
-            </div>
-        </div>`,
-    });
-};
-
 // ── Clear-bounds marker icon ──────────────────────────────────────────────────
 
 const clearIcon = L.divIcon({
@@ -278,81 +252,47 @@ export function MapSearch({
                         dashArray: '10 5',
                     }}
                 />
-                {resultMapped.length > 0 && (() => {
-                    const stops = resultMapped.filter((l) => l.stop !== false);
-                    const moves = resultMapped.filter((l) => l.stop === false);
-                    const routeLine = resultMapped.length > 1 && moves.length > 0
-                        ? resultMapped.map((l) => [l.latitude, l.longitude] as [number, number])
-                        : null;
-                    return (
-                        <>
-                            <DensityLayer locations={stops} />
-                            {routeLine && (
-                                <Polyline
-                                    positions={routeLine}
-                                    pathOptions={{ color: MOVE_COLOR, weight: 2, dashArray: '6 5', opacity: 0.7 }}
-                                />
-                            )}
-                            <MarkerClusterGroup
-                                iconCreateFunction={createClusterIcon}
-                                showCoverageOnHover={false}
-                                maxClusterRadius={80}
-                                disableClusteringAtZoom={14}
-                            >
-                                {stops.map((loc, i) => (
-                                    <Marker
-                                        key={loc.id ?? `stop-${i}`}
-                                        position={[loc.latitude, loc.longitude]}
-                                        icon={createLocIcon(loc.name, loc.count, loc.id === highlightedLocationId)}
-                                        {...({ locCount: loc.count } as any)}
-                                    >
-                                        <Popup>
-                                            <Box sx={{ minWidth: 140 }}>
-                                                <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
-                                                    <PlaceRounded sx={{ fontSize: 14, color: colorForCount(loc.count) }} />
-                                                    <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
-                                                </Stack>
-                                                {loc.address && (
-                                                    <Typography variant="caption" color="text.secondary" display="block">{loc.address}</Typography>
-                                                )}
-                                                <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-                                                    {loc.count} image{loc.count !== 1 ? 's' : ''}
-                                                </Typography>
-                                                {onAddLocationFilter && loc.id && (
-                                                    <Button size="small" variant="outlined"
-                                                        sx={{ mt: 1, textTransform: 'none', fontSize: 11 }}
-                                                        onClick={() => onAddLocationFilter(loc.id!, loc.name)}
-                                                    >Filter by this place</Button>
-                                                )}
-                                            </Box>
-                                        </Popup>
-                                    </Marker>
-                                ))}
-                            </MarkerClusterGroup>
-                            {/* Moving-period markers rendered outside cluster group so they stay visible */}
-                            {moves.map((loc, i) => (
+                {resultMapped.length > 0 && (
+                    <>
+                        <DensityLayer locations={resultMapped} />
+                        <MarkerClusterGroup
+                            iconCreateFunction={createClusterIcon}
+                            showCoverageOnHover={false}
+                            maxClusterRadius={80}
+                            disableClusteringAtZoom={14}
+                        >
+                            {resultMapped.map((loc, i) => (
                                 <Marker
-                                    key={loc.id ?? `move-${i}`}
+                                    key={loc.id ?? `stop-${i}`}
                                     position={[loc.latitude, loc.longitude]}
-                                    icon={createMoveIcon(loc.name, loc.count)}
+                                    icon={createLocIcon(loc.name, loc.count, loc.id === highlightedLocationId)}
+                                    {...({ locCount: loc.count } as any)}
                                 >
                                     <Popup>
                                         <Box sx={{ minWidth: 140 }}>
                                             <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
-                                                <PlaceRounded sx={{ fontSize: 14, color: MOVE_COLOR }} />
+                                                <PlaceRounded sx={{ fontSize: 14, color: colorForCount(loc.count) }} />
                                                 <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
                                             </Stack>
-                                            <Typography variant="caption" color="text.secondary" display="block">In transit</Typography>
+                                            {loc.address && (
+                                                <Typography variant="caption" color="text.secondary" display="block">{loc.address}</Typography>
+                                            )}
                                             <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                                                 {loc.count} image{loc.count !== 1 ? 's' : ''}
                                             </Typography>
+                                            {onAddLocationFilter && loc.id && (
+                                                <Button size="small" variant="outlined"
+                                                    sx={{ mt: 1, textTransform: 'none', fontSize: 11 }}
+                                                    onClick={() => onAddLocationFilter(loc.id!, loc.name)}
+                                                >Filter by this place</Button>
+                                            )}
                                         </Box>
                                     </Popup>
                                 </Marker>
                             ))}
-                        </>
-                    );
-                })()}
+                        </MarkerClusterGroup>
+                    </>
+                )}
                 {activeBounds && (
                     <Marker
                         position={activeBounds[1]}

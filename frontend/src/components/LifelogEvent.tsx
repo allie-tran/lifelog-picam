@@ -343,7 +343,7 @@ export const LifelogEventSkeleton = () => {
                 <Skeleton variant="text" width={100} />
                 <Skeleton variant="text" width={120} />
             </Stack>
-            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }} useFlexGap>
                 {Array.from({ length: 4 }).map((_, idx) => (
                     <Skeleton key={idx} variant="rounded" width={130} height={200} />
                 ))}

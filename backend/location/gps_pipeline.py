@@ -11,7 +11,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
 from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image, Location
-from location.enrich_stops import enrich_stop, enrich_move
+from location.enrich_stops import enrich_stop
 from location.utils import find_timezone
 
 from scripts.segmentation import load_all_segments
@@ -510,17 +510,7 @@ def enrich_and_index_segments(
         start_ts = seg.get("start_ts")
         end_ts = seg.get("end_ts")
 
-        if is_stop:
-            geo = enrich_stop(float(lat), float(lon))
-        else:
-            seg_df = df[
-                (df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)
-            ] if start_ts is not None and end_ts is not None else pd.DataFrame()
-            gps_pts = (
-                list(zip(seg_df["latitude"].tolist(), seg_df["longitude"].tolist()))
-                if not seg_df.empty else []
-            )
-            geo = enrich_move(gps_pts, fallback_lat=float(lat), fallback_lon=float(lon))
+        geo = enrich_stop(float(lat), float(lon))
 
         # Dedup key — in priority: OSM element id → Wikidata QID → 5-decimal coords
         # 5 decimal places ≈ 1 m precision, preventing false merges of nearby places

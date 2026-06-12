@@ -82,6 +82,7 @@ export type ImageWithMetadata = {
 
 
 export type ResultSegment = {
+    segmentId?: number;
     images: ImageObject[];
     location: LocationData;
     gps: GPSData[];
