@@ -56,7 +56,7 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
     return runs;
 }
 
-const MOVE_BG = '#9575cd';
+const MOVE_BG = '#9575cd20';
 
 // Match map pill color scale (count estimated from duration at 10s/image)
 function stopColour(totalSeconds: number): string {

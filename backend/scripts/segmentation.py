@@ -10,12 +10,11 @@ from database.models import Image, ImageEmbedding
 from database.types import DaySummaryRecord
 from sessions.redis import RedisClient
 from tqdm.auto import tqdm
-# describe_segment_task imported lazily in load_all_segments to break the
-# tasks → location.gps_pipeline → segmentation → tasks circular import.
 from scripts.utils import compress_image
 from database.types import _orm_to_lifelog
+import logging
 
-
+logger = logging.getLogger(__name__)
 redis_client = RedisClient()
 
 def fetch_embeddings(session, device: str, paths: List[str]) -> tuple[List[str], np.ndarray]:
@@ -123,13 +122,10 @@ def segment_images(
 
     features = features[sorted_indices]
     if len(features) == 0:
-        print("No features found for the given image paths. Segmenting by boundaries only.")
+        logger.warning("No features found for the given image paths. Segmenting by boundaries only.")
         # just do by boundaries if we don't have enough features
         image_segments = []
         for i, path in enumerate(image_paths):
-            if path == "2026-06-12/20260612_142158+0100.jpg":
-                print("Found the problematic image path at index", i)
-                print("Boundaries:", path in boundaries)
             if path in boundaries and image_segments:
                 image_segments.append([])
 
@@ -169,7 +165,7 @@ def segment_images(
     depth_threshold = np.mean(depth_scores) + np.std(depth_scores)
     depth_scores = [0] + depth_scores + [0]  # pad to align with image indices
     k = SEGMENT_THRESHOLD
-    print(
+    logger.info(
         f"Segmenting with depth threshold: {depth_threshold:.4f} and similarity threshold: {k:.4f}"
     )
 
@@ -177,20 +173,11 @@ def segment_images(
     segments: list[list[int]] = []
     current_segment = [0]
     for i in range(1, len(features)):
-        image_path = image_paths[i]
-
-        start_new_segment = False
-        if image_path in boundaries:
-            start_new_segment = True
-        else:
-            similarity = smoothed[i - 1]  # similarity between current and previous
-            # Require BOTH a raw drop AND a statistically significant valley — avoids
-            # splitting on transient visual changes (lighting, slight camera movement)
-            # within the same location/activity.
-            if similarity < k and depth_scores[i - 1] > depth_threshold:
-                start_new_segment = True
-
-        if start_new_segment:
+        similarity = smoothed[i - 1]  # similarity between current and previous
+        # Require BOTH a raw drop AND a statistically significant valley — avoids
+        # splitting on transient visual changes (lighting, slight camera movement)
+        # within the same location/activity.
+        if similarity < k and depth_scores[i - 1] > depth_threshold:
             segments.append(current_segment)
             current_segment = [i]
         else:
@@ -205,9 +192,6 @@ def segment_images(
     for segment in segments:
         if merged_segments:
             prev_segment = merged_segments[-1]
-            if image_paths[segment[0]] in boundaries or image_paths[prev_segment[-1]] in boundaries:
-                merged_segments.append(segment)
-                continue
 
             prev_feat = np.mean(features[prev_segment], axis=0)
             curr_feat = np.mean(features[segment], axis=0)
@@ -224,9 +208,6 @@ def segment_images(
     min_time = timedelta(minutes=2)
     for segment in merged_segments:
         prev_segment = small_merged[-1] if small_merged else None
-        if image_paths[segment[0]] in boundaries or (prev_segment and image_paths[prev_segment[-1]] in boundaries):
-            small_merged.append(segment)
-            continue
 
         if len(segment) < 3 and small_merged:
             # check the time
@@ -241,12 +222,25 @@ def segment_images(
     merged_segments = small_merged
 
     # Convert indices back to image paths
+    # And split based on hard boundaries (location/time gaps) — this is done after the feature-based segmentation to avoid splitting on transient visual changes within the same location/activity.
     image_segments: list[list[str]] = []
     for segment in merged_segments:
         segment_paths = [image_paths[i] for i in segment]
-        image_segments.append(segment_paths)
+        mini_segments = []
+        for path in segment_paths:
+            if path in boundaries and mini_segments:
+                image_segments.append(mini_segments)
+                mini_segments = []
 
-    print(f"Segmented into {len(image_segments)} segments.")
+            mini_segments.append(path)
+
+        if mini_segments:
+            image_segments.append(mini_segments)
+        else:
+            # edge case: if the last image in the segment is a boundary, we need to add the final mini_segment
+            image_segments.append(segment_paths)
+
+    logger.info(f"Segmented into {len(image_segments)} segments.")
     return image_segments
 
 
@@ -277,11 +271,11 @@ def load_all_segments(
     # reset_all_segments()
     first_unsegmented_time = find_first_unsegmented_timestamp(session, device_id, date)
     if first_unsegmented_time is None:
-        print("All images are already segmented. Exiting.")
+        logger.info("All images are already segmented. No reset needed.")
         return
 
     # Reset all the segments after the first unsegmented timestamp
-    print(
+    logger.info(
         f"First unsegmented image timestamp: {first_unsegmented_time}. Resetting segments for all images from this timestamp onwards..."
     )
     session.execute(
@@ -317,7 +311,7 @@ def load_all_segments(
     max_id = 0
     if segment_ids:
         max_id = max(segment_ids) + 1
-        print(f"Existing segments found. Next segment ID: {max_id}")
+        logger.debug(f"Existing segments found. Next segment ID: {max_id}")
 
     new_records = (
         session.execute(
@@ -339,20 +333,20 @@ def load_all_segments(
     new_records = list(new_records)
     paths = [record.image_path for record in new_records]
     if len(new_records) == 0 or len(paths) == 0:
-        print("No new images to segment. Exiting.")
+        logger.info("No new images to segment. Exiting.")
         return
 
     now = datetime.now(timezone.utc)
     last_image_time = new_records[-1].local_timestamp or new_records[-1].timestamp.astimezone(timezone.utc)
 
     if len(paths) < 20 and now - last_image_time < timedelta(minutes=15):
-        print(
+        logger.info(
             f"Not enough new images to segment ({len(paths)}), and last image is new ({last_image_time}). Skipping segmentation for now."
         )
         return
 
     segments = segment_images(session, device_id, paths, reverse=False)
-    print(f"Total segments created: {len(segments)}")
+    logger.info(f"Total segments created: {len(segments)}")
 
     job = redis_client.get_json(f"processing_job:{job_id}") if job_id else None
     tracked_files = job.get("all_files", []) if job else []

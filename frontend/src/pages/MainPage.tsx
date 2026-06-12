@@ -1,4 +1,12 @@
-import { Alert, Box, Container, IconButton, Snackbar, Stack, Tooltip } from '@mui/material';
+import {
+    Alert,
+    Box,
+    Container,
+    IconButton,
+    Snackbar,
+    Stack,
+    Tooltip,
+} from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
 import { GPSData } from '@utils/types';
 import { getGPSByDate, GpsTrackData } from 'apis/process';
@@ -94,7 +102,10 @@ function MainPage() {
         if (selectedSegmentId !== null) return;
         if (!navSegments?.length) return;
         // today → most recent first (last in array); past → earliest (first)
-        const pick = date === today ? navSegments[navSegments.length - 1] : navSegments[0];
+        const pick =
+            date === today
+                ? navSegments[navSegments.length - 1]
+                : navSegments[0];
         if (pick?.segmentId != null) setSegment(pick.segmentId);
     }, [navSegments]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -213,10 +224,7 @@ function MainPage() {
                 <Container>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Box sx={{ flex: 1 }}>
-                            <CustomDatePicker
-                                date={date}
-                                allDates={allDates}
-                            />
+                            <CustomDatePicker date={date} allDates={allDates} />
                         </Box>
                         {isAuthorised && date && (
                             <Tooltip title="Re-sync segmentation (preserves LLM annotations)">
@@ -225,8 +233,20 @@ function MainPage() {
                                         onClick={handleResync}
                                         disabled={resyncing}
                                         size="small"
-                                        sx={{ mt: 1, animation: resyncing ? 'spin 1s linear infinite' : 'none',
-                                              '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } } }}
+                                        sx={{
+                                            mt: 1,
+                                            animation: resyncing
+                                                ? 'spin 1s linear infinite'
+                                                : 'none',
+                                            '@keyframes spin': {
+                                                from: {
+                                                    transform: 'rotate(0deg)',
+                                                },
+                                                to: {
+                                                    transform: 'rotate(360deg)',
+                                                },
+                                            },
+                                        }}
                                     >
                                         <SyncIcon fontSize="small" />
                                     </IconButton>
@@ -246,11 +266,6 @@ function MainPage() {
                         onSelectSegment={setSegment}
                     />
                 </Box>
-
-                <DeleteRange
-                    onDelete={() => mutate()}
-                    date={date || dayjs().format('YYYY-MM-DD')}
-                />
 
                 {!isLoading &&
                     segments.length === 0 &&
@@ -315,9 +330,12 @@ function MainPage() {
                                             />
                                         )
                                 )}
+                                <DeleteRange
+                                    onDelete={() => mutate()}
+                                    date={date || dayjs().format('YYYY-MM-DD')}
+                                />
                             </Box>
                         )}
-
                         {isLoading &&
                             Array.from({ length: 5 }).map((_, index) => (
                                 <LifelogEventSkeleton key={index} />
@@ -325,19 +343,19 @@ function MainPage() {
                         {segments.map((segment, index) => {
                             if (segment.images.length === 0) return null;
                             return (
-                            <LifelogEvent
-                                key={index}
-                                segment={segment.images}
-                                location={segment.location}
-                                gpsList={segment.gps}
-                                onChange={() => {
-                                    dispatch(setLoading(true));
-                                    mutate().then(() =>
-                                        dispatch(setLoading(false))
-                                    );
-                                }}
-                                deleteRow={deleteRow}
-                            />
+                                <LifelogEvent
+                                    key={index}
+                                    segment={segment.images}
+                                    location={segment.location}
+                                    gpsList={segment.gps}
+                                    onChange={() => {
+                                        dispatch(setLoading(true));
+                                        mutate().then(() =>
+                                            dispatch(setLoading(false))
+                                        );
+                                    }}
+                                    deleteRow={deleteRow}
+                                />
                             );
                         })}
                     </Stack>
