@@ -108,8 +108,20 @@ def get_current_status(
         .limit(1)
     ).scalar_one_or_none()
     if latest_image:
-        current_thumbnail = latest_image.thumbnail if latest_image else None
-        segment_since = latest_image.timestamp if latest_image else None
+        segment_since = latest_image.timestamp
+
+    latest_image_with_thumb = session.execute(
+        select(Image)
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+            Image.thumbnail.isnot(None),
+        )
+        .order_by(Image.timestamp.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_image_with_thumb:
+        current_thumbnail = latest_image_with_thumb.thumbnail
 
     latest_image_with_location = session.execute(
         select(Image)

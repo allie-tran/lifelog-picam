@@ -264,17 +264,24 @@ class ImageRecord:
             # Most-common location for this segment
             seg_locs = [path_to_location[p] for p in image_paths if p in path_to_location]
             location = None
+            is_stop = True
             if seg_locs:
                 location_counts = Counter(str(loc.id) for loc in seg_locs)
                 most_common_id, _ = location_counts.most_common(1)[0]
                 location = next((loc for loc in seg_locs if str(loc.id) == most_common_id), None)
+                if location:
+                    is_stop = location.stop
 
             # GPS points for this segment (subsampled to keep payload small)
             gps_raw = [g for p in image_paths for g in path_to_gps.get(p, [])]
-            _max_pts = 30
-            if len(gps_raw) > _max_pts:
-                step = max(1, len(gps_raw) // _max_pts)
-                gps_raw = gps_raw[::step][:_max_pts]
+
+            if is_stop:
+                # Choose only a few
+                _max_pts = 10
+                if len(gps_raw) > _max_pts:
+                    step = max(1, len(gps_raw) // _max_pts)
+                    gps_raw = gps_raw[::step][:_max_pts]
+
             gps_info = [GPSInfo.model_validate(g.__dict__) for g in gps_raw]
 
             images = [_orm_to_lifelog(img) for img in images_orm]

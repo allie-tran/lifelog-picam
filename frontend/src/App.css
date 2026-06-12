@@ -85,10 +85,9 @@ video {
 }
 .loc-label-pill {
   width: 140px;
-  color: white;
+  color: black;
   padding: 3px 8px;
   border-radius: 12px;
-  border: 2px solid white;
   box-shadow: 0 2px 6px rgba(0,0,0,0.35);
   font-size: 11px;
   font-weight: 600;

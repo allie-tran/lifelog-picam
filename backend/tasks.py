@@ -7,7 +7,7 @@ from celery_app import celery
 from collections import Counter
 from database.models import (
     Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry,
-    Image, ImageEmbedding, ImageGPS, ImageObject, ImagePerson, PeopleCluster, Location,
+    Image, ImageEmbedding, ImageGPS, ImageObject, ImagePerson, PeopleCluster, Location, RawGPS,
 )
 from scripts.anonymise import anonymise_image
 from scripts.describe_segments import describe_segment, simple_describe_segment
@@ -287,15 +287,30 @@ def yolo_process_images_task(
 
     # Anonymise inline — boxes are in memory so no DB round-trip needed, and
     # running inline keeps the queue shallow (no N individual tasks queued here).
+    thumbnail_updates: list[tuple[str, str]] = []  # (rel_path, thumb_rel)
     for rel_path, (blur_boxes, wl_boxes) in image_boxes.items():
-        thumb_path = f"{THUMBNAIL_DIR}/{device}/{rel_path.rsplit('.', 1)[0]}.webp"
+        thumb_rel = f"{rel_path.rsplit('.', 1)[0]}.webp"
+        thumb_path = f"{THUMBNAIL_DIR}/{device}/{thumb_rel}"
         if not os.path.exists(thumb_path):
             path = f"{DIR}/{device}/{rel_path}"
             try:
                 anonymise_image(path, thumb_path, blur_boxes, wl_boxes)
                 logging.info("Anonymised %s/%s", device, rel_path)
+                thumbnail_updates.append((rel_path, thumb_rel))
             except Exception as exc:
                 logging.warning("Anonymise failed for %s/%s: %s", device, rel_path, exc)
+        else:
+            thumbnail_updates.append((rel_path, thumb_rel))
+
+    if thumbnail_updates:
+        with Session(engine) as session:
+            for rel_path, thumb_rel in thumbnail_updates:
+                session.execute(
+                    update(Image)
+                    .where(Image.device == device, Image.image_path == rel_path)
+                    .values(thumbnail=thumb_rel)
+                )
+            session.commit()
 
     recluster_unassigned_faces_task.delay(device)
 
@@ -849,6 +864,15 @@ def anonymise_image_task(
     )
     path = f"{DIR}/{device_id}/{relative_path}"
     anonymise_image(path, thumbnail_path, blur_face_boxes, whitelist_boxes, skip_sam3=skip_sam3)
+
+    with Session(engine) as session:
+        session.execute(
+            update(Image)
+            .where(Image.image_path == relative_path, Image.device == device_id)
+            .values(thumbnail=thumbnail_path)
+        )
+        session.commit()
+
     return thumbnail_path
 
 
@@ -902,10 +926,24 @@ def nightly_bio_stats_all_devices():
 
 @celery.task(name="tasks.location_update_all_devices")
 def location_update_all_devices():
+    from sqlalchemy import func
+    import sqlalchemy as sa
+
     with Session(engine) as session:
+        # Subquery: device UUIDs that have any RawGPS record on a given date
+        raw_gps_dates = (
+            select(Device.device_id.label("dev_str"), func.date(RawGPS.timestamp).label("gps_date"))
+            .join(RawGPS, RawGPS.device_id == Device.id)
+            .subquery()
+        )
+
         rows = session.execute(
             select(Image.device, Image.date)
             .outerjoin(ImageGPS, ImageGPS.image_id == Image.id)
+            .join(raw_gps_dates, sa.and_(
+                raw_gps_dates.c.dev_str == Image.device,
+                raw_gps_dates.c.gps_date == Image.date,
+            ))
             .where(
                 Image.location_id.is_(None),
                 Image.deleted == False,
@@ -979,14 +1017,13 @@ def pipeline_catchup_task():
                 logging.warning("catchup: encode failed for %s/%s: %s", device, image_path, exc)
 
     # --- Phase 3: Missing thumbnails ---
-    # Only check images where YOLO is done (so face boxes are in DB).
-    # Bounded per run to prevent the queue from growing faster than it drains.
+    # Find images where YOLO is done but no thumbnail has been created yet.
     with Session(engine) as session:
         thumb_rows = session.execute(
-            select(Image.device, Image.image_path, Image.thumbnail)
+            select(Image.device, Image.image_path)
             .where(
-                Image.proc_yolo == True,      # boxes are persisted; anonymise can look them up
-                Image.thumbnail.isnot(None),
+                Image.proc_yolo == True,
+                Image.thumbnail.is_(None),
                 Image.timestamp < cutoff,
                 Image.timestamp > past_cutoff,
                 Image.deleted == False,
@@ -996,15 +1033,13 @@ def pipeline_catchup_task():
             .limit(200)
         ).all()
 
-    # Filesystem checks outside the session so the connection is free while we stat files.
-    # Collect images that genuinely need a thumbnail.
+    # Collect images whose source file still exists.
     missing: list[tuple[str, str, str]] = []  # (device, image_path, thumb_path)
-    for device, image_path, thumbnail in thumb_rows:
-        thumb_path = f"{THUMBNAIL_DIR}/{device}/{thumbnail}"
-        if os.path.exists(thumb_path):
-            continue
+    for device, image_path in thumb_rows:
         if not os.path.exists(f"{DIR}/{device}/{image_path}"):
             continue
+        thumb_rel = f"{image_path.rsplit('.', 1)[0]}.webp"
+        thumb_path = f"{THUMBNAIL_DIR}/{device}/{thumb_rel}"
         missing.append((device, image_path, thumb_path))
 
     if missing:
@@ -1027,7 +1062,15 @@ def pipeline_catchup_task():
         for device, image_path, thumb_path in missing:
             blur_boxes, wl_boxes = boxes_map.get((device, image_path), ([], []))
             try:
+                thumb_rel = f"{image_path.rsplit('.', 1)[0]}.webp"
                 anonymise_image(f"{DIR}/{device}/{image_path}", thumb_path, blur_boxes, wl_boxes)
+                with Session(engine) as session:
+                    session.execute(
+                        update(Image)
+                        .where(Image.device == device, Image.image_path == image_path)
+                        .values(thumbnail=thumb_rel)
+                    )
+                    session.commit()
                 queued_thumbs += 1
             except Exception as exc:
                 logging.warning("catchup anonymise failed %s/%s: %s", device, image_path, exc)

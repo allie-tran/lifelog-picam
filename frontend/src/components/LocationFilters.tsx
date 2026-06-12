@@ -2,6 +2,7 @@ import {
     getAvailableValues,
     getLocations,
     getMovingPeriods,
+    searchLocations,
 } from '@apis/searchFilters';
 import {
     Box,
@@ -10,16 +11,18 @@ import {
     Chip,
     FormControl,
     Grid,
+    InputAdornment,
     InputLabel,
     ListItemText,
-    ListSubheader,
     MenuItem,
     Select,
     TextField,
     Typography,
 } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
 import countryBoundingBoxes from 'country-bounding-boxes.json';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LocationData } from '@utils/types';
 import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
 import MapSearch from './MapSearch';
@@ -55,14 +58,22 @@ const getCountryBounds = (countries: string[]) => {
 const LocationFiltersHook = ({
     resultLocations = [],
     onAddLocationFilter,
+    highlightedLocationId,
 }: {
     resultLocations?: LocationSummaryItem[];
     onAddLocationFilter?: (id: string, name: string) => void;
+    highlightedLocationId?: string | null;
 } = {}) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const { isMoving, countries, locationIds, bounds } = parseSearchParams(searchParams);
     const [locationSearch, setLocationSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(locationSearch.trim()), 300);
+        return () => clearTimeout(t);
+    }, [locationSearch]);
 
     const locationLabels = useMemo<Record<string, string>>(() => {
         try { return JSON.parse(searchParams.get('locationLabels') || '{}'); }
@@ -95,6 +106,16 @@ const LocationFiltersHook = ({
                 : getLocations(device, countries),
         { revalidateOnFocus: false, revalidateOnReconnect: false }
     );
+
+    const { data: searchResults } = useSWR(
+        device && debouncedSearch.length >= 2 ? [device, 'location-search', debouncedSearch] : null,
+        async () => searchLocations(device, debouncedSearch),
+        { revalidateOnFocus: false, revalidateOnReconnect: false }
+    );
+
+    const displayedLocations: LocationData[] = debouncedSearch.length >= 2
+        ? (searchResults ?? [])
+        : (availableLocations ?? []);
 
     const countriesKey = countries.join(',');
     useEffect(() => {
@@ -152,6 +173,23 @@ const LocationFiltersHook = ({
                     ))}
                 </Select>
             </FormControl>
+            <TextField
+                size="small"
+                fullWidth
+                sx={{ mt: 1 }}
+                placeholder="Search places…"
+                value={locationSearch}
+                onChange={(e) => setLocationSearch(e.target.value)}
+                slotProps={{
+                    input: {
+                        startAdornment: (
+                            <InputAdornment position="start">
+                                <SearchIcon fontSize="small" />
+                            </InputAdornment>
+                        ),
+                    },
+                }}
+            />
             <FormControl sx={{ mt: 1, width: '100%' }}>
                 <InputLabel id="location-select-label">Locations</InputLabel>
                 <Select
@@ -169,43 +207,38 @@ const LocationFiltersHook = ({
                     renderValue={(selected) =>
                         selected
                             .map((id) => {
-                                const loc = availableLocations?.find((l) => l.id === id);
+                                const loc = displayedLocations.find((l) => l.id === id)
+                                    ?? availableLocations?.find((l) => l.id === id);
                                 return loc?.name ?? locationLabels[id] ?? id;
                             })
                             .join(', ')
                     }
                     MenuProps={{ autoFocus: false }}
                 >
-                    <ListSubheader sx={{ p: 0.5, lineHeight: 1 }}>
-                        <TextField
-                            size="small"
-                            fullWidth
-                            autoFocus
-                            placeholder="Search locations…"
-                            value={locationSearch}
-                            onChange={(e) => setLocationSearch(e.target.value)}
-                            onKeyDown={(e) => e.stopPropagation()}
-                        />
-                    </ListSubheader>
                     {locationIds
-                        .filter((id) => !availableLocations?.some((l) => l.id === id))
+                        .filter((id) => !displayedLocations.some((l) => l.id === id))
                         .map((id) => (
                             <MenuItem key={id} value={id}>
                                 <Checkbox checked />
-                                <ListItemText primary={locationLabels[id] ?? id} />
+                                <LocationMenuItem
+                                    name={locationLabels[id] ?? id}
+                                />
                             </MenuItem>
                         ))}
-                    {(availableLocations ?? [])
-                        .filter((loc) =>
-                            !locationSearch ||
-                            loc.name?.toLowerCase().includes(locationSearch.toLowerCase())
-                        )
-                        .map((loc) => (
-                            <MenuItem key={loc.id} value={loc.id}>
-                                <Checkbox checked={locationIds.includes(loc.id as string)} />
-                                <ListItemText primary={loc.name} />
-                            </MenuItem>
-                        ))}
+                    {displayedLocations.map((loc) => (
+                        <MenuItem key={loc.id} value={loc.id}>
+                            <Checkbox checked={locationIds.includes(loc.id as string)} />
+                            <LocationMenuItem
+                                name={loc.name ?? loc.id ?? ''}
+                                address={loc.address}
+                                suburb={loc.suburb}
+                                city={loc.city}
+                                country={loc.country}
+                                categories={loc.categories}
+                                count={loc.count}
+                            />
+                        </MenuItem>
+                    ))}
                 </Select>
             </FormControl>
         </Box>
@@ -230,6 +263,7 @@ const LocationFiltersHook = ({
                 onClearBounds={handleClearBound}
                 resultLocations={resultLocations}
                 onAddLocationFilter={onAddLocationFilter}
+                highlightedLocationId={highlightedLocationId}
             />
         );
     };
@@ -257,6 +291,54 @@ const LocationFiltersHook = ({
         renderClearButton,
         nothingIsSelected,
     };
+};
+
+const LocationMenuItem = ({
+    name,
+    address,
+    suburb,
+    city,
+    country,
+    categories,
+    count,
+}: {
+    name: string;
+    address?: string | null;
+    suburb?: string | null;
+    city?: string | null;
+    country?: string | null;
+    categories?: string | null;
+    count?: number | null;
+}) => {
+    const parts: string[] = [];
+    if (suburb && suburb !== city) parts.push(suburb);
+    if (city) parts.push(city);
+    if (country) parts.push(country);
+    const place = parts.join(', ');
+
+    const firstCategory = categories?.split(';')[0]?.trim();
+    const meta = [firstCategory, count != null ? `${count} visits` : null]
+        .filter(Boolean)
+        .join(' · ');
+
+    // Show address only when it differs from the place hierarchy summary
+    const showAddress = address && address !== place;
+
+    return (
+        <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
+            <Typography variant="body2" noWrap>{name}</Typography>
+            {showAddress && (
+                <Typography variant="caption" color="text.secondary" noWrap display="block">
+                    {address}
+                </Typography>
+            )}
+            {(place || meta) && (
+                <Typography variant="caption" color="text.secondary" noWrap display="block">
+                    {[place, meta].filter(Boolean).join(' · ')}
+                </Typography>
+            )}
+        </Box>
+    );
 };
 
 const CheckboxWithText = ({

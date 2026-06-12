@@ -34,6 +34,7 @@ import {
 } from '@mui/icons-material';
 import DeviceSelect from '../pages/DeviceSelect';
 import DRESSettings from './DRESSettings';
+import NotificationsPanel from './NotificationsPanel';
 
 const DRESWidget = () => {
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -163,6 +164,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         <Box sx={{ flex: 1 }} />
                         <DeviceSelect />
                         <DRESWidget />
+                        <NotificationsPanel />
                     </Toolbar>
                 </AppBar>
                 <Drawer

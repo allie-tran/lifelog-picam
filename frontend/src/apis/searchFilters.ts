@@ -45,6 +45,18 @@ export const getMovingPeriods = async (
     return response.data as LocationData[];
 };
 
+export const searchLocations = async (
+    device: string,
+    q: string,
+    limit = 20
+): Promise<LocationData[]> => {
+    const response = await axios.get(
+        `/explore/search-locations`,
+        { params: { device, q, limit } }
+    );
+    return response.data as LocationData[];
+};
+
 export const getAllFaces = async (device: string) => {
     const response = await axios.get(
         `/explore/all-faces?device=${encodeURIComponent(device)}`

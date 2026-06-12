@@ -37,6 +37,10 @@ import TimeHeatmap from './TimeHeatmap';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+function toggle<T>(arr: T[], val: T): T[] {
+    return arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val];
+}
+
 const DATE_FORMATS = ['D MMM YYYY', 'D MMMM YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'D/M/YYYY'];
 
 const parseDate = (text: string) => {
@@ -231,33 +235,6 @@ const TemporalFiltersHook = ({
                                 Add
                             </Button>
                         </Stack>
-                        <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                            {customRanges
-                                .filter((r) => r.start !== r.end)
-                                .map((r) => (
-                                    <Chip
-                                        key={`${r.start}-${r.end}`}
-                                        label={`${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`}
-                                        size="small"
-                                        onDelete={() => {
-                                            const { start: rs, end: re } = r;
-                                            setSearchParams((prev) => {
-                                                const current = parseSearchParams(
-                                                    new URLSearchParams(prev)
-                                                ).customRanges;
-                                                return applyQueryToParams(
-                                                    {
-                                                        customRanges: current.filter(
-                                                            (x) => !(x.start === rs && x.end === re)
-                                                        ),
-                                                    },
-                                                    new URLSearchParams(prev)
-                                                );
-                                            });
-                                        }}
-                                    />
-                                ))}
-                        </Stack>
                     </Box>
                 )}
             </Box>
@@ -307,27 +284,41 @@ const TemporalFiltersHook = ({
                 onCustomRangesChange={(v) => update({ customRanges: v })}
                 onWeekCellsChange={(v) => update({ weekCells: v })}
                 onMonthCellsChange={(v) => update({ monthCells: v })}
+                onWeekdayCellClick={(tod, dow) =>
+                    update({
+                        timeOfDays: toggle(timeOfDays, tod),
+                        dayOfWeeks: toggle(dayOfWeeks, dow),
+                    })
+                }
+                onMonthCellClick={(dow, month) =>
+                    update({
+                        dayOfWeeks: toggle(dayOfWeeks, dow),
+                        months: toggle(months, month),
+                    })
+                }
             />
 
-            {/* Single-day pinned dates (from calendar view clicks) */}
-            {customRanges.filter((r) => r.start === r.end).length > 0 && (
+            {/* Calendar-selected dates and ranges */}
+            {customRanges.length > 0 && (
                 <Stack direction="row" flexWrap="wrap" gap={0.5} mt={1}>
-                    {customRanges
-                        .filter((r) => r.start === r.end)
-                        .map((r) => (
+                    {customRanges.map((r) => {
+                        const label = r.start === r.end
+                            ? dayjs(r.start).format('D MMM YYYY')
+                            : `${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`;
+                        return (
                             <Chip
-                                key={r.start}
-                                label={dayjs(r.start).format('D MMM YYYY')}
+                                key={`${r.start}-${r.end}`}
+                                label={label}
                                 size="small"
                                 onDelete={() => {
-                                    const { start: rs } = r;
+                                    const { start: rs, end: re } = r;
                                     setSearchParams((prev) => {
                                         const current =
                                             parseSearchParams(new URLSearchParams(prev)).customRanges;
                                         return applyQueryToParams(
                                             {
                                                 customRanges: current.filter(
-                                                    (x) => !(x.start === rs && x.end === rs)
+                                                    (x) => !(x.start === rs && x.end === re)
                                                 ),
                                             },
                                             new URLSearchParams(prev)
@@ -335,7 +326,8 @@ const TemporalFiltersHook = ({
                                     });
                                 }}
                             />
-                        ))}
+                        );
+                    })}
                 </Stack>
             )}
         </Stack>

@@ -41,5 +41,8 @@ class RedisClient:
                 break
         return deleted
 
+    def get_ttl(self, key):
+        return self.client.ttl(key)
+
 
 redis_client = RedisClient()

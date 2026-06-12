@@ -5,7 +5,7 @@ import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import weekYear from 'dayjs/plugin/weekYear';
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     DayOfWeek,
     Month,
@@ -58,7 +58,6 @@ const GridView = ({
     colLabels,
     selectedRows,
     selectedCols,
-    selectedCells,
     density,
     onRowClick,
     onColClick,
@@ -69,120 +68,123 @@ const GridView = ({
     colLabels: string[];
     selectedRows: number[];
     selectedCols: number[];
-    selectedCells: Set<string>; // "ri:ci" keys
     density: number[][];
     onRowClick: (i: number) => void;
     onColClick: (i: number) => void;
     onCellClick: (ri: number, ci: number) => void;
     cellH?: number;
-}) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%', userSelect: 'none' }}>
-        {/* Column headers */}
-        <Box sx={{ display: 'flex', ml: `${ROW_LABEL_W}px` }}>
-            {colLabels.map((label, ci) => {
-                const active = selectedCols.includes(ci);
+}) => {
+    const [hovered, setHovered] = useState<{ ri: number; ci: number } | null>(null);
+
+    return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%', userSelect: 'none' }}>
+            {/* Column headers */}
+            <Box sx={{ display: 'flex', ml: `${ROW_LABEL_W}px` }}>
+                {colLabels.map((label, ci) => {
+                    const active = selectedCols.includes(ci);
+                    const hovering = hovered?.ci === ci;
+                    return (
+                        <Box
+                            key={ci}
+                            onClick={() => onColClick(ci)}
+                            sx={{
+                                flex: 1,
+                                textAlign: 'center',
+                                py: 0.75,
+                                cursor: 'pointer',
+                                fontSize: '0.68rem',
+                                fontWeight: active || hovering ? 700 : 400,
+                                color: active ? 'primary.main' : hovering ? 'primary.light' : 'text.disabled',
+                                borderRadius: '4px 4px 0 0',
+                                bgcolor: active ? 'rgba(22,162,152,0.12)' : hovering ? 'rgba(22,162,152,0.07)' : 'transparent',
+                                transition: 'all 0.15s',
+                                '&:hover': { color: 'primary.light', bgcolor: 'rgba(22,162,152,0.07)' },
+                            }}
+                        >
+                            {label}
+                        </Box>
+                    );
+                })}
+            </Box>
+
+            {/* Rows */}
+            {rowItems.map(({ label, sub }, ri) => {
+                const rowActive = selectedRows.includes(ri);
+                const rowHovering = hovered?.ri === ri;
                 return (
-                    <Box
-                        key={ci}
-                        onClick={() => onColClick(ci)}
-                        sx={{
-                            flex: 1,
-                            textAlign: 'center',
-                            py: 0.75,
-                            cursor: 'pointer',
-                            fontSize: '0.68rem',
-                            fontWeight: active ? 700 : 400,
-                            color: active ? 'primary.main' : 'text.disabled',
-                            borderRadius: '4px 4px 0 0',
-                            bgcolor: active ? 'rgba(22,162,152,0.12)' : 'transparent',
-                            transition: 'all 0.15s',
-                            '&:hover': { color: 'primary.light', bgcolor: 'rgba(22,162,152,0.07)' },
-                        }}
-                    >
-                        {label}
+                    <Box key={ri} sx={{ display: 'flex', alignItems: 'stretch', mb: '2px' }}>
+                        {/* Row label */}
+                        <Box
+                            onClick={() => onRowClick(ri)}
+                            sx={{
+                                width: ROW_LABEL_W,
+                                minWidth: ROW_LABEL_W,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-end',
+                                pr: 1.5,
+                                cursor: 'pointer',
+                                color: rowActive ? 'primary.main' : rowHovering ? 'primary.light' : 'text.disabled',
+                                bgcolor: rowActive ? 'rgba(22,162,152,0.08)' : rowHovering ? 'rgba(22,162,152,0.05)' : 'transparent',
+                                borderRadius: '4px 0 0 4px',
+                                transition: 'all 0.15s',
+                                '&:hover': { color: 'primary.light', bgcolor: 'rgba(22,162,152,0.05)' },
+                            }}
+                        >
+                            <Typography sx={{ fontSize: '0.7rem', fontWeight: rowActive || rowHovering ? 700 : 400, lineHeight: 1.2 }}>
+                                {label}
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.6rem', opacity: 0.6, lineHeight: 1.2 }}>
+                                {sub}
+                            </Typography>
+                        </Box>
+
+                        {/* Cells */}
+                        {colLabels.map((_, ci) => {
+                            const colActive = selectedCols.includes(ci);
+                            const isHovered = hovered?.ri === ri && hovered?.ci === ci;
+                            const rowOrColHovered = hovered?.ri === ri || hovered?.ci === ci;
+                            const d = density[ri]?.[ci] ?? 0;
+                            let bg: string;
+                            if (rowActive && colActive) {
+                                bg = `rgba(22,162,152,${0.22 + d * 0.38})`;
+                            } else if (rowActive || colActive) {
+                                bg = `rgba(22,162,152,${0.09 + d * 0.18})`;
+                            } else if (rowOrColHovered) {
+                                bg = `rgba(22,162,152,${0.06 + d * 0.12})`;
+                            } else if (d > 0) {
+                                bg = `rgba(147,51,234,${0.12 + d * 0.48})`;
+                            } else {
+                                bg = 'rgba(0,0,0,0.04)';
+                            }
+                            return (
+                                <Box
+                                    key={ci}
+                                    onClick={(e) => { e.stopPropagation(); onCellClick(ri, ci); }}
+                                    onMouseEnter={() => setHovered({ ri, ci })}
+                                    onMouseLeave={() => setHovered(null)}
+                                    sx={{
+                                        flex: 1,
+                                        height: cellH,
+                                        bgcolor: bg,
+                                        m: '1px',
+                                        borderRadius: '4px',
+                                        border: isHovered
+                                            ? '1px solid rgba(22,162,152,0.5)'
+                                            : '1px solid rgba(255,255,255,0.12)',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.1s',
+                                    }}
+                                />
+                            );
+                        })}
                     </Box>
                 );
             })}
         </Box>
-
-        {/* Rows */}
-        {rowItems.map(({ label, sub }, ri) => {
-            const rowActive = selectedRows.includes(ri);
-            return (
-                <Box key={ri} sx={{ display: 'flex', alignItems: 'stretch', mb: '2px' }}>
-                    {/* Row label */}
-                    <Box
-                        onClick={() => onRowClick(ri)}
-                        sx={{
-                            width: ROW_LABEL_W,
-                            minWidth: ROW_LABEL_W,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            justifyContent: 'center',
-                            alignItems: 'flex-end',
-                            pr: 1.5,
-                            cursor: 'pointer',
-                            color: rowActive ? 'primary.main' : 'text.disabled',
-                            bgcolor: rowActive ? 'rgba(22,162,152,0.08)' : 'transparent',
-                            borderRadius: '4px 0 0 4px',
-                            transition: 'all 0.15s',
-                            '&:hover': { color: 'primary.light', bgcolor: 'rgba(22,162,152,0.05)' },
-                        }}
-                    >
-                        <Typography sx={{ fontSize: '0.7rem', fontWeight: rowActive ? 700 : 400, lineHeight: 1.2 }}>
-                            {label}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.6rem', opacity: 0.6, lineHeight: 1.2 }}>
-                            {sub}
-                        </Typography>
-                    </Box>
-
-                    {/* Cells */}
-                    {colLabels.map((_, ci) => {
-                        const colActive = selectedCols.includes(ci);
-                        const cellActive = selectedCells.has(`${ri}:${ci}`);
-                        const d = density[ri]?.[ci] ?? 0;
-                        // priority: individual cell > row+col intersection > partial > density only
-                        let bg: string;
-                        if (cellActive) {
-                            bg = `rgba(22,162,152,${0.22 + d * 0.38})`;
-                        } else if (rowActive && colActive) {
-                            bg = `rgba(22,162,152,${0.22 + d * 0.38})`;
-                        } else if (rowActive || colActive) {
-                            bg = `rgba(22,162,152,${0.09 + d * 0.18})`;
-                        } else if (d > 0) {
-                            bg = `rgba(147,51,234,${0.12 + d * 0.48})`;
-                        } else {
-                            bg = 'rgba(0,0,0,0.04)';
-                        }
-                        return (
-                            <Box
-                                key={ci}
-                                onClick={() => onCellClick(ri, ci)}
-                                sx={{
-                                    flex: 1,
-                                    height: cellH,
-                                    bgcolor: bg,
-                                    m: '1px',
-                                    borderRadius: '4px',
-                                    border: cellActive
-                                        ? '1px solid rgba(22,162,152,0.6)'
-                                        : '1px solid rgba(255,255,255,0.12)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.1s',
-                                    '&:hover': {
-                                        filter: 'brightness(1.35)',
-                                        border: '1px solid rgba(255,255,255,0.18)',
-                                    },
-                                }}
-                            />
-                        );
-                    })}
-                </Box>
-            );
-        })}
-    </Box>
-);
+    );
+};
 
 // ─── CalendarView ─────────────────────────────────────────────────────────────
 
@@ -416,6 +418,9 @@ export interface TimeHeatmapProps {
     onCustomRangesChange: (v: { start: string; end: string }[]) => void;
     onWeekCellsChange: (v: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[]) => void;
     onMonthCellsChange: (v: { dayOfWeek: DayOfWeek; month: Month }[]) => void;
+    // Atomic combined handlers for cell clicks (row+col in one URL update)
+    onWeekdayCellClick: (tod: TimeOfDay, dow: DayOfWeek) => void;
+    onMonthCellClick: (dow: DayOfWeek, month: Month) => void;
 }
 
 const TimeHeatmap = ({
@@ -433,6 +438,8 @@ const TimeHeatmap = ({
     onCustomRangesChange,
     onWeekCellsChange,
     onMonthCellsChange,
+    onWeekdayCellClick,
+    onMonthCellClick,
 }: TimeHeatmapProps) => {
     const [view, setView] = React.useState<ViewMode>('month');
 
@@ -515,34 +522,19 @@ const TimeHeatmap = ({
         [months]
     );
 
-    // individual cell sets (as "ri:ci" strings for fast lookup)
-    const weekCellSet = useMemo(
-        () =>
-            new Set(
-                weekCells.map((c) => {
-                    const ri = TOD_DISPLAY.findIndex((d) => d.key === c.timeOfDay);
-                    const ci = dayOfWeekOptions.indexOf(c.dayOfWeek);
-                    return `${ri}:${ci}`;
-                })
-            ),
-        [weekCells]
-    );
-    const monthCellSet = useMemo(
-        () =>
-            new Set(
-                monthCells.map((c) => {
-                    const ri = dayOfWeekOptions.indexOf(c.dayOfWeek);
-                    const ci = monthOptions.indexOf(c.month);
-                    return `${ri}:${ci}`;
-                })
-            ),
-        [monthCells]
-    );
 
-    const selectedDates = useMemo(
-        () => new Set(customRanges.filter((r) => r.start === r.end).map((r) => r.start)),
-        [customRanges]
-    );
+    const selectedDates = useMemo(() => {
+        const set = new Set<string>();
+        for (const r of customRanges) {
+            let d = dayjs(r.start);
+            const end = dayjs(r.end);
+            while (!d.isAfter(end)) {
+                set.add(d.format('YYYY-MM-DD'));
+                d = d.add(1, 'day');
+            }
+        }
+        return set;
+    }, [customRanges]);
 
     // For calendar cross-highlighting (only when a specific year is selected)
     const calendarHighlightDows = useMemo(
@@ -578,55 +570,46 @@ const TimeHeatmap = ({
         [months, onMonthsChange]
     );
 
-    const toggleWeekCell = useCallback(
-        (ri: number, ci: number) => {
-            const tod = TOD_DISPLAY[ri].key;
-            const dow = dayOfWeekOptions[ci];
-            const exists = weekCells.some((c) => c.timeOfDay === tod && c.dayOfWeek === dow);
-            onWeekCellsChange(
-                exists
-                    ? weekCells.filter((c) => !(c.timeOfDay === tod && c.dayOfWeek === dow))
-                    : [...weekCells, { timeOfDay: tod, dayOfWeek: dow }]
-            );
-        },
-        [weekCells, onWeekCellsChange]
+
+    // Bridge: convert (ri,ci) indices → typed keys, then call the atomic prop
+    const handleWeekdayCellClick = useCallback(
+        (ri: number, ci: number) => onWeekdayCellClick(TOD_DISPLAY[ri].key, dayOfWeekOptions[ci]),
+        [onWeekdayCellClick]
     );
-    const toggleMonthCell = useCallback(
-        (ri: number, ci: number) => {
-            const dayOfWeek = dayOfWeekOptions[ri];
-            const month = monthOptions[ci];
-            const exists = monthCells.some((c) => c.dayOfWeek === dayOfWeek && c.month === month);
-            onMonthCellsChange(
-                exists
-                    ? monthCells.filter((c) => !(c.dayOfWeek === dayOfWeek && c.month === month))
-                    : [...monthCells, { dayOfWeek, month }]
-            );
-        },
-        [monthCells, onMonthCellsChange]
+    const handleMonthCellClick = useCallback(
+        (ri: number, ci: number) => onMonthCellClick(dayOfWeekOptions[ri], monthOptions[ci]),
+        [onMonthCellClick]
     );
 
     const toggleDate = useCallback(
         (dateStr: string) => {
-            const exists = customRanges.some((r) => r.start === dateStr && r.end === dateStr);
-            onCustomRangesChange(
-                exists
-                    ? customRanges.filter((r) => !(r.start === dateStr && r.end === dateStr))
-                    : [...customRanges, { start: dateStr, end: dateStr }]
+            // A date is "selected" if it falls within any range
+            const inRange = customRanges.some(
+                (r) => dateStr >= r.start && dateStr <= r.end
             );
+            if (inRange) {
+                // Remove any range that contains this date (remove the whole range)
+                onCustomRangesChange(
+                    customRanges.filter((r) => !(dateStr >= r.start && dateStr <= r.end))
+                );
+            } else {
+                onCustomRangesChange([...customRanges, { start: dateStr, end: dateStr }]);
+            }
         },
         [customRanges, onCustomRangesChange]
     );
 
     const handleCalendarDragSelect = useCallback(
         (dates: string[], mode: 'add' | 'remove') => {
+            const sorted = [...dates].sort();
+            const lo = sorted[0];
+            const hi = sorted[sorted.length - 1];
             if (mode === 'add') {
-                const toAdd = dates
-                    .filter((d) => !customRanges.some((r) => r.start === d && r.end === d))
-                    .map((d) => ({ start: d, end: d }));
-                onCustomRangesChange([...customRanges, ...toAdd]);
+                onCustomRangesChange([...customRanges, { start: lo, end: hi }]);
             } else {
+                // Remove any range that overlaps with the dragged span
                 onCustomRangesChange(
-                    customRanges.filter((r) => !(r.start === r.end && dates.includes(r.start)))
+                    customRanges.filter((r) => !(r.start >= lo && r.end <= hi) && !(r.start === r.end && r.start >= lo && r.start <= hi))
                 );
             }
         },
@@ -660,8 +643,8 @@ const TimeHeatmap = ({
                     sx={{ ml: 'auto !important', fontSize: '0.65rem' }}
                 >
                     {view === 'calendar'
-                        ? 'Click or drag to select dates · drag selected dates to deselect'
-                        : 'Click labels for whole row/column · click cells for exact slot'}
+                        ? 'Click a date · drag to select a range · drag over selected to remove'
+                        : 'Click labels or cells to toggle row + column'}
                 </Typography>
             </Stack>
 
@@ -671,11 +654,10 @@ const TimeHeatmap = ({
                     colLabels={DAY_ABBR}
                     selectedRows={selectedTodIndices}
                     selectedCols={selectedDowIndices}
-                    selectedCells={weekCellSet}
                     density={weekdayDensity}
                     onRowClick={toggleTod}
                     onColClick={toggleDow}
-                    onCellClick={toggleWeekCell}
+                    onCellClick={handleWeekdayCellClick}
                     cellH={18}
                 />
             )}
@@ -686,11 +668,10 @@ const TimeHeatmap = ({
                     colLabels={MONTH_ABBR}
                     selectedRows={selectedDowIndices}
                     selectedCols={selectedMonthIndices}
-                    selectedCells={monthCellSet}
                     density={monthDensity}
                     onRowClick={toggleDow}
                     onColClick={toggleMonth}
-                    onCellClick={toggleMonthCell}
+                    onCellClick={handleMonthCellClick}
                     cellH={16}
                 />
             )}

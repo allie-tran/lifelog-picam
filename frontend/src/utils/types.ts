@@ -42,6 +42,7 @@ export type LocationData = {
     categories?: string;
     // legacy
     info?: string;
+    count?: number;
 };
 
 type ImageObject = {
@@ -165,6 +166,19 @@ export type CurrentStatus = {
     summary?: string;
     summaryUpdatedAt?: string;
 };
+
+export interface Notification {
+    id: string;
+    device: string;
+    date: string;
+    timestamp?: string;
+    read: boolean;
+    type: 'new_location' | 'unusual_activity' | 'day_complete' | 'novelty' | string;
+    title: string;
+    body?: string;
+    imagePath?: string;
+    segmentId?: number;
+}
 
 export type SearchQuery = {
     text: string;

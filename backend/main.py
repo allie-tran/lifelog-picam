@@ -36,7 +36,6 @@ from auth import auth_app, _require_admin, _require_any_access, _require_owner
 from auth.auth_models import auth_dependency, get_user
 from tasks import describe_segment_task
 from pipelines.all import process_video
-from pipelines.hourly import update_app
 from preprocess import load_features
 from scripts.utils import CustomFormatter
 from settings.utils import create_device
@@ -56,7 +55,6 @@ from apis.status import app as status_app
 
 
 load_dotenv()
-picam_username = os.getenv("PICAM_USERNAME", "default_user")
 
 ch = logging.StreamHandler()
 ch.setFormatter(CustomFormatter())
@@ -222,17 +220,6 @@ async def upload_video(
 
     background_tasks.add_task(process_video, device, date, file_name)
     return {"message": "Video uploaded successfully."}
-
-
-@app.post("/update-app", deprecated=True)
-async def update_app_endpoint(
-    job_id: str,
-    background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session),
-):
-    background_tasks.add_task(update_app, session, app, job_id=job_id)
-    return {"message": "App update scheduled."}
-
 
 # ---------------------------------------------------------------------------
 # App navigation endpoints

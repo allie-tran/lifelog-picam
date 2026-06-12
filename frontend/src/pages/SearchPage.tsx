@@ -547,6 +547,8 @@ const SearchPage = () => {
         });
     }, [setSearchParams]);
 
+    const [highlightedLocationId, setHighlightedLocationId] = React.useState<string | null>(null);
+
     const {
         renderFilterOptions: LocationFilterOptions,
         renderMap,
@@ -555,6 +557,7 @@ const SearchPage = () => {
     } = LocationFiltersHook({
         resultLocations: searchSummaryData?.topLocations ?? [],
         onAddLocationFilter: handleAddLocationFilter,
+        highlightedLocationId,
     });
 
     const handleAddPersonFilter = React.useCallback((id: string) => {
@@ -904,10 +907,9 @@ const SearchPage = () => {
                                     topCountries={resultSummary.topCountries}
                                     topPeople={resultSummary.topPeople}
                                     onAppendToQuery={handleAppendToQuery}
-                                    onAddLocationFilter={
-                                        handleAddLocationFilter
-                                    }
+                                    onAddLocationFilter={handleAddLocationFilter}
                                     onAddPersonFilter={handleAddPersonFilter}
+                                    onHighlightLocation={setHighlightedLocationId}
                                 />
                             </Stack>
                         ) : null}

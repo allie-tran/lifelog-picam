@@ -57,11 +57,84 @@ _NOM_RATE = 1.1   # seconds between requests (Nominatim policy: max 1 req/s)
 _last_nom: float = 0.0
 _nom_cache: dict = {}
 
+# ─── Overpass ─────────────────────────────────────────────────────────────────
+
+_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+_OVERPASS_RATE = 2.0
+_last_overpass: float = 0.0
+_overpass_cache: dict[tuple, str] = {}
+
+# Nominatim OSM classes that indicate a non-POI result — road, bench, boundary, etc.
+_NON_POI_CLASSES = {"highway", "boundary", "waterway", "natural", "place"}
+
+# Tags searched by Overpass in priority order (first match wins)
+_OVERPASS_QUERY_TMPL = """[out:json][timeout:10];
+is_in({lat},{lon})->.a;
+(
+  way(pivot.a)[name][amenity~"university|college|school|hospital|clinic|library|theatre|cinema|marketplace|community_centre|arts_centre"];
+  way(pivot.a)[name][leisure~"sports_centre|stadium|park|golf_course|ice_rink|swimming_pool"];
+  way(pivot.a)[name][tourism~"hotel|museum|attraction|gallery|theme_park|zoo"];
+  way(pivot.a)[name][landuse~"education|commercial|retail|industrial|military|religious"];
+  relation(pivot.a)[name][amenity~"university|college|school|hospital"];
+);
+out 5;"""
+
+
+def overpass_named_place(lat: float, lon: float) -> str:
+    """
+    Find the named POI area that actually contains this point.
+    Uses is_in — only matches if the point is geometrically inside the polygon.
+    Returns the place name string, or "" if not inside any known POI area.
+    """
+    global _last_overpass
+    cache_key = (round(lat, 4), round(lon, 4))
+    if cache_key in _overpass_cache:
+        return _overpass_cache[cache_key]
+
+    wait = _OVERPASS_RATE - (time.monotonic() - _last_overpass)
+    if wait > 0:
+        time.sleep(wait)
+
+    query = _OVERPASS_QUERY_TMPL.format(lat=lat, lon=lon)
+    try:
+        r = requests.post(_OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=15)
+        r.raise_for_status()
+        elements = r.json().get("elements", [])
+        _last_overpass = time.monotonic()
+    except Exception as exc:
+        logger.warning("Overpass error at (%.5f, %.5f): %s", lat, lon, exc)
+        _overpass_cache[cache_key] = ""
+        return ""
+
+    name = ""
+    for el in elements:
+        n = el.get("tags", {}).get("name", "")
+        if n:
+            name = n
+            break
+
+    _overpass_cache[cache_key] = name
+    return name
+
 
 def nominatim_reverse(lat: float, lon: float, zoom: int = 14, extratags: bool = False) -> dict:
     """Rate-limited Nominatim reverse geocode. Returns raw JSON dict or {}."""
     global _last_nom
-    cache_key = (round(lat, 2), round(lon, 2), zoom, extratags)
+    if zoom > 18:
+        zoom = 18
+
+    # rounding based on zoom level
+    if zoom <= 10:
+        lat = round(lat, 2)
+        lon = round(lon, 2)
+    elif zoom <= 14:
+        lat = round(lat, 3)
+        lon = round(lon, 3)
+    else:
+        lat = round(lat, 5)
+        lon = round(lon, 5)
+
+    cache_key = (lat, lon, zoom, extratags)
     if cache_key in _nom_cache:
         return _nom_cache[cache_key]
 
@@ -256,7 +329,15 @@ def enrich_stop(lat: float, lon: float) -> dict:
                 name = v
                 break
 
-    # 3. For residential / unlabelled stops: use street address as a hint
+    # 3. Overpass fallback when Nominatim returned a non-POI element (highway,
+    #    boundary, bench, etc.) or gave no name at all.  This catches cases where
+    #    the GPS point is on a road that borders a named campus / building.
+    if not name or raw.get("class") in _NON_POI_CLASSES:
+        overpass_name = overpass_named_place(lat, lon)
+        if overpass_name:
+            name = overpass_name
+
+    # 4. Last resort: street address
     if not name:
         road = addr.get("road", "")
         house = addr.get("house_number", "")

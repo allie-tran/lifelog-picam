@@ -22,18 +22,28 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
-import { deleteImages, getAllDates, getImagesByHour } from '../apis/browsing';
+import { deleteImages, getAllDates, getImagesByHour, getSegmentsByDate } from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 
 function MainPage() {
-    const [searchParams, _] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const today = dayjs().format('YYYY-MM-DD');
     const date = searchParams.get('date');
     const device = searchParams.get('device') || '';
+    const hourParam = searchParams.get('hour');
+    const hour: number | null = hourParam !== null ? Number(hourParam) : null;
+
+    const setHour = React.useCallback((h: number | null) => {
+        setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            if (h === null) next.delete('hour');
+            else next.set('hour', String(h));
+            return next;
+        });
+    }, [setSearchParams]);
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
-    const [hour, setHour] = React.useState<number | null>(null);
 
     const dispatch = useAppDispatch();
 
@@ -48,7 +58,6 @@ function MainPage() {
                 deviceAccess === AccessLevel.ADMIN ||
                 deviceAccess === AccessLevel.OWNER
             ) {
-                setHour(hour || 0);
                 return await getImagesByHour(
                     device,
                     date || '',
@@ -99,18 +108,25 @@ function MainPage() {
             refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
-    // Prefer the dense raw GPS track; fall back to image-anchored GPS
-    const gpsTrack: GPSData[] = gpsData?.rawGps?.length
-        ? gpsData.rawGps
-        : (gpsData?.imageGps ?? []);
+    const { data: daySegmentsData } = useSWR(
+        date && device && (deviceAccess === AccessLevel.ADMIN || deviceAccess === AccessLevel.OWNER)
+            ? ['day-segments', device, date]
+            : null,
+        () => getSegmentsByDate(device, date || ''),
+        { revalidateOnFocus: false, refreshInterval: date === today ? 3 * 60 * 1000 : 0 }
+    );
+
+    const imageGps: GPSData[] = gpsData?.imageGps ?? [];
 
     const images = data?.images;
     const segments = data?.segments || [];
+    const daySegments = daySegmentsData?.segments || [];
     const availableHours = data?.available_hours || [];
 
     useEffect(() => {
         setPage(1);
-    }, [date, device]);
+        setHour(null);
+    }, [date, device]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (availableHours.length > 0 && !availableHours.includes(hour || 0)) {
@@ -189,8 +205,9 @@ function MainPage() {
                     spacing={2}
                 >
                     <GpsTrack
-                        gpsTrack={gpsTrack || []}
+                        imageGps={imageGps}
                         currentTrack={data?.gps || []}
+                        segments={daySegments}
                     />
                     <Stack
                         sx={{

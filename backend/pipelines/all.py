@@ -36,7 +36,6 @@ def index_to_postgres(
             date=date,
             device=device_id,
             image_path=relative_path,
-            thumbnail=relative_path.replace(".jpg", ".webp"),
             timestamp=utc_time.replace(tzinfo=None),
             timezone=tz,
             local_timestamp=local_timestamp,
@@ -80,12 +79,10 @@ def yolo_process_images(
 
 
 def create_thumbnail(session, device_id: str, relative_path: str, skip_sam3=False):
-    # anonymise_image_task is dispatched by yolo_process_images_task after
-    # detection results are written, so it isn't dispatched here anymore.
     session.execute(
         update(Image)
         .where(Image.image_path == relative_path, Image.device == device_id)
-        .values(proc_sam3=True, thumbnail=relative_path.replace(".jpg", ".webp"))
+        .values(proc_sam3=True)
     )
     session.commit()
 

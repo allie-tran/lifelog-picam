@@ -4,12 +4,8 @@ import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import 'leaflet/dist/leaflet.css';
-// leaflet.heat uses global L — must set window.L before requiring it
-if (typeof window !== 'undefined') (window as any).L = L;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-require('leaflet.heat');
 import { useCallback, useEffect, useState } from 'react';
-import { CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
+import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import {
     SelectArea,
     SelectAreaBounds,
@@ -73,10 +69,10 @@ const DensityLayer = ({ locations }: { locations: LocWithCoords[] }) => {
                         center={[loc.latitude, loc.longitude]}
                         radius={radius}
                         pathOptions={{
-                            fillColor: `${color}0.35)`,
+                            fillColor: `${color}0.25)`,
                             fillOpacity: 1,
-                            color: `${color}0.6)`,
                             weight: 1.5,
+                            color: 'transparent',
                         }}
                     />
                 );
@@ -95,16 +91,19 @@ const LOC_COLORS = {
 const colorForCount = (n: number) =>
     n >= 100 ? LOC_COLORS.large : n >= 20 ? LOC_COLORS.medium : LOC_COLORS.small;
 
-const createLocIcon = (name: string, count: number) => {
+const createLocIcon = (name: string, count: number, highlighted = false) => {
     const bg = colorForCount(count);
     const label = name.length > 20 ? name.slice(0, 19) + '…' : name;
+    const glow = highlighted
+        ? `box-shadow:0 0 0 3px white,0 0 0 5px ${bg},0 0 12px 4px ${bg};`
+        : '';
     return L.divIcon({
         className: '',
         iconSize: [140, 46],
         iconAnchor: [70, 46],
         popupAnchor: [0, -50],
         html: `<div class="loc-label">
-            <div class="loc-label-pill" style="background:${bg};">
+            <div class="loc-label-pill" style="background:${bg};${glow}">
                 <div class="loc-label-name">${label}</div>
                 <div class="loc-label-count">${count} image${count !== 1 ? 's' : ''}</div>
             </div>
@@ -114,13 +113,53 @@ const createLocIcon = (name: string, count: number) => {
     });
 };
 
+const CLUSTER_COLORS: Record<string, string> = {
+    small:  'rgba(59,130,246,0.85)',
+    medium: 'rgba(245,158,11,0.85)',
+    large:  'rgba(239,68,68,0.85)',
+};
+
 const createClusterIcon = (cluster: any) => {
     const total = cluster.getAllChildMarkers().reduce((sum: number, m: any) => sum + (m.options.locCount || 0), 0);
     const cat = total >= 200 ? 'large' : total >= 50 ? 'medium' : 'small';
+    const bg = CLUSTER_COLORS[cat];
     return L.divIcon({
-        html: `<span>${total}</span>`,
-        className: `image-cluster cluster-${cat}`,
+        className: '',
         iconSize: L.point(40, 40),
+        iconAnchor: L.point(20, 20),
+        html: `<div style="
+            width:40px;height:40px;border-radius:50%;
+            background:${bg};border:2px solid rgba(255,255,255,0.9);
+            box-shadow:0 2px 8px rgba(0,0,0,0.3);
+            display:flex;align-items:center;justify-content:center;
+            color:white;font-weight:700;font-size:12px;font-family:sans-serif;
+        ">${total}</div>`,
+    });
+};
+
+const MOVE_COLOR = 'rgba(124, 58, 237, 0.85)';
+
+const createMoveIcon = (name: string, count: number) => {
+    const label = name.length > 24 ? name.slice(0, 23) + '…' : name;
+    return L.divIcon({
+        className: '',
+        iconSize: [160, 36],
+        iconAnchor: [80, 18],
+        popupAnchor: [0, -24],
+        html: `<div style="
+            display:inline-flex;align-items:center;gap:5px;
+            background:${MOVE_COLOR};
+            border:2px dashed rgba(255,255,255,0.7);
+            border-radius:20px;padding:4px 10px;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25);
+            white-space:nowrap;max-width:160px;
+        ">
+            <span style="color:#fff;font-size:13px;">🚗</span>
+            <div style="overflow:hidden;">
+                <div style="color:#fff;font-size:11px;font-weight:700;font-family:sans-serif;line-height:1.2;max-width:110px;overflow:hidden;text-overflow:ellipsis;">${label}</div>
+                <div style="color:rgba(255,255,255,0.8);font-size:10px;font-family:sans-serif;">${count} image${count !== 1 ? 's' : ''}</div>
+            </div>
+        </div>`,
     });
 };
 
@@ -140,18 +179,30 @@ const clearIcon = L.divIcon({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+const FlyToHighlighted = ({ locations, highlightedId }: { locations: LocWithCoords[]; highlightedId?: string | null }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (!highlightedId) return;
+        const loc = locations.find((l) => l.id === highlightedId);
+        if (loc) map.flyTo([loc.latitude, loc.longitude], Math.max(map.getZoom(), 13), { duration: 0.6 });
+    }, [highlightedId, locations, map]);
+    return null;
+};
+
 export function MapSearch({
     visualBounds,
     onBoundsChange,
     onClearBounds,
     resultLocations = [],
     onAddLocationFilter,
+    highlightedLocationId,
 }: {
     visualBounds: [number, number, number, number] | null;
     onBoundsChange: (minLat: number, minLng: number, maxLat: number, maxLng: number) => void;
     onClearBounds?: () => void;
     resultLocations?: LocationSummaryItem[];
     onAddLocationFilter?: (id: string, name: string) => void;
+    highlightedLocationId?: string | null;
 }) {
     const theme = useTheme();
     const controller = useSelectArea();
@@ -159,10 +210,6 @@ export function MapSearch({
 
     const resultMapped = resultLocations.filter(
         (l): l is LocWithCoords => l.latitude != null && l.longitude != null
-    );
-
-    const heatPoints: [number, number, number][] = resultMapped.map(
-        (l) => [l.latitude, l.longitude, l.count]
     );
 
     const handleClearBounds = useCallback(() => {
@@ -194,6 +241,32 @@ export function MapSearch({
                 {!visualBounds && resultMapped.length > 0 && (
                     <FitToResults locations={resultMapped} />
                 )}
+                <FlyToHighlighted locations={resultMapped} highlightedId={highlightedLocationId} />
+                {(() => {
+                    if (!highlightedLocationId) return null;
+                    const loc = resultMapped.find((l) => l.id === highlightedLocationId);
+                    if (!loc) return null;
+                    return (
+                        <Popup
+                            position={[loc.latitude, loc.longitude]}
+                            closeButton={false}
+                            autoPan={false}
+                        >
+                            <Box sx={{ minWidth: 130 }}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
+                                    <PlaceRounded sx={{ fontSize: 13, color: colorForCount(loc.count) }} />
+                                    <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
+                                </Stack>
+                                {loc.address && (
+                                    <Typography variant="caption" color="text.secondary" display="block">{loc.address}</Typography>
+                                )}
+                                <Typography variant="caption" color="primary" display="block" sx={{ mt: 0.5 }}>
+                                    {loc.count} photo{loc.count !== 1 ? 's' : ''}
+                                </Typography>
+                            </Box>
+                        </Popup>
+                    );
+                })()}
                 <SelectArea
                     keepRectangle
                     showControl
@@ -205,55 +278,81 @@ export function MapSearch({
                         dashArray: '10 5',
                     }}
                 />
-                {resultMapped.length > 0 && (
-                    <>
-                        <HeatLayer points={heatPoints} />
-                        <MarkerClusterGroup
-                            iconCreateFunction={createClusterIcon}
-                            showCoverageOnHover={false}
-                            maxClusterRadius={80}
-                            disableClusteringAtZoom={14}
-                        >
-                            {resultMapped.map((loc, i) => (
+                {resultMapped.length > 0 && (() => {
+                    const stops = resultMapped.filter((l) => l.stop !== false);
+                    const moves = resultMapped.filter((l) => l.stop === false);
+                    const routeLine = resultMapped.length > 1 && moves.length > 0
+                        ? resultMapped.map((l) => [l.latitude, l.longitude] as [number, number])
+                        : null;
+                    return (
+                        <>
+                            <DensityLayer locations={stops} />
+                            {routeLine && (
+                                <Polyline
+                                    positions={routeLine}
+                                    pathOptions={{ color: MOVE_COLOR, weight: 2, dashArray: '6 5', opacity: 0.7 }}
+                                />
+                            )}
+                            <MarkerClusterGroup
+                                iconCreateFunction={createClusterIcon}
+                                showCoverageOnHover={false}
+                                maxClusterRadius={80}
+                                disableClusteringAtZoom={14}
+                            >
+                                {stops.map((loc, i) => (
+                                    <Marker
+                                        key={loc.id ?? `stop-${i}`}
+                                        position={[loc.latitude, loc.longitude]}
+                                        icon={createLocIcon(loc.name, loc.count, loc.id === highlightedLocationId)}
+                                        {...({ locCount: loc.count } as any)}
+                                    >
+                                        <Popup>
+                                            <Box sx={{ minWidth: 140 }}>
+                                                <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
+                                                    <PlaceRounded sx={{ fontSize: 14, color: colorForCount(loc.count) }} />
+                                                    <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
+                                                </Stack>
+                                                {loc.address && (
+                                                    <Typography variant="caption" color="text.secondary" display="block">{loc.address}</Typography>
+                                                )}
+                                                <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                                                    {loc.count} image{loc.count !== 1 ? 's' : ''}
+                                                </Typography>
+                                                {onAddLocationFilter && loc.id && (
+                                                    <Button size="small" variant="outlined"
+                                                        sx={{ mt: 1, textTransform: 'none', fontSize: 11 }}
+                                                        onClick={() => onAddLocationFilter(loc.id!, loc.name)}
+                                                    >Filter by this place</Button>
+                                                )}
+                                            </Box>
+                                        </Popup>
+                                    </Marker>
+                                ))}
+                            </MarkerClusterGroup>
+                            {/* Moving-period markers rendered outside cluster group so they stay visible */}
+                            {moves.map((loc, i) => (
                                 <Marker
-                                    key={loc.id ?? `result-${i}`}
+                                    key={loc.id ?? `move-${i}`}
                                     position={[loc.latitude, loc.longitude]}
-                                    icon={createLocIcon(loc.name, loc.count)}
-                                    {...({ locCount: loc.count } as any)}
+                                    icon={createMoveIcon(loc.name, loc.count)}
                                 >
                                     <Popup>
                                         <Box sx={{ minWidth: 140 }}>
                                             <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
-                                                <PlaceRounded sx={{ fontSize: 14, color: colorForCount(loc.count) }} />
-                                                <Typography fontWeight="bold" variant="body2">
-                                                    {loc.name}
-                                                </Typography>
+                                                <PlaceRounded sx={{ fontSize: 14, color: MOVE_COLOR }} />
+                                                <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
                                             </Stack>
-                                            {loc.address && (
-                                                <Typography variant="caption" color="text.secondary" display="block">
-                                                    {loc.address}
-                                                </Typography>
-                                            )}
+                                            <Typography variant="caption" color="text.secondary" display="block">In transit</Typography>
                                             <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                                                 {loc.count} image{loc.count !== 1 ? 's' : ''}
                                             </Typography>
-                                            {onAddLocationFilter && loc.id && (
-                                                <Button
-                                                    size="small"
-                                                    variant="outlined"
-                                                    sx={{ mt: 1, textTransform: 'none', fontSize: 11 }}
-                                                    onClick={() => onAddLocationFilter(loc.id!, loc.name)}
-                                                >
-                                                    Filter by this place
-                                                </Button>
-                                            )}
                                         </Box>
                                     </Popup>
                                 </Marker>
                             ))}
-                        </MarkerClusterGroup>
-                    </>
-                )}
+                        </>
+                    );
+                })()}
                 {activeBounds && (
                     <Marker
                         position={activeBounds[1]}

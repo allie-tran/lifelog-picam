@@ -500,7 +500,7 @@ def enrich_and_index_segments(
     Upserts a Location row (keyed on OSM element id or rounded coords) and
     bulk-updates Image.location_id for all images in the segment's time window.
     """
-    for seg in tqdm(segments, desc="   Geocoding"):
+    for seg in segments:
         lat = seg.get("centroid_lat")
         lon = seg.get("centroid_lon")
         if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
@@ -597,6 +597,9 @@ def enrich_and_index_segments(
                 .where(Image.timestamp.between(start_dt, end_dt))
                 .values(location_id=location_id)
             )
+
+        logger.info(f"Upserted location {name} (stop={is_stop}) with key={key} and assigned to images between {start_ts} and {end_ts}")
+
     session.commit()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

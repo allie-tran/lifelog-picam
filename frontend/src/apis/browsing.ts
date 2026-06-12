@@ -17,6 +17,16 @@ export const getDevices = async () => {
 };
 
 
+export const getSegmentsByDate = async (
+    device: string,
+    date: string,
+): Promise<{ date: string; segments: ResultSegment[] }> => {
+    const response = await axios.get(
+        `${BACKEND_URL}/browse/get-segments-by-date?date=${date}&device=${encodeURIComponent(device)}`
+    );
+    return response.data;
+};
+
 export const getImagesByHour = async (
     device: string,
     date: string,
@@ -89,6 +99,7 @@ export type LocationSummaryItem = {
     address?: string;
     country: string;
     info?: string;
+    stop?: boolean;
     latitude?: number;
     longitude?: number;
     count: number;

@@ -1,287 +1,299 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { Box, Typography } from '@mui/material';
+import { GPSData, ResultSegment } from '@utils/types';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
+    CircleMarker,
     MapContainer,
-    TileLayer,
-    Polyline,
     Marker,
+    Polyline,
     Popup,
+    TileLayer,
     useMap,
 } from 'react-leaflet';
-import L from 'leaflet';
-import { GPSData } from '@utils/types';
-import { Box } from '@mui/material';
-import 'leaflet/dist/leaflet.css';
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import { useAppSelector } from 'reducers/hooks';
-import GpsTrackerHook from './GpsTracker';
 
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
+// ── Marker icons ────────────────────────────────────────────────────────────────
+
+const PIN_COLORS = {
+    small:  { bg: 'rgba(59, 130, 246, 0.85)',  hex: '#3b82f6' },
+    medium: { bg: 'rgba(245, 158, 11, 0.85)',  hex: '#f59e0b' },
+    large:  { bg: 'rgba(239, 68, 68, 0.85)',   hex: '#ef4444' },
+};
+const MOVE_COLOR = 'rgba(124, 58, 237, 0.85)';
+
+const colorForCount = (n: number) =>
+    n >= 100 ? PIN_COLORS.large : n >= 20 ? PIN_COLORS.medium : PIN_COLORS.small;
+
+const MAP_PIN_PATH = 'M127.99414,15.9971a88.1046,88.1046,0,0,0-88,88c0,75.29688,80,132.17188,83.40625,134.55469a8.023,8.023,0,0,0,9.1875,0c3.40625-2.38281,83.40625-59.25781,83.40625-134.55469A88.10459,88.10459,0,0,0,127.99414,15.9971ZM128,72a32,32,0,1,1-32,32A31.99909,31.99909,0,0,1,128,72Z';
+
+const makePinIcon = (hex: string, label: string) => L.divIcon({
+    className: '',
+    iconSize: [52, 60],
+    iconAnchor: [26, 30],
+    popupAnchor: [0, -64],
+    html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px;">
+        <svg width="28" height="34" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"
+             style="filter:drop-shadow(0 2px 3px rgba(0,0,0,0.3));">
+            <path fill="${hex}" d="${MAP_PIN_PATH}"/>
+        </svg>
+        <div style="
+            background:${hex};color:#fff;font-size:10px;font-weight:700;
+            font-family:sans-serif;padding:2px 6px;border-radius:4px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.3);white-space:nowrap;
+        ">${label}</div>
+    </div>`,
 });
-L.Marker.prototype.options.icon = DefaultIcon;
 
-// Interpolate between two hex colors by a 0–1 factor
-function lerpColor(a: string, b: string, t: number): string {
-    const parse = (hex: string) => [
-        parseInt(hex.slice(1, 3), 16),
-        parseInt(hex.slice(3, 5), 16),
-        parseInt(hex.slice(5, 7), 16),
-    ];
-    const [ar, ag, ab] = parse(a);
-    const [br, bg, bb] = parse(b);
-    const r = Math.round(ar + (br - ar) * t);
-    const g = Math.round(ag + (bg - ag) * t);
-    const b_ = Math.round(ab + (bb - ab) * t);
-    return `rgb(${r},${g},${b_})`;
+const startIcon = makePinIcon('#22c55e', 'Start');
+const endIcon   = makePinIcon('#ef4444', 'End');
+const stopIcon  = makePinIcon('#6366f1', 'Stationary');
+
+function haversineMetre(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Multi-stop gradient: blue → cyan → green → yellow → orange → red
-const GRADIENT_STOPS = [
-    '#3b82f6',
-    '#06b6d4',
-    '#22c55e',
-    '#eab308',
-    '#f97316',
-    '#ef4444',
-];
+const createLocIcon = (name: string, count: number) => {
+    const { bg, hex } = colorForCount(count);
+    const label = name.length > 20 ? name.slice(0, 19) + '…' : name;
+    return L.divIcon({
+        className: '',
+        iconSize: [140, 62],
+        iconAnchor: [70, 30],
+        popupAnchor: [0, -36],
+        html: `<div style="display:flex;flex-direction:column;align-items:center;gap:0;">
+            <div class="loc-label-pill" style="background:${bg};">
+                <div class="loc-label-name">${label}</div>
+                <div class="loc-label-count">${count} image${count !== 1 ? 's' : ''}</div>
+            </div>
+        </div>`,
+    });
+};
 
-function getGradientColor(t: number): string {
-    const scaled = t * (GRADIENT_STOPS.length - 1);
-    const idx = Math.min(Math.floor(scaled), GRADIENT_STOPS.length - 2);
-    const localT = scaled - idx;
-    return lerpColor(GRADIENT_STOPS[idx], GRADIENT_STOPS[idx + 1], localT);
-}
+const createMoveIcon = (name: string) => {
+    const label = name.length > 24 ? name.slice(0, 23) + '…' : name;
+    return L.divIcon({
+        className: '',
+        iconSize: [160, 32],
+        iconAnchor: [80, 16],
+        popupAnchor: [0, -20],
+        html: `<div style="
+            display:inline-flex;align-items:center;gap:5px;
+            background:${MOVE_COLOR};
+            border:2px dashed rgba(255,255,255,0.7);
+            border-radius:20px;padding:3px 10px;
+            box-shadow:0 2px 6px rgba(0,0,0,0.25);
+            white-space:nowrap;max-width:160px;
+        ">
+            <span style="color:#fff;font-size:12px;">🚗</span>
+            <div style="color:#fff;font-size:11px;font-weight:700;font-family:sans-serif;max-width:110px;overflow:hidden;text-overflow:ellipsis;">${label}</div>
+        </div>`,
+    });
+};
 
-function FitBounds({
-    positions,
-    trackKey,
-}: {
-    positions: L.LatLngExpression[];
-    trackKey: string;
-}) {
+// ── Stop / move layers ────────────────────────────────────────────────────────
+
+type StopEntry = { lat: number; lon: number; name: string; count: number };
+type MoveEntry = { pts: [number, number][]; name: string };
+
+const StopLayer = ({ stops }: { stops: StopEntry[] }) => {
+    const maxCount = Math.max(...stops.map((s) => s.count), 1);
+    return (
+        <>
+            {stops.map((s, i) => {
+                const t = s.count / maxCount;
+                const radius = 10 + Math.sqrt(t) * 40;
+                const color = t >= 0.66 ? 'rgba(239,68,68,' : t >= 0.33 ? 'rgba(245,158,11,' : 'rgba(59,130,246,';
+                return (
+                    <CircleMarker key={`heat-${i}`} center={[s.lat, s.lon]} radius={radius}
+                        pathOptions={{ fillColor: `${color}0.2)`, fillOpacity: 1, weight: 0, color: 'transparent' }}
+                    />
+                );
+            })}
+            {stops.map((s, i) => (
+                <Marker key={`stop-${i}`} position={[s.lat, s.lon]} icon={createLocIcon(s.name, s.count)}>
+                    <Popup>
+                        <Box sx={{ minWidth: 130 }}>
+                            <Typography fontWeight="bold" variant="body2">{s.name}</Typography>
+                            <Typography variant="caption" color="primary" display="block" sx={{ mt: 0.5 }}>
+                                {s.count} photo{s.count !== 1 ? 's' : ''}
+                            </Typography>
+                        </Box>
+                    </Popup>
+                </Marker>
+            ))}
+        </>
+    );
+};
+
+const MoveLayer = ({ moves }: { moves: MoveEntry[] }) => (
+    <>
+        {moves.map((m, i) => {
+            if (m.pts.length < 2) return null;
+            const mid = m.pts[Math.floor(m.pts.length / 2)];
+            return (
+                <React.Fragment key={`move-${i}`}>
+                    <Polyline positions={m.pts}
+                        pathOptions={{ color: MOVE_COLOR, weight: 2, dashArray: '6 5', opacity: 0.6 }}
+                    />
+                    <Marker position={mid} icon={createMoveIcon(m.name)}>
+                        <Popup>
+                            <Typography variant="body2" fontWeight="bold">{m.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">In transit</Typography>
+                        </Popup>
+                    </Marker>
+                </React.Fragment>
+            );
+        })}
+    </>
+);
+
+// ── Fit + track helpers ───────────────────────────────────────────────────────
+
+function FitBounds({ positions, trackKey }: { positions: L.LatLngExpression[]; trackKey: string }) {
     const map = useMap();
-    // Keep a ref so the effect always sees the latest positions without
-    // needing them in the dependency array (which would re-fit on every render).
-    const positionsRef = useRef(positions);
-    positionsRef.current = positions;
-
-    // Only fit when the track itself changes (trackKey), not on re-renders.
-    // This means the user can freely pan/zoom without being snapped back.
+    const posRef = useRef(positions);
+    posRef.current = positions;
     useEffect(() => {
-        if (positionsRef.current.length > 0) {
-            map.fitBounds(L.latLngBounds(positionsRef.current), {
-                padding: [40, 40],
-            });
-        }
+        if (posRef.current.length > 0)
+            map.fitBounds(L.latLngBounds(posRef.current), { padding: [40, 40] });
     }, [map, trackKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
     return null;
 }
 
-export function GpsTrackMap({
+const TrackLine = ({
     gpsTrack,
-    currentTrack,
+    showMarkers,
+    pathOptions,
+    className,
 }: {
     gpsTrack: GPSData[];
-    currentTrack: GPSData[];
-}) {
-    const { GpsComponent, currentPosition } = GpsTrackerHook();
-    const highlightedTrack = useAppSelector(
-        (state) => state.map.highlightedTrack
+    showMarkers: boolean;
+    pathOptions?: L.PolylineOptions;
+    className?: string;
+}) => {
+    if (gpsTrack.length < 2) return null;
+    const positions = gpsTrack.map((p) => [p.latitude, p.longitude] as L.LatLngExpression);
+    const opts = pathOptions || { color: 'blue', weight: 3, opacity: 0.6 };
+    const first = gpsTrack[0];
+    const last  = gpsTrack[gpsTrack.length - 1];
+    const isStop = showMarkers && haversineMetre(first.latitude, first.longitude, last.latitude, last.longitude) < 150;
+    return (
+        <>
+            <Polyline positions={positions} pathOptions={opts} className={className} />
+            {showMarkers && isStop && (
+                <Marker position={positions[0]} icon={stopIcon} zIndexOffset={1000} />
+            )}
+            {showMarkers && !isStop && (
+                <>
+                    <Marker position={positions[0]} icon={startIcon} zIndexOffset={1000} />
+                    <Marker position={positions[positions.length - 1]} icon={endIcon} zIndexOffset={1001} />
+                </>
+            )}
+        </>
     );
-    const segments = useMemo(() => {
-        return gpsTrack.slice(0, -1).map((point, i) => {
-            const t = i / (gpsTrack.length - 1);
-            const next = gpsTrack[i + 1];
-            return {
-                positions: [
-                    [point.latitude, point.longitude],
-                    [next.latitude, next.longitude],
-                ] as L.LatLngExpression[],
-                color: getGradientColor(t),
-            };
-        });
-    }, [gpsTrack]);
+};
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export function GpsTrackMap({
+    imageGps = [],
+    currentTrack = [],
+    segments = [],
+}: {
+    imageGps?: GPSData[];
+    currentTrack?: GPSData[];
+    segments?: ResultSegment[];
+}) {
+    // const { GpsComponent } = GpsTrackerHook();
+    const highlightedTrack = useAppSelector((state) => state.map.highlightedTrack);
 
     const allPositions = useMemo<L.LatLngExpression[]>(
-        () => gpsTrack?.map((p) => [p.latitude, p.longitude]) ?? [],
-        [gpsTrack]
-    );
-    const currentPositions = useMemo<L.LatLngExpression[]>(
-        () => currentTrack?.map((p) => [p.latitude, p.longitude]) ?? [],
-        [currentTrack]
+        () => imageGps.map((p) => [p.latitude, p.longitude]),
+        [imageGps]
     );
 
-    // Stable string key that changes only when the loaded track changes.
-    // Derived from the active track's first + last timestamp so navigating
-    // to a different day triggers a re-fit, but re-renders from
-    // highlightedTrack / scroll events do not.
-    const trackKey = useMemo(() => {
-        const active = currentTrack?.length ? currentTrack : gpsTrack;
-        if (!active?.length) return '';
+    const stops = useMemo<StopEntry[]>(() => {
+        const map = new Map<string, StopEntry>();
+        for (const seg of segments) {
+            const loc = seg.location;
+            if (!loc || loc.stop === false || loc.latitude == null || loc.longitude == null) continue;
+            const key = loc.id ?? `${loc.latitude.toFixed(4)}_${loc.longitude.toFixed(4)}`;
+            const existing = map.get(key);
+            if (existing) existing.count += seg.images.length;
+            else map.set(key, { lat: loc.latitude, lon: loc.longitude, name: loc.name ?? '', count: seg.images.length });
+        }
+        return Array.from(map.values());
+    }, [segments]);
+
+    const moves = useMemo<MoveEntry[]>(() =>
+        segments
+            .filter((seg) => seg.location?.stop === false && seg.gps?.length >= 2)
+            .map((seg) => ({
+                pts: seg.gps.map((p) => [p.latitude, p.longitude] as [number, number]),
+                name: seg.location?.name ?? 'In transit',
+            })),
+        [segments]
+    );
+
+    const trackKey = (() => {
+        const active = currentTrack.length ? currentTrack : imageGps;
+        if (!active.length) return '';
         return `${active[0].timestamp}_${active[active.length - 1].timestamp}`;
-    }, [gpsTrack, currentTrack]);
+    })();
 
-    let endPos: L.LatLngExpression | undefined;
-    if (currentPositions.length > 0) {
-        endPos = currentPositions[currentPositions.length - 1];
-    } else if (allPositions.length > 0) {
-        endPos = allPositions[allPositions.length - 1];
-    }
-
-    const currentPos = [
-        currentPosition?.coords.latitude || 0,
-        currentPosition?.coords.longitude || 0,
-    ] as L.LatLngExpression;
+    const center: L.LatLngExpression = currentTrack.length
+        ? [currentTrack[currentTrack.length - 1].latitude, currentTrack[currentTrack.length - 1].longitude]
+        : allPositions.length
+        ? allPositions[allPositions.length - 1] as L.LatLngExpression
+        : [0, 0];
 
     return (
-        <Box
-            sx={{
-                height: '100%',
-                width: 400,
-                border: '1px solid #ccc',
-                borderRadius: 1,
-                overflow: 'hidden',
-            }}
-        >
-            {GpsComponent()}
-            <MapContainer
-                center={endPos || currentPos}
-                zoom={13}
-                scrollWheelZoom={true}
-                style={{ height: '100%', width: '100%' }}
-            >
-                {currentPosition && (
-                    <Marker
-                        position={[
-                            currentPosition.coords.latitude,
-                            currentPosition.coords.longitude,
-                        ]}
-                    >
-                        <Popup>Current Position</Popup>
-                    </Marker>
-                )}
+        <Box sx={{ height: '100%', width: 400, border: '1px solid #ccc', borderRadius: 1, overflow: 'hidden' }}>
+            <MapContainer center={center} zoom={13} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
                 <TileLayer
-                    // url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; OpenStreetMap contributors"
                     url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH"
                 />
                 <FitBounds
-                    positions={
-                        currentPositions.length > 0
-                            ? currentPositions
-                            : allPositions.length > 0
-                              ? allPositions
-                              : [currentPos]
-                    }
+                    positions={currentTrack.length ? currentTrack.map((p) => [p.latitude, p.longitude]) : allPositions}
                     trackKey={trackKey}
                 />
-                {/* Gradient segments */}
-                {segments.map((seg, i) => (
-                    <Polyline
-                        key={i}
-                        positions={seg.positions}
-                        pathOptions={{
-                            color: seg.color,
-                            weight: 3,
-                            opacity: 0.5,
-                        }}
-                    />
-                ))}
-                {/* Highlighted track overlay */}
-                {highlightedTrack.length > 0 && (
-                    <Tracks
-                        gpsTrack={highlightedTrack}
-                        showMarkers={true}
-                        pathOptions={{
-                            color: '#4682B4',
-                            weight: 5,
-                            opacity: 1,
-                        }}
-                    />
+
+                {/* 1. Whole-day image GPS path */}
+                {allPositions.length > 1 && (
+                    <Polyline positions={allPositions} pathOptions={{ color: '#64748b', weight: 1.5, opacity: 0.35 }} />
                 )}
-                {/* Current track overlay */}
-                <Tracks
-                    className="gps-direction-flow"
+
+                {/* 2. Stop heatmap + pill labels */}
+                {stops.length > 0 && <StopLayer stops={stops} />}
+
+                {/* 3. Move paths + pill labels */}
+                {moves.length > 0 && <MoveLayer moves={moves} />}
+
+                {/* 4. Current hour — animated direction-flow */}
+                <TrackLine
                     gpsTrack={currentTrack}
                     showMarkers={false}
-                    pathOptions={{
-                        className: 'gps-direction-flow',
-                        color: 'black',
-                        weight: 2,
-                        opacity: 1,
-                        dashArray: '10, 5',
-                        lineCap: 'round',
-                    }}
+                    className="gps-direction-flow"
+                    pathOptions={{ color: 'black', weight: 2, opacity: 1, dashArray: '10, 5', lineCap: 'round' }}
+                />
+
+                {/* 5. Highlighted segment — with start/end markers, on top */}
+                <TrackLine
+                    gpsTrack={highlightedTrack}
+                    showMarkers={true}
+                    pathOptions={{ color: '#4682B4', weight: 5, opacity: 1 }}
                 />
             </MapContainer>
         </Box>
     );
 }
-
-const Tracks = ({
-    className,
-    gpsTrack,
-    showMarkers,
-    pathOptions,
-}: {
-    className?: string;
-    gpsTrack: GPSData[];
-    showMarkers: boolean;
-    pathOptions?: L.PolylineOptions;
-}) => {
-    if (gpsTrack.length < 2) {
-        return null;
-    }
-    const start = gpsTrack[0];
-    const end = gpsTrack[gpsTrack.length - 1];
-    if (showMarkers) {
-        return (
-            <>
-                <Marker position={[start.latitude, start.longitude]}>
-                    <Popup>
-                        Start: {new Date(start.timestamp).toLocaleString()}
-                    </Popup>
-                </Marker>
-                <Polyline
-                    positions={gpsTrack.map((point) => [
-                        point.latitude,
-                        point.longitude,
-                    ])}
-                    pathOptions={
-                        pathOptions || {
-                            color: 'blue',
-                            weight: 3,
-                            opacity: 0.5,
-                        }
-                    }
-                    className={className}
-                />
-                <Marker position={[end.latitude, end.longitude]}>
-                    <Popup>
-                        End: {new Date(end.timestamp).toLocaleString()}
-                    </Popup>
-                </Marker>
-            </>
-        );
-    }
-    return (
-        <Polyline
-            pane="markerPane"
-            positions={gpsTrack.map((point) => [
-                point.latitude,
-                point.longitude,
-            ])}
-            pathOptions={
-                pathOptions || { color: 'blue', weight: 3, opacity: 0.5 }
-            }
-            className={className}
-        />
-    );
-};
 
 export default GpsTrackMap;

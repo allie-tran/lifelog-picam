@@ -6,22 +6,12 @@ import {
     PlaceRounded,
     PublicRounded,
 } from '@mui/icons-material';
-import { Box, Chip, Popover, Stack, Typography } from '@mui/material';
+import { Box, Chip, Stack, Typography } from '@mui/material';
 import { CountItem, LocationSummaryItem } from 'apis/browsing';
 import { getAllFaces } from '@apis/searchFilters';
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
 import useSWR from 'swr';
-
-const MapResizer = () => {
-    const map = useMap();
-    React.useEffect(() => {
-        map.invalidateSize();
-    }, [map]);
-    return null;
-};
 
 const SummaryRow = ({
     icon,
@@ -49,118 +39,34 @@ const SummaryRow = ({
 const LocationChip = ({
     location,
     onClick,
+    onHighlight,
 }: {
     location: LocationSummaryItem;
     onClick: () => void;
+    onHighlight?: (id: string | null) => void;
 }) => {
-    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-    const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-        undefined
-    );
-
-    const handleMouseEnter = (e: React.MouseEvent<HTMLDivElement>) => {
-        clearTimeout(hideTimer.current);
-        setAnchorEl(e.currentTarget);
-    };
-
-    const handleMouseLeave = () => {
-        hideTimer.current = setTimeout(() => setAnchorEl(null), 200);
-    };
-
-    const open = Boolean(anchorEl);
-    const hasCoords = location.latitude != null && location.longitude != null;
+    const [hovered, setHovered] = useState(false);
 
     return (
-        <>
-            <Chip
-                size="small"
-                label={`${location.name} (${location.count})`}
-                onClick={onClick}
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
-                sx={{ cursor: 'pointer', fontSize: '11px' }}
-            />
-            <Popover
-                open={open}
-                anchorEl={anchorEl}
-                onClose={() => setAnchorEl(null)}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                disableRestoreFocus
-                slotProps={{
-                    paper: {
-                        onMouseEnter: () => clearTimeout(hideTimer.current),
-                        onMouseLeave: handleMouseLeave,
-                        sx: { p: 1.5, width: 260, pointerEvents: 'auto' },
-                    },
-                }}
-                sx={{ pointerEvents: 'none' }}
-            >
-                {hasCoords && (
-                    <Box
-                        sx={{
-                            height: 130,
-                            mb: 1,
-                            borderRadius: 1,
-                            overflow: 'hidden',
-                        }}
-                    >
-                        <MapContainer
-                            center={[location.latitude!, location.longitude!]}
-                            zoom={15}
-                            style={{ height: '100%', width: '100%' }}
-                            zoomControl={false}
-                            dragging={false}
-                            scrollWheelZoom={false}
-                            attributionControl={false}
-                        >
-                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                            <Marker
-                                position={[
-                                    location.latitude!,
-                                    location.longitude!,
-                                ]}
-                            />
-                            <MapResizer />
-                        </MapContainer>
-                    </Box>
-                )}
-                <Typography variant="subtitle2" fontWeight="bold">
-                    {location.name}
-                </Typography>
-                {location.address && (
-                    <Typography variant="caption" display="block">
-                        {location.address}
-                    </Typography>
-                )}
-                {location.country && (
-                    <Typography
-                        variant="caption"
-                        display="block"
-                        color="text.secondary"
-                    >
-                        {location.country}
-                    </Typography>
-                )}
-                {location.info && (
-                    <Typography
-                        variant="caption"
-                        display="block"
-                        color="text.secondary"
-                    >
-                        {location.info}
-                    </Typography>
-                )}
-                <Typography
-                    variant="caption"
-                    display="block"
-                    color="primary"
-                    sx={{ mt: 0.5 }}
-                >
-                    {location.count} photos
-                </Typography>
-            </Popover>
-        </>
+        <Chip
+            size="small"
+            label={`${location.name} (${location.count})`}
+            onClick={onClick}
+            onMouseEnter={() => { setHovered(true); if (location.id) onHighlight?.(location.id); }}
+            onMouseLeave={() => { setHovered(false); onHighlight?.(null); }}
+            sx={{
+                cursor: 'pointer',
+                fontSize: '11px',
+                transition: 'all 0.15s',
+                ...(hovered && {
+                    backgroundColor: 'primary.main',
+                    color: 'primary.contrastText',
+                    '& .MuiChip-label': { color: 'inherit' },
+                    transform: 'scale(1.06)',
+                    boxShadow: 3,
+                }),
+            }}
+        />
     );
 };
 
@@ -175,6 +81,7 @@ export type ResultSummaryBarProps = {
     onAppendToQuery: (text: string) => void;
     onAddLocationFilter?: (id: string, name: string) => void;
     onAddPersonFilter?: (id: string) => void;
+    onHighlightLocation?: (id: string | null) => void;
 };
 
 const ResultSummaryBar = ({
@@ -188,6 +95,7 @@ const ResultSummaryBar = ({
     onAppendToQuery,
     onAddLocationFilter,
     onAddPersonFilter,
+    onHighlightLocation,
 }: ResultSummaryBarProps) => {
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
@@ -257,6 +165,7 @@ const ResultSummaryBar = ({
                                         onAddLocationFilter?.(loc.id, loc.name);
                                     else onAppendToQuery(loc.name);
                                 }}
+                                onHighlight={onHighlightLocation}
                             />
                         ))}
                     </Stack>

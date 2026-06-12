@@ -10,7 +10,14 @@ import {
     TextField,
     styled,
 } from '@mui/material';
-import { ArrowLeftRounded, ArrowRightRounded, CalendarMonthRounded } from '@mui/icons-material';
+import {
+    ArrowLeftRounded,
+    ArrowRightRounded,
+    CalendarMonthRounded,
+    FastForwardRounded,
+    FastRewindRounded,
+    TodayRounded,
+} from '@mui/icons-material';
 import { DateCalendar } from '@mui/x-date-pickers/DateCalendar';
 import { PickersDay, PickersDayProps } from '@mui/x-date-pickers';
 import dayjs, { Dayjs } from 'dayjs';
@@ -78,7 +85,14 @@ const AvailableMonth = (
     );
 };
 
-const DATE_FORMATS = ['D MMM YYYY', 'D MMMM YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'D/M/YYYY', 'M/D/YYYY'];
+const DATE_FORMATS = [
+    'D MMM YYYY',
+    'D MMMM YYYY',
+    'YYYY-MM-DD',
+    'DD/MM/YYYY',
+    'D/M/YYYY',
+    'M/D/YYYY',
+];
 
 const parseDate = (text: string): Dayjs | null => {
     for (const fmt of DATE_FORMATS) {
@@ -103,20 +117,28 @@ const CustomDatePicker = ({
     const navigate = useNavigate();
     const today = dayjs().format('YYYY-MM-DD');
     const [searchParams] = useSearchParams();
-    const [textDate, setTextDate] = useState(date ? dayjs(date).format('D MMM YYYY') : '');
+    const [textDate, setTextDate] = useState(
+        date ? dayjs(date).format('D MMM YYYY') : ''
+    );
     const [textError, setTextError] = useState(false);
-    const [calendarAnchor, setCalendarAnchor] = useState<HTMLElement | null>(null);
+    const [calendarAnchor, setCalendarAnchor] = useState<HTMLElement | null>(
+        null
+    );
 
     const allDatesSet = useMemo(() => new Set(allDates ?? []), [allDates]);
 
     const allMonths = useMemo(() => {
         if (!allDates) return [];
-        return Array.from(new Set(allDates.map((d) => dayjs(d).format('YYYY-MMM'))));
+        return Array.from(
+            new Set(allDates.map((d) => dayjs(d).format('YYYY-MMM')))
+        );
     }, [allDates]);
 
     const allYears = useMemo(() => {
         if (!allDates) return [];
-        return Array.from(new Set(allDates.map((d) => dayjs(d).format('YYYY'))));
+        return Array.from(
+            new Set(allDates.map((d) => dayjs(d).format('YYYY')))
+        );
     }, [allDates]);
 
     const referenceDate = useMemo(() => {
@@ -130,7 +152,11 @@ const CustomDatePicker = ({
     useEffect(() => {
         if (!date) {
             const newParams = new URLSearchParams(searchParams.toString());
-            newParams.set('date', today);
+            if (allDates && allDates.length > 0) {
+                newParams.set('date', allDates[allDates.length - 1]);
+            } else {
+                newParams.set('date', today);
+            }
             navigate({ search: newParams.toString() });
         }
     }, [date, navigate, today, searchParams]);
@@ -181,7 +207,10 @@ const CustomDatePicker = ({
             <TextField
                 label="Date"
                 value={textDate}
-                onChange={(e) => { setTextDate(e.target.value); setTextError(false); }}
+                onChange={(e) => {
+                    setTextDate(e.target.value);
+                    setTextError(false);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleTextCommit()}
                 onBlur={handleTextCommit}
                 error={textError}
@@ -195,7 +224,9 @@ const CustomDatePicker = ({
                                 <IconButton
                                     size="small"
                                     edge="end"
-                                    onClick={(e) => setCalendarAnchor(e.currentTarget)}
+                                    onClick={(e) =>
+                                        setCalendarAnchor(e.currentTarget)
+                                    }
                                 >
                                     <CalendarMonthRounded fontSize="small" />
                                 </IconButton>
@@ -215,7 +246,8 @@ const CustomDatePicker = ({
                     disableFuture
                     value={date ? dayjs(date) : null}
                     shouldDisableDate={(day) =>
-                        allDatesSet.size > 0 && !allDatesSet.has(day.format('YYYY-MM-DD'))
+                        allDatesSet.size > 0 &&
+                        !allDatesSet.has(day.format('YYYY-MM-DD'))
                     }
                     onChange={(newValue: Dayjs | null) => {
                         if (newValue) {
@@ -225,7 +257,12 @@ const CustomDatePicker = ({
                     }}
                     referenceDate={referenceDate}
                     slots={{
-                        day: (props) => <AvailableDay {...props} allDates={allDates || []} />,
+                        day: (props) => (
+                            <AvailableDay
+                                {...props}
+                                allDates={allDates || []}
+                            />
+                        ),
                         monthButton: (props) => (
                             <AvailableMonth
                                 allMonths={allMonths}
@@ -233,11 +270,45 @@ const CustomDatePicker = ({
                                 year={date ? dayjs(date).format('YYYY') : ''}
                             />
                         ),
-                        yearButton: (props) => <AvailableYear allYears={allYears} {...props} />,
+                        yearButton: (props) => (
+                            <AvailableYear allYears={allYears} {...props} />
+                        ),
                     }}
                 />
                 <Divider />
-                <Stack alignItems="center" py={1}>
+                {allDates ? (
+                    <Stack
+                        alignItems="center"
+                        justifyContent="center"
+                        py={1}
+                        direction="row"
+                        spacing={2}
+                        divider={<Divider orientation="vertical" flexItem />}
+                    >
+                        <Button
+                            size="small"
+                            onClick={() => {
+                                setCalendarAnchor(null);
+                                navigateToDate(dayjs(allDates[0]));
+                            }}
+                        >
+                            <FastRewindRounded sx={{ mr: 0.5 }} />
+                            First Available
+                        </Button>
+                        <Button
+                            size="small"
+                            onClick={() => {
+                                setCalendarAnchor(null);
+                                navigateToDate(
+                                    dayjs(allDates[allDates.length - 1])
+                                );
+                            }}
+                        >
+                            Last Available
+                            <FastForwardRounded sx={{ ml: 0.5 }} />
+                        </Button>
+                    </Stack>
+                ) : (
                     <Button
                         size="small"
                         onClick={() => {
@@ -245,9 +316,10 @@ const CustomDatePicker = ({
                             navigateToDate(dayjs());
                         }}
                     >
+                        <TodayRounded sx={{ mr: 0.5 }} />
                         Today
                     </Button>
-                </Stack>
+                )}
             </Popover>
             <IconButton
                 size="small"

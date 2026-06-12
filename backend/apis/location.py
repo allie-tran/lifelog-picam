@@ -95,7 +95,11 @@ async def upload_gps(
     if not _redis_client.get_value(gate_key):
         _redis_client.set_with_ttl(gate_key, "1", _GPS_PIPELINE_GATE_MINUTES * 60)
         date = timestamp.strftime("%Y-%m-%d")
+        logger.debug("Triggering GPS pipeline for device %s and date %s", user.device_id, date)
         update_location_task.delay(user.device_id, date)
+    else:
+        logger.debug("GPS pipeline gate active for device %s, skipping trigger", user.device_id)
+        logger.debug("Gate TTL remaining: %s seconds", _redis_client.get_ttl(gate_key))
 
     return {"status": "success", "raw_gps_id": result.scalar()}
 
@@ -165,7 +169,6 @@ def get_gps_by_date(
     nested=False,
 ):
     _require_owner(access_level)
-
     if not date:
         raise HTTPException(status_code=400, detail="Date parameter is required")
 

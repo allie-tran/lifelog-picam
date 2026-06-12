@@ -163,6 +163,8 @@ class LocationInfo(CamelCaseModel):
     categories: Optional[str] = None
     # legacy (may be null on new records)
     info: Optional[str] = None
+    # visit count (populated by list/search endpoints)
+    count: Optional[int] = None
 
     @field_validator("id", mode="before")
     @classmethod
@@ -188,7 +190,7 @@ class LifelogImage(CamelCaseModel):
     seconds_from_midnight: int = Field(
         default=0, ge=0, lt=24 * 3600
     )
-    thumbnail: str
+    thumbnail: str | None
     is_video: bool
 
     deleted: bool = False

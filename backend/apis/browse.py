@@ -220,6 +220,47 @@ def get_sensor_logs(
 
     return LogResponse(keys=list(all_res.keys()), logs=all_res)
 
+@app.get("/get-segments-by-date", response_model=dict)
+async def get_segments_by_date(
+    device: str,
+    date: str = "",
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    _maybe_load_segments(session, device, date)
+
+    cache_key = f"browse:day:{device}:{date}"
+    cached = redis_client.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    results = ImageRecord.find_segments(
+        session,
+        date=date,
+        device=device,
+        deleted=False,
+        page=0,
+        page_size=100_000,
+        hour="",
+        today=(date == today),
+    )
+
+    response = jsonable_encoder({
+        "date": date,
+        "segments": results["segments"],
+    })
+
+    ttl = _BROWSE_CACHE_TTL_TODAY if date == today else _BROWSE_CACHE_TTL_PAST
+    redis_client.set_json_with_ttl(cache_key, response, ttl)
+    return response
+
+
 @app.get("/get-images-by-hour", response_model=dict)
 async def get_images_by_hour(
     device: str,

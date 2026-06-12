@@ -5,7 +5,7 @@ from functools import lru_cache
 from PIL import Image
 import io
 import os
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import func, case, or_, select, desc
 from sqlalchemy.orm import Session
 
@@ -41,6 +41,24 @@ class ValuesRequest(CamelCaseModel):
     field: str
     extra_params: dict[str, Any] = {}
 
+def _location_display_name():
+    return case(
+        (Location.name.in_(["---", "Unknown Place", ""]), Location.address),
+        else_=Location.name
+    ).label("display_name")
+
+
+def _locations_to_info(res) -> list[LocationInfo]:
+    locations = []
+    for loc, display_name, img_count in res:
+        loc_info = LocationInfo.model_validate(loc.__dict__)
+        loc_info.name = display_name
+        loc_info.id = str(loc_info.id)
+        loc_info.count = img_count
+        locations.append(loc_info)
+    return locations
+
+
 @app.post("/get-locations")
 def get_locations(
     device: str,
@@ -52,13 +70,10 @@ def get_locations(
     extra_params = request.extra_params
 
     country_filter = extra_params.get("country")
-    display_name = case(
-        (Location.name.in_(["---", "Unknown Place", ""]), Location.address),
-        else_=Location.name
-    ).label("display_name")
+    img_count = func.count(ImageModel.id).label("img_count")
 
     stmt = (
-        select(Location, display_name)
+        select(Location, _location_display_name(), img_count)
         .join(ImageModel, ImageModel.location_id == Location.id)
         .where(ImageModel.device == device)
         .where(Location.stop == True)
@@ -68,20 +83,42 @@ def get_locations(
 
     stmt = (stmt
         .group_by(Location.id)
-        .order_by(desc(func.count(ImageModel.id)))
+        .order_by(desc(img_count))
         .limit(20)
     )
 
-    res = session.execute(stmt).fetchall()
+    return _locations_to_info(session.execute(stmt).fetchall())
 
-    locations = []
-    for loc, display_name in res:
-        loc_info = LocationInfo.model_validate(loc.__dict__)
-        loc_info.name = display_name
-        loc_info.id = str(loc_info.id)
-        locations.append(loc_info)
 
-    return locations
+@app.get("/search-locations")
+def search_locations(
+    device: str,
+    q: str,
+    limit: int = Query(default=20, le=50),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    pattern = f"%{q}%"
+    img_count = func.count(ImageModel.id).label("img_count")
+
+    stmt = (
+        select(Location, _location_display_name(), img_count)
+        .join(ImageModel, ImageModel.location_id == Location.id)
+        .where(ImageModel.device == device, Location.stop == True)
+        .where(or_(
+            Location.name.ilike(pattern),
+            Location.suburb.ilike(pattern),
+            Location.city.ilike(pattern),
+            Location.address.ilike(pattern),
+        ))
+        .group_by(Location.id)
+        .order_by(desc(img_count))
+        .limit(limit)
+    )
+
+    return _locations_to_info(session.execute(stmt).fetchall())
 
 @app.post("/get-moving-periods")
 def get_moving_periods(
@@ -285,8 +322,10 @@ def get_all_faces(
             .join(ImagePerson, ImagePerson.image_id == ImageModel.id)
             .where(ImageModel.device == device)
             .where(ImagePerson.cluster_id == cluster.id)
+            .where(ImageModel.deleted == False)
+            .where(ImageModel.thumbnail != None)
             .order_by("distance")
-            .limit(5)
+            .limit(4)
         )
 
         images = session.execute(stmt).fetchall()

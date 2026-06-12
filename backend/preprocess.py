@@ -229,16 +229,22 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
                 Location.address,
                 Location.country,
                 Location.info,
+                Location.stop,
                 Location.latitude,
                 Location.longitude,
                 func.count().label("cnt"),
+                func.min(Image.timestamp).label("first_seen"),
             )
             .join(Image, Image.location_id == Location.id)
             .where(Image.image_path.in_(image_paths), Image.device == device_id)
             .group_by(Location.id)
-            .order_by(func.count().desc())
-            .limit(5)
+            .order_by(func.min(Image.timestamp).asc())
+            .limit(10)
         ).fetchall()
+
+        def _clean_coord(v):
+            return v if v is not None and v == v else None  # reject NaN
+
         top_locations = [
             {
                 "id": str(row.id) if row.id else None,
@@ -250,8 +256,9 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
                 "address": row.address,
                 "country": row.country or "",
                 "info": row.info,
-                "latitude": row.latitude if row.latitude and not (row.latitude != row.latitude) else None,
-                "longitude": row.longitude if row.longitude and not (row.longitude != row.longitude) else None,
+                "stop": row.stop,
+                "latitude": _clean_coord(row.latitude),
+                "longitude": _clean_coord(row.longitude),
                 "count": row.cnt,
             }
             for row in location_rows
