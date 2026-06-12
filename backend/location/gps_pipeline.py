@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 # ─── Config ───────────────────────────────────────────────────────────────────
 # DBSCAN params (haversine expects radians)
 EPS = 0.05 / 6371          # ~50 metres
-MIN_PTS = 3
+MIN_PTS = 5
 
 GAP_SECONDS = 5 * 60       # 5-minute gap → new track
 SPEED_THRESHOLD = 50       # m/s outlier cutoff
-STOP_RUN_LENGTH = 5        # consecutive same-cluster points to call "stop"
+STOP_RUN_LENGTH = 10       # consecutive same-cluster points to call "stop"
 SMOOTH_WINDOW = 5          # rolling-mode window for stop/move label
 
 # ─── Step 1: Load all points for a device/date into a single DataFrame ─────────
