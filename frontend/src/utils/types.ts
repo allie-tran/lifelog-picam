@@ -89,14 +89,19 @@ export type ResultSegment = {
 }
 
 type SummarySegment = {
+    segmentId?: number | null;
+    segmentIndex: number;
     representativeImage: ImageObject;
     representativeImages: ImageObject[];
-    segmentIndex: number;
     activity: string;
     activityGroup: string;
     startTime: string;
     endTime: string;
     duration: number;
+    locationName?: string | null;
+    locationStop?: boolean | null;
+    locationLatitude?: number | null;
+    locationLongitude?: number | null;
 };
 
 // Define the enum to match your backend ActionType

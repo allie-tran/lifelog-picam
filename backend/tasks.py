@@ -170,9 +170,10 @@ def describe_segment_task(
             except Exception as _ne:
                 logging.warning("maybe_notify_segment failed for %s/%s seg %s: %s", device, date, segment_id, _ne)
 
-        # Bust browse cache (no DB connection needed)
+        # Bust browse + day-nav cache (no DB connection needed)
         from sessions.redis import redis_client as _rc
         _rc.delete_pattern(f"browse:{device}:{date}:*")
+        _rc.delete_value(f"day-nav:{device}:{date}")
 
         # Mark day summary dirty in MongoDB
         mongo_client["picam"]["day_summaries"].update_one(
@@ -185,6 +186,132 @@ def describe_segment_task(
         )
     except Exception as e:
         logging.error("Error describing segment %s for %s on %s: %s", segment_id, device, date, e)
+
+
+@celery.task(name="tasks.resync_day_task", bind=True)
+def resync_day_task(self, device: str, date: str):
+    from scripts.segmentation import segment_images
+    from scripts.utils import compress_image
+
+    mongo_client = MongoClient("mongodb://localhost:27017/")
+
+    # Step 1: rerun GPS pipeline so location_id is fresh before resegmentation
+    with Session(engine) as session:
+        try:
+            run_pipeline(session, device, date)
+            logging.info("resync_day: GPS pipeline done for %s/%s", device, date)
+        except Exception as e:
+            logging.warning("resync_day: GPS pipeline failed for %s/%s: %s", device, date, e)
+
+    with Session(engine) as session:
+        # Step 2: fetch all images ordered by timestamp
+        all_images = session.execute(
+            select(Image.id, Image.image_path, Image.segment_id, Image.activity)
+            .where(
+                Image.device == device,
+                Image.date == date,
+                Image.deleted == False,
+            )
+            .order_by(Image.timestamp.asc())
+        ).all()
+
+        if not all_images:
+            logging.info("resync_day: no images for %s/%s", device, date)
+            return
+
+        all_paths = [img.image_path for img in all_images]
+        path_to_img = {img.image_path: img for img in all_images}
+
+        # Step 3: compute new segmentation without saving
+        new_segments = segment_images(session, device, all_paths)
+        if not new_segments:
+            logging.warning("resync_day: segmentation returned nothing for %s/%s, aborting", device, date)
+            return
+
+        # Step 4: build old segment identity as (first_path, last_path) per segment,
+        # where paths are in timestamp order (all_images is already ordered by timestamp)
+        sid_to_ordered_paths: dict[int, list[str]] = {}
+        for img in all_images:
+            if img.segment_id is not None:
+                sid_to_ordered_paths.setdefault(img.segment_id, []).append(img.image_path)
+
+        old_bounds: set[tuple[str, str]] = {
+            (paths[0], paths[-1])
+            for paths in sid_to_ordered_paths.values()
+            if paths
+        }
+
+        # Step 5: mark images in new segments that don't align with any old segment
+        # for activity erasure — a segment "aligns" iff its first and last image match
+        cleared_ids: set[int] = set()
+        for new_seg_paths in new_segments:
+            if not new_seg_paths:
+                continue
+            if (new_seg_paths[0], new_seg_paths[-1]) not in old_bounds:
+                cleared_ids.update(
+                    path_to_img[p].id for p in new_seg_paths if p in path_to_img
+                )
+
+        if cleared_ids:
+            session.execute(
+                update(Image)
+                .where(Image.id.in_(list(cleared_ids)))
+                .values(
+                    activity=None, activity_group=None, activity_description=None,
+                    activity_confidence=None, activity_tags=None,
+                )
+            )
+            logging.info(
+                "resync_day: cleared activity on %d images for %s/%s", len(cleared_ids), device, date
+            )
+
+        # Step 6: assign new segment IDs — sequential starting from 1,
+        # in the order segment_images returned them (chronological)
+        for new_sid, new_seg_paths in enumerate(new_segments, start=1):
+            if not new_seg_paths:
+                continue
+            session.execute(
+                update(Image)
+                .where(
+                    Image.image_path.in_(new_seg_paths),
+                    Image.device == device,
+                    Image.date == date,
+                )
+                .values(segment_id=new_sid)
+            )
+
+        session.commit()
+        logging.info("resync_day: assigned %d segments for %s/%s", len(new_segments), device, date)
+
+        # Step 7: dispatch LLM for segments with unannotated images
+        for new_sid, new_seg_paths in enumerate(new_segments, start=1):
+            if not new_seg_paths:
+                continue
+            needs_annotation = any(
+                path_to_img[p].id in cleared_ids
+                or not path_to_img[p].activity
+                or path_to_img[p].activity == ""
+                for p in new_seg_paths
+                if p in path_to_img
+            )
+            if needs_annotation:
+                compressed = [compress_image(f"{device}/{p}") for p in new_seg_paths[:20]]
+                describe_segment_task.delay(device, date, compressed, new_sid)
+                logging.info("resync_day: queued LLM for segment %d", new_sid)
+
+    mongo_client["picam"]["day_summaries"].update_one(
+        {"date": date, "device": device},
+        {"$set": {"processing": True, "dirty_segment_ids": [], "text_summary_stale": True}},
+        upsert=True,
+    )
+    mongo_client.close()
+
+    from day_summary_tasks import _day_summary_bg, DEFAULT_TARGETS
+    target_dicts = [
+        {"name": t.name, "action_type": t.action_type.value, "query_prompt": t.query_prompt}
+        for t in DEFAULT_TARGETS
+    ]
+    _day_summary_bg(device, date, target_dicts)
 
 
 @celery.task(name="tasks.yolo_process_images_task", bind=True)

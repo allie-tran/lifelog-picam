@@ -296,14 +296,14 @@ def time_to_ms(date_str, time_str):
         * 1000
     )
 
-def _fetch_segment_locations(session, device: str, date: str) -> dict[int, str]:
+def _fetch_segment_locations(session, device: str, date: str) -> dict[int, tuple[str, bool, float | None, float | None]]:
     """
-    Return {segment_id: most_common_location_display_name} for the given date/device.
+    Return {segment_id: (display_name, stop, latitude, longitude)} for the given date/device.
     One query, grouped in Python.
     """
     from collections import Counter
     rows = session.execute(
-        select(Image.segment_id, Location.name, Location.address)
+        select(Image.segment_id, Location.name, Location.address, Location.stop, Location.latitude, Location.longitude)
         .join(Location, Image.location_id == Location.id)
         .where(
             Image.device == device,
@@ -313,16 +313,21 @@ def _fetch_segment_locations(session, device: str, date: str) -> dict[int, str]:
         )
     ).all()
 
-    seg_locs: dict[int, list[str]] = {}
-    for seg_id, name, address in rows:
+    seg_locs: dict[int, list[tuple[str, bool, float | None, float | None]]] = {}
+    for seg_id, name, address, stop, lat, lon in rows:
         display = name if name and name not in ("---", "Unknown Place", "") else (address or "")
-        seg_locs.setdefault(seg_id, []).append(display)
+        seg_locs.setdefault(seg_id, []).append((display, bool(stop), lat, lon))
 
-    return {
-        seg_id: Counter(names).most_common(1)[0][0]
-        for seg_id, names in seg_locs.items()
-        if names
-    }
+    result: dict[int, tuple[str, bool, float | None, float | None]] = {}
+    for seg_id, entries in seg_locs.items():
+        most_common_name = Counter(e[0] for e in entries).most_common(1)[0][0]
+        stop_flag = all(e[1] for e in entries)
+        lats = [e[2] for e in entries if e[2] is not None]
+        lons = [e[3] for e in entries if e[3] is not None]
+        avg_lat = sum(lats) / len(lats) if lats else None
+        avg_lon = sum(lons) / len(lons) if lons else None
+        result[seg_id] = (most_common_name, stop_flag, avg_lat, avg_lon)
+    return result
 
 
 def _fetch_day_hr_rows(session, device_id: str, date: str) -> list:
@@ -342,7 +347,7 @@ def _fetch_day_hr_rows(session, device_id: str, date: str) -> list:
 def _build_segment_entry(
     segment_id: int,
     images: list,
-    seg_to_location: dict[int, str],
+    seg_to_location: dict[int, tuple[str, bool, float | None, float | None]],
 ) -> Optional[SummarySegment]:
     """
     Build one SummarySegment from pre-fetched LifelogImage list.
@@ -359,6 +364,7 @@ def _build_segment_entry(
     start_time = images_sorted[0].timestamp
     end_time = images_sorted[-1].timestamp
     duration = max(int((end_time - start_time).total_seconds()), 10)
+    loc_name, loc_stop, loc_lat, loc_lon = seg_to_location.get(segment_id, ("", True, None, None))
     return SummarySegment(
         segment_id=segment_id,
         segment_index=None,
@@ -368,7 +374,10 @@ def _build_segment_entry(
         start_time=start_time,
         end_time=end_time,
         duration=duration,
-        location_name=seg_to_location.get(segment_id, ""),
+        location_name=loc_name,
+        location_stop=loc_stop,
+        location_latitude=loc_lat,
+        location_longitude=loc_lon,
     )
 
 
@@ -536,7 +545,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                     "activity": record.activity,
                     "activity_description": record.activity_description,
                     "time": [record.timestamp],
-                    "location": seg_to_location.get(sid, ""),
+                    "location": seg_to_location.get(sid, ("", True, None, None))[0] if sid is not None else "",
                 }
             else:
                 groups[sid]["time"].append(record.timestamp)

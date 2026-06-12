@@ -47,6 +47,62 @@ export const getImagesByHour = async (
     };
 };
 
+export const getImagesBySegment = async (
+    device: string,
+    date: string,
+    segmentId: number | 'unsegmented',
+) => {
+    const params = segmentId === 'unsegmented'
+        ? `unsegmented=true`
+        : `segment_id=${segmentId}`;
+    const response = await axios.get(
+        `${BACKEND_URL}/browse/get-images-by-segment?date=${date}&device=${encodeURIComponent(device)}&${params}`
+    );
+    return response.data as {
+        segments: ResultSegment[];
+        gps: GPSData[];
+    };
+};
+
+export type DayStop = {
+    name: string;
+    latitude: number;
+    longitude: number;
+    count: number;
+    stop: boolean;
+};
+
+export const getDayStops = async (device: string, date: string): Promise<DayStop[]> => {
+    const response = await axios.get(
+        `${BACKEND_URL}/browse/day-stops?date=${date}&device=${encodeURIComponent(device)}`
+    );
+    return response.data as DayStop[];
+};
+
+export type NavSegment = {
+    segmentId: number;
+    startTime: string;
+    endTime: string;
+    duration: number;
+    activity: string;
+    activityGroup: string;
+    locationName?: string | null;
+    locationStop?: boolean | null;
+};
+
+export const getDayNavSegments = async (device: string, date: string): Promise<NavSegment[]> => {
+    const response = await axios.get(
+        `${BACKEND_URL}/browse/day-nav?device=${encodeURIComponent(device)}&date=${date}`
+    );
+    return response.data as NavSegment[];
+};
+
+export const resyncDay = async (device: string, date: string): Promise<void> => {
+    await axios.post(
+        `${BACKEND_URL}/resync-day?device=${encodeURIComponent(device)}&date=${date}`
+    );
+};
+
 export const getImagesByRange = async (
     device: string,
     date: string,

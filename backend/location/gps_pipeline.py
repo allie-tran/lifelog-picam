@@ -9,7 +9,6 @@ from sklearn.cluster import DBSCAN
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
-from tqdm.auto import tqdm
 from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
@@ -153,11 +152,9 @@ def label_stop_move(cluster_labels: np.ndarray, run_length: int = STOP_RUN_LENGT
     return labels
 
 
-def smooth_labels(labels: np.ndarray, window: int = SMOOTH_WINDOW) -> np.ndarray:
+def smooth_labels(labels: np.ndarray, window: int = SMOOTH_WINDOW):
     """Rolling majority-vote smoothing."""
     s = pd.Series(labels)
-    def majority(x):
-        return x.mode()[0]
     smoothed = s.rolling(window, center=True, min_periods=1).apply(
         lambda x: 1 if (x.sum() > len(x) / 2) else 0
     )
@@ -352,17 +349,6 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
 
     # Sort segments by start time for easier analysis
     segments.sort(key=lambda x: x["start_ts"])
-
-    print("   Re-assigning segment IDs to order...")
-
-    # Assign segment_ids
-    for i, seg in enumerate(segments):
-        seg["segment_id"] = i
-        df.loc[(df["track_id"] == seg["track_id"]) &
-               (df["timestamp"] >= seg["start_ts"]) &
-               (df["timestamp"] <= seg["end_ts"]), "segment_id"] = seg["segment_id"]
-
-    df["segment_id"] = df["segment_id"].astype(int)
     df.sort_values("timestamp", inplace=True)
     return df, segments
 
@@ -619,7 +605,8 @@ def enrich_and_index_segments(
             session.execute(
                 update(Image)
                 .where(Image.device == device)
-                .where(Image.timestamp.between(start_dt, end_dt))
+                .where(Image.timestamp.between(start_dt - timedelta(seconds=5),
+                                               end_dt + timedelta(seconds=15))) # Add small buffer to capture images just outside segment bounds
                 .values(location_id=location_id)
             )
 
@@ -726,9 +713,6 @@ def run_pipeline(session: Session, device: str, date: str):
     #     .where(Image.date == date)
     #     .where(Image.device == device)
     #     .values(
-    #         activity="",
-    #         activity_description="",
-    #         activity_confidence="",
     #         segment_id=None,
     #     )
     # )

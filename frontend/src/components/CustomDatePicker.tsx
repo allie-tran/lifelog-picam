@@ -110,8 +110,8 @@ const CustomDatePicker = ({
     allDates,
 }: {
     date: string | null;
-    setPage: (page: number) => void;
-    setHour: (hour: number | null) => void;
+    setPage?: (page: number) => void;
+    setHour?: (hour: number | null) => void;
     allDates: string[] | undefined;
 }) => {
     const navigate = useNavigate();
@@ -168,8 +168,8 @@ const CustomDatePicker = ({
 
     const navigateToDate = (parsed: Dayjs) => {
         const newParams = new URLSearchParams(searchParams.toString());
-        setPage(1);
-        setHour(null);
+        setPage?.(1);
+        setHour?.(null);
         newParams.set('date', parsed.format('YYYY-MM-DD'));
         navigate({ search: newParams.toString() });
     };

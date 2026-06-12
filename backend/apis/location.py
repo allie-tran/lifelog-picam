@@ -108,10 +108,10 @@ async def upload_gps(
 async def process_gps(
     device: str,
     date: str,
-    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    # access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
-    _require_owner(access_level)
+    # _require_owner(access_level)
     if date == "all":
         dates = session.execute(select(Image.date).where(Image.device == device, Image.timezone == None).distinct()).scalars().all()
         for d in dates:

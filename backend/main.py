@@ -259,6 +259,19 @@ def create_device_endpoint(
 # Segment processing
 # ---------------------------------------------------------------------------
 
+@app.post("/resync-day")
+def resync_day(
+    date: str,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    """Re-segment from first gap, skip LLM for already-annotated segments."""
+    _require_owner(access_level)
+    from tasks import resync_day_task
+    resync_day_task.delay(device, date)
+    return {"message": f"Resync queued for {device}/{date}"}
+
+
 @app.get("/process-date")
 def process_date(
     date: str,

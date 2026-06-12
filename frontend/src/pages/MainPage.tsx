@@ -1,15 +1,10 @@
-import {
-    Button,
-    Container,
-    Pagination,
-    Skeleton,
-    Stack,
-    Typography,
-} from '@mui/material';
+import { Alert, Box, Container, IconButton, Snackbar, Stack, Tooltip } from '@mui/material';
+import SyncIcon from '@mui/icons-material/Sync';
 import { GPSData } from '@utils/types';
 import { getGPSByDate, GpsTrackData } from 'apis/process';
 import CurrentStatus from 'components/CurrentStatus';
 import CustomDatePicker from 'components/CustomDatePicker';
+import DayNavBar, { SegmentSelection } from 'components/DayNavBar';
 import DeleteRange from 'components/DeleteRange';
 import GpsTrack from 'components/GpsTrack';
 import LifelogEvent, { LifelogEventSkeleton } from 'components/LifelogEvent';
@@ -22,7 +17,14 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
-import { deleteImages, getAllDates, getImagesByHour, getSegmentsByDate } from '../apis/browsing';
+import {
+    deleteImages,
+    getAllDates,
+    getDayNavSegments,
+    getDayStops,
+    getImagesBySegment,
+    resyncDay,
+} from '../apis/browsing';
 import { ImageZoom } from '../components/ImageZoom';
 
 function MainPage() {
@@ -30,54 +32,117 @@ function MainPage() {
     const today = dayjs().format('YYYY-MM-DD');
     const date = searchParams.get('date');
     const device = searchParams.get('device') || '';
-    const hourParam = searchParams.get('hour');
-    const hour: number | null = hourParam !== null ? Number(hourParam) : null;
+    const segmentParam = searchParams.get('segment');
 
-    const setHour = React.useCallback((h: number | null) => {
-        setSearchParams((prev) => {
-            const next = new URLSearchParams(prev);
-            if (h === null) next.delete('hour');
-            else next.set('hour', String(h));
-            return next;
-        });
-    }, [setSearchParams]);
+    const selectedSegmentId: SegmentSelection | null = (() => {
+        if (!segmentParam) return null;
+        if (segmentParam === 'unsegmented') return 'unsegmented';
+        if (segmentParam.includes(','))
+            return segmentParam.split(',').map(Number);
+        return Number(segmentParam);
+    })();
+
+    const setSegment = React.useCallback(
+        (id: SegmentSelection | null) => {
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (id === null) next.delete('segment');
+                else if (Array.isArray(id)) next.set('segment', id.join(','));
+                else next.set('segment', String(id));
+                return next;
+            });
+        },
+        [setSearchParams]
+    );
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
-    const [page, setPage] = React.useState(1);
-    const [activeHour, setActiveHour] = React.useState<number | null>(hour);
-
-    // Keep activeHour in sync when URL changes externally (date nav, back/forward)
-    useEffect(() => { setActiveHour(hour); }, [hour]);
-
     const dispatch = useAppDispatch();
 
     useEffect(() => {
         if (device) dispatch(setDevice(device));
     }, [device]);
 
+    const isAuthorised =
+        deviceAccess === AccessLevel.ADMIN ||
+        deviceAccess === AccessLevel.OWNER;
+
+    // Full-day GPS track (unchanged)
+    const { data: gpsData } = useSWR(
+        ['gps-track', device, date, deviceAccess],
+        async (): Promise<GpsTrackData> => {
+            if (isAuthorised) return getGPSByDate(device, date || '');
+            return { rawGps: [], imageGps: [] };
+        },
+        {
+            revalidateOnFocus: false,
+            refreshInterval: date === today ? 3 * 60 * 1000 : 0,
+        }
+    );
+
+    // Lightweight segment metadata for DayNavBar
+    const { data: navSegments } = useSWR(
+        date && device && isAuthorised ? ['day-nav', device, date] : null,
+        () => getDayNavSegments(device, date || ''),
+        {
+            revalidateOnFocus: false,
+            refreshInterval: date === today ? 60 * 1000 : 0,
+        }
+    );
+
+    // Auto-select first segment when nav data loads and nothing is selected
+    useEffect(() => {
+        if (selectedSegmentId !== null) return;
+        if (!navSegments?.length) return;
+        // today → most recent first (last in array); past → earliest (first)
+        const pick = date === today ? navSegments[navSegments.length - 1] : navSegments[0];
+        if (pick?.segmentId != null) setSegment(pick.segmentId);
+    }, [navSegments]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Keep only device + date when navigating to a new date/device
+    useEffect(() => {
+        setSearchParams(
+            (prev) => {
+                const d = prev.get('device');
+                const dt = prev.get('date');
+                const next = new URLSearchParams();
+                if (d) next.set('device', d);
+                if (dt) next.set('date', dt);
+                return next;
+            },
+            { replace: true }
+        );
+    }, [date, device]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Segment images — fetched on demand; arrays = parallel fetch + merge
     const { data, mutate, isLoading, isValidating } = useSWR(
-        [page, date, hour, device, deviceAccess],
+        selectedSegmentId !== null && date && device && isAuthorised
+            ? [
+                  'segment',
+                  device,
+                  date,
+                  Array.isArray(selectedSegmentId)
+                      ? selectedSegmentId.join(',')
+                      : selectedSegmentId,
+              ]
+            : null,
         async () => {
-            if (
-                deviceAccess === AccessLevel.ADMIN ||
-                deviceAccess === AccessLevel.OWNER
-            ) {
-                return await getImagesByHour(
-                    device,
-                    date || '',
-                    hour || 0,
-                    page
+            const d = date || '';
+            if (Array.isArray(selectedSegmentId)) {
+                const results = await Promise.all(
+                    selectedSegmentId.map((id) =>
+                        getImagesBySegment(device, d, id)
+                    )
                 );
-            } else {
                 return {
-                    images: [],
-                    segments: [],
-                    available_hours: [],
-                    date: date || '',
-                    total_pages: 1,
-                    gps: [] as GPSData[],
+                    segments: results.flatMap((r) => r.segments),
+                    gps: results.flatMap((r) => r.gps),
                 };
             }
+            return getImagesBySegment(
+                device,
+                d,
+                selectedSegmentId as number | 'unsegmented'
+            );
         },
         {
             revalidateOnFocus: false,
@@ -88,131 +153,112 @@ function MainPage() {
 
     const { data: allDates } = useSWR(
         ['all-dates', device, date],
-        async () => {
-            const allDates = await getAllDates(device);
-            return allDates;
-        },
-        {
-            revalidateOnFocus: false,
-        }
+        () => getAllDates(device),
+        { revalidateOnFocus: false }
     );
 
-    const { data: gpsData } = useSWR(
-        ['gps-track', device, date, deviceAccess],
-        async (): Promise<GpsTrackData> => {
-            if (
-                deviceAccess === AccessLevel.ADMIN ||
-                deviceAccess === AccessLevel.OWNER
-            ) {
-                return getGPSByDate(device, date || '');
-            }
-            return { rawGps: [], imageGps: [] };
-        },
+    const { data: dayStops } = useSWR(
+        date && device && isAuthorised ? ['day-stops', device, date] : null,
+        () => getDayStops(device, date || ''),
         {
             revalidateOnFocus: false,
             refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
-    const { data: daySegmentsData } = useSWR(
-        date && device && (deviceAccess === AccessLevel.ADMIN || deviceAccess === AccessLevel.OWNER)
-            ? ['day-segments', device, date]
+
+    // Recent (unsegmented) — always shown at top for today
+    const { data: recentData, mutate: mutateRecent } = useSWR(
+        date === today && device && isAuthorised
+            ? ['unsegmented', device, date]
             : null,
-        () => getSegmentsByDate(device, date || ''),
-        { revalidateOnFocus: false, refreshInterval: date === today ? 3 * 60 * 1000 : 0 }
+        () => getImagesBySegment(device, date || '', 'unsegmented'),
+        { revalidateOnFocus: false, refreshInterval: 60 * 1000 }
     );
+    const recentSegments = recentData?.segments ?? [];
 
     const imageGps: GPSData[] = gpsData?.imageGps ?? [];
-
-    const images = data?.images;
     const segments = data?.segments || [];
-    const daySegments = daySegmentsData?.segments || [];
-    const availableHours = data?.available_hours || [];
 
     const activeSegmentIds = React.useMemo(() => {
-        const ids = segments
-            .map((s) => s.segmentId)
-            .filter((id): id is number => id != null);
-        return ids.length > 0 ? new Set(ids) : undefined;
-    }, [segments]);
-
-    useEffect(() => {
-        setPage(1);
-        setHour(null);
-    }, [date, device]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        if (availableHours.length > 0 && !availableHours.includes(hour || 0)) {
-            setHour(availableHours[0]);
-        }
-    }, [data, availableHours, hour]);
+        if (typeof selectedSegmentId === 'number')
+            return new Set([selectedSegmentId]);
+        if (Array.isArray(selectedSegmentId)) return new Set(selectedSegmentId);
+        return undefined;
+    }, [selectedSegmentId]);
 
     const deleteRow = async (imagePaths: string[]) => {
         dispatch(setLoading(true));
         await deleteImages(device, imagePaths);
-        await mutate();
+        await Promise.all([mutate(), mutateRecent?.()]);
         dispatch(setLoading(false));
+    };
+
+    const [resyncing, setResyncing] = React.useState(false);
+    const [resyncError, setResyncError] = React.useState<string | null>(null);
+    const handleResync = async () => {
+        if (!device || !date || resyncing) return;
+        setResyncing(true);
+        try {
+            await resyncDay(device, date);
+        } catch (e) {
+            setResyncError('Resync failed — check server logs');
+        } finally {
+            setResyncing(false);
+        }
     };
 
     return (
         <>
             <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
                 <Container>
-                    <CustomDatePicker
-                        date={date}
-                        setPage={setPage}
-                        setHour={setHour}
-                        allDates={allDates}
-                    />
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ flex: 1 }}>
+                            <CustomDatePicker
+                                date={date}
+                                allDates={allDates}
+                            />
+                        </Box>
+                        {isAuthorised && date && (
+                            <Tooltip title="Re-sync segmentation (preserves LLM annotations)">
+                                <span>
+                                    <IconButton
+                                        onClick={handleResync}
+                                        disabled={resyncing}
+                                        size="small"
+                                        sx={{ mt: 1, animation: resyncing ? 'spin 1s linear infinite' : 'none',
+                                              '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } } }}
+                                    >
+                                        <SyncIcon fontSize="small" />
+                                    </IconButton>
+                                </span>
+                            </Tooltip>
+                        )}
+                    </Box>
                     {(!date || date === today) && (
                         <CurrentStatus device={device} />
                     )}
                 </Container>
-                {availableHours.length > 0 && (
-                    <Typography
-                        variant="h6"
-                        color="primary"
-                        sx={{ alignSelf: 'flex-start', pt: 2 }}
-                    >
-                        Available Hours
-                    </Typography>
-                )}
-                <Stack
-                    direction="row"
-                    spacing={1}
-                    sx={{
-                        width: '100%',
-                        flexWrap: 'wrap',
-                        pb: 2,
-                    }}
-                    useFlexGap
-                >
-                    {availableHours.map((h) => (
-                        <Button
-                            key={h}
-                            variant={activeHour === h ? 'contained' : 'outlined'}
-                            onClick={() => {
-                                const next = h === activeHour ? null : h;
-                                setActiveHour(next);
-                                setHour(next);
-                                setPage(1);
-                            }}
-                        >
-                            {h}:00
-                        </Button>
-                    ))}
-                </Stack>
+
+                <Box sx={{ width: '100%' }}>
+                    <DayNavBar
+                        navSegments={navSegments}
+                        selectedSegmentId={selectedSegmentId}
+                        onSelectSegment={setSegment}
+                    />
+                </Box>
+
                 <DeleteRange
                     onDelete={() => mutate()}
                     date={date || dayjs().format('YYYY-MM-DD')}
                 />
 
-                {segments.length === 0 &&
-                    images &&
-                    images.length === 0 &&
-                    (deviceAccess === AccessLevel.ADMIN ||
-                        deviceAccess === AccessLevel.OWNER) && (
-                        <div>No images found for this date/hour.</div>
+                {!isLoading &&
+                    segments.length === 0 &&
+                    selectedSegmentId !== null &&
+                    isAuthorised && (
+                        <div>No images found for this segment.</div>
                     )}
+
                 <Stack
                     sx={{ width: '100%', height: 'calc(100dvh - 200px)' }}
                     direction="row"
@@ -221,8 +267,9 @@ function MainPage() {
                     <GpsTrack
                         imageGps={imageGps}
                         currentTrack={data?.gps || []}
-                        segments={daySegments}
+                        segments={segments}
                         activeSegmentIds={activeSegmentIds}
+                        dayStops={dayStops}
                     />
                     <Stack
                         sx={{
@@ -234,14 +281,50 @@ function MainPage() {
                             alignItems: 'flex-start',
                             opacity: isValidating && !isLoading ? 0.4 : 1,
                             transition: 'opacity 0.2s ease',
-                            pointerEvents: isValidating && !isLoading ? 'none' : 'auto',
+                            pointerEvents:
+                                isValidating && !isLoading ? 'none' : 'auto',
                         }}
                     >
+                        {/* Recent — unsegmented images for today */}
+                        {recentSegments.length > 0 && (
+                            <Box sx={{ width: '100%', mb: 1 }}>
+                                <Box
+                                    sx={{
+                                        fontWeight: 700,
+                                        fontSize: '0.75rem',
+                                        color: 'text.secondary',
+                                        mb: 0.5,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: 1,
+                                    }}
+                                >
+                                    Recent
+                                </Box>
+                                {recentSegments.map(
+                                    (segment, index) =>
+                                        segment.images.length > 0 && (
+                                            <LifelogEvent
+                                                key={`recent-${index}`}
+                                                segment={segment.images}
+                                                location={segment.location}
+                                                gpsList={segment.gps}
+                                                onChange={() =>
+                                                    mutateRecent?.()
+                                                }
+                                                deleteRow={deleteRow}
+                                            />
+                                        )
+                                )}
+                            </Box>
+                        )}
+
                         {isLoading &&
                             Array.from({ length: 5 }).map((_, index) => (
                                 <LifelogEventSkeleton key={index} />
                             ))}
-                        {segments.map((segment, index) => (
+                        {segments.map((segment, index) => {
+                            if (segment.images.length === 0) return null;
+                            return (
                             <LifelogEvent
                                 key={index}
                                 segment={segment.images}
@@ -255,30 +338,23 @@ function MainPage() {
                                 }}
                                 deleteRow={deleteRow}
                             />
-                        ))}
-                        {data && data.total_pages > 1 && (
-                            <Pagination
-                                page={page}
-                                count={data?.total_pages || 1}
-                                color="primary"
-                                onChange={(_, page) => {
-                                    setPage(page);
-                                    const element =
-                                        document.getElementById('app');
-                                    element?.scrollIntoView({
-                                        behavior: 'smooth',
-                                    });
-                                }}
-                            />
-                        )}
+                            );
+                        })}
                     </Stack>
                 </Stack>
             </Stack>
             <ImageZoom onDelete={() => mutate()} />
+            <Snackbar
+                open={resyncError !== null}
+                autoHideDuration={5000}
+                onClose={() => setResyncError(null)}
+            >
+                <Alert severity="error" onClose={() => setResyncError(null)}>
+                    {resyncError}
+                </Alert>
+            </Snackbar>
         </>
     );
 }
-
-
 
 export default MainPage;

@@ -5,19 +5,20 @@ import os
 from typing import Annotated, Any, List, Literal, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import update
+from collections import Counter
+from sqlalchemy import asc, update
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
 
-from app_types.general import LifelogImage, ResultSegment
+from app_types.general import GPSInfo, LifelogImage, LocationInfo, ResultSegment
 from auth import _require_owner, _require_any_access
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from constants import DIR
 from database import get_session
-from database.models import HeartRateData as HeartRateTable, Image, ImagePerson, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
+from database.models import HeartRateData as HeartRateTable, Image, ImageGPS, ImagePerson, Location, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
 from database.types import ImageRecord, _orm_to_lifelog
 from dependencies import CamelCaseModel
 from pipelines.all import process_image
@@ -220,6 +221,69 @@ def get_sensor_logs(
 
     return LogResponse(keys=list(all_res.keys()), logs=all_res)
 
+@app.get("/day-nav")
+async def get_day_nav(
+    device: str,
+    date: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
+    _require_owner(access_level)
+
+    cache_key = f"day-nav:{device}:{date}"
+    cached = redis_client.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    from scripts.summary import _fetch_segment_locations
+
+    rows = session.execute(
+        select(
+            Image.segment_id,
+            func.min(Image.timestamp).label("start_time"),
+            func.max(Image.timestamp).label("end_time"),
+            func.min(Image.activity).label("activity"),
+            func.min(Image.activity_group).label("activity_group"),
+        )
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+        )
+        .group_by(Image.segment_id)
+        .order_by(func.min(Image.timestamp).asc())
+    ).all()
+
+    if not rows:
+        return []
+
+    seg_to_location = _fetch_segment_locations(session, device, date)
+
+    segments = []
+    for row in rows:
+        start_ts = row.start_time
+        end_ts = row.end_time
+        duration = max(int((end_ts - start_ts).total_seconds()), 10) if start_ts and end_ts else 10
+        loc = seg_to_location.get(row.segment_id)
+        segments.append({
+            "segmentId": row.segment_id,
+            "startTime": start_ts.isoformat() if start_ts else None,
+            "endTime": end_ts.isoformat() if end_ts else None,
+            "duration": duration,
+            "activity": row.activity or "",
+            "activityGroup": row.activity_group or "",
+            "locationName": loc[0] if loc else None,
+            "locationStop": loc[1] if loc else None,
+        })
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    ttl = _BROWSE_CACHE_TTL_TODAY if date == today else _BROWSE_CACHE_TTL_PAST
+    redis_client.set_json_with_ttl(cache_key, segments, ttl)
+    return segments
+
+
 @app.get("/get-segments-by-date", response_model=dict)
 async def get_segments_by_date(
     device: str,
@@ -323,6 +387,115 @@ async def get_images_by_hour(
     ttl = _BROWSE_CACHE_TTL_TODAY if is_today else _BROWSE_CACHE_TTL_PAST
     redis_client.set_json_with_ttl(cache_key, response, ttl)
     return response
+
+
+@app.get("/get-images-by-segment", response_model=dict)
+async def get_images_by_segment(
+    device: str,
+    date: str,
+    segment_id: Optional[int] = Query(default=None),
+    unsegmented: bool = False,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    _maybe_load_segments(session, device, date)
+
+    cache_key = f"browse:segment:{device}:{date}:{'unsegmented' if unsegmented else (segment_id if segment_id is not None else 'null')}"
+    cached = redis_client.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    stmt = (
+        select(Image)
+        .where(Image.date == date)
+        .where(Image.device == device)
+        .where(Image.deleted == False)
+    )
+    if unsegmented:
+        stmt = stmt.where(Image.segment_id.is_(None))
+    else:
+        stmt = stmt.where(Image.segment_id == segment_id)
+    stmt = stmt.order_by(asc(Image.timestamp))
+    rows = session.execute(stmt).scalars().all()
+
+    image_paths = [r.image_path for r in rows]
+    path_to_location: dict[str, Location] = {}
+    path_to_gps: dict[str, list[ImageGPS]] = {}
+
+    if image_paths:
+        for path, loc in session.execute(
+            select(Image.image_path, Location)
+            .join(Image.location)
+            .where(Image.image_path.in_(image_paths))
+        ).all():
+            path_to_location[path] = loc
+
+        for path, gps_row in session.execute(
+            select(Image.image_path, ImageGPS)
+            .join(ImageGPS.image)
+            .where(Image.image_path.in_(image_paths))
+            .order_by(Image.timestamp.asc())
+        ).all():
+            path_to_gps.setdefault(path, []).append(gps_row)
+
+    seg_locs = [path_to_location[p] for p in image_paths if p in path_to_location]
+    location = None
+    if seg_locs:
+        most_common_id, _ = Counter(str(loc.id) for loc in seg_locs).most_common(1)[0]
+        location = next((loc for loc in seg_locs if str(loc.id) == most_common_id), None)
+
+    images = [_orm_to_lifelog(r) for r in rows]
+    gps_raw = [g for p in image_paths for g in path_to_gps.get(p, [])]
+    gps_info = [GPSInfo.model_validate(g, from_attributes=True) for g in gps_raw]
+
+    segment = ResultSegment(
+        segment_id=None if unsegmented else segment_id,
+        images=images,
+        location=LocationInfo.model_validate(location, from_attributes=True) if location else None,
+        gps=gps_info,
+    )
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    response = jsonable_encoder({"segments": [segment], "gps": gps_info})
+    ttl = _BROWSE_CACHE_TTL_TODAY if date == today else _BROWSE_CACHE_TTL_PAST
+    redis_client.set_json_with_ttl(cache_key, response, ttl)
+    return response
+
+
+class DayStop(CamelCaseModel):
+    name: str
+    latitude: float
+    longitude: float
+    count: int
+    stop: bool
+
+
+@app.get("/day-stops")
+def get_day_stops(
+    device: str,
+    date: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_any_access(access_level)
+    rows = session.execute(
+        select(Location.name, Location.address, Location.latitude, Location.longitude, Location.stop, func.count(Image.id))
+        .join(Image, Image.location_id == Location.id)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Location.latitude.isnot(None),
+            Location.longitude.isnot(None),
+        )
+        .group_by(Location.id)
+    ).all()
+    stops = []
+    for name, address, lat, lon, stop, count in rows:
+        display = name if name and name not in ("---", "Unknown Place", "") else (address or "")
+        stops.append(DayStop(name=display, latitude=lat, longitude=lon, count=count, stop=bool(stop)))
+    return stops
 
 
 @app.post("/get-images-by-range", response_model=List[LifelogImage])

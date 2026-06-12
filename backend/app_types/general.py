@@ -229,6 +229,9 @@ class SummarySegment(CamelCaseModel):
     avg_hr: Optional[float] = None
     hr_zone: Optional[str] = None
     location_name: Optional[str] = None
+    location_stop: Optional[bool] = None
+    location_latitude: Optional[float] = None
+    location_longitude: Optional[float] = None
 
 
 class ActionType(str, Enum):

@@ -95,7 +95,7 @@ def get_boundaries(image_paths: List[str], path_to_time: dict, path_to_location:
         # Only split on location change when both sides have a known location.
         # A None→value or value→None transition (GPS lock/loss) should not create
         # a hard boundary — fall through to the time-gap check instead.
-        if loc1 is not None and loc2 is not None and loc1 != loc2:
+        if loc1 != loc2:
             boundaries.add(image_paths[i])
         else:
             t1, t2 = path_to_time[img1], path_to_time[img2]
@@ -127,6 +127,9 @@ def segment_images(
         # just do by boundaries if we don't have enough features
         image_segments = []
         for i, path in enumerate(image_paths):
+            if path == "2026-06-12/20260612_142158+0100.jpg":
+                print("Found the problematic image path at index", i)
+                print("Boundaries:", path in boundaries)
             if path in boundaries and image_segments:
                 image_segments.append([])
 
@@ -197,10 +200,15 @@ def segment_images(
         segments.append(current_segment)
 
     # Merge segments that are too similar
+    # Keep boundaries intact, but merge segments on either side if their average features are close enough
     merged_segments = []
     for segment in segments:
         if merged_segments:
             prev_segment = merged_segments[-1]
+            if image_paths[segment[0]] in boundaries or image_paths[prev_segment[-1]] in boundaries:
+                merged_segments.append(segment)
+                continue
+
             prev_feat = np.mean(features[prev_segment], axis=0)
             curr_feat = np.mean(features[segment], axis=0)
 
@@ -215,6 +223,11 @@ def segment_images(
     small_merged = []
     min_time = timedelta(minutes=2)
     for segment in merged_segments:
+        prev_segment = small_merged[-1] if small_merged else None
+        if image_paths[segment[0]] in boundaries or (prev_segment and image_paths[prev_segment[-1]] in boundaries):
+            small_merged.append(segment)
+            continue
+
         if len(segment) < 3 and small_merged:
             # check the time
             start_image = image_paths[segment[0]]
