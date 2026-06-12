@@ -340,8 +340,7 @@ def enrich_stop(lat: float, lon: float) -> dict:
     # 4. Last resort: street address
     if not name:
         road = addr.get("road", "")
-        house = addr.get("house_number", "")
-        name = (f"{house} {road}".strip() if house else road)
+        name = str(road) # No house number.
 
     # OSM category types (the type string, e.g. "cafe", "supermarket")
     osm_cats = [extratags[k] for k in _POI_ADDR_KEYS if extratags.get(k)]
