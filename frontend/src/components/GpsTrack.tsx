@@ -166,12 +166,17 @@ function FitBounds({
 }) {
     const map = useMap();
     const posRef = useRef(positions);
+    const hasFit = useRef(false);
     posRef.current = positions;
     useEffect(() => {
-        if (posRef.current.length > 0)
-            map.fitBounds(L.latLngBounds(posRef.current), {
-                padding: [40, 40],
-            });
+        if (!posRef.current.length) return;
+        const bounds = L.latLngBounds(posRef.current);
+        if (!hasFit.current) {
+            hasFit.current = true;
+            map.fitBounds(bounds, { padding: [40, 40] });
+        } else {
+            map.flyToBounds(bounds, { padding: [40, 40], duration: 0.5 });
+        }
     }, [map, trackKey]); // eslint-disable-line react-hooks/exhaustive-deps
     return null;
 }

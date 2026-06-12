@@ -44,6 +44,10 @@ function MainPage() {
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const [page, setPage] = React.useState(1);
+    const [activeHour, setActiveHour] = React.useState<number | null>(hour);
+
+    // Keep activeHour in sync when URL changes externally (date nav, back/forward)
+    useEffect(() => { setActiveHour(hour); }, [hour]);
 
     const dispatch = useAppDispatch();
 
@@ -51,7 +55,7 @@ function MainPage() {
         if (device) dispatch(setDevice(device));
     }, [device]);
 
-    const { data, mutate, isLoading } = useSWR(
+    const { data, mutate, isLoading, isValidating } = useSWR(
         [page, date, hour, device, deviceAccess],
         async () => {
             if (
@@ -77,6 +81,7 @@ function MainPage() {
         },
         {
             revalidateOnFocus: false,
+            keepPreviousData: true,
             refreshInterval: date === today ? 3 * 60 * 1000 : 0,
         }
     );
@@ -184,9 +189,11 @@ function MainPage() {
                     {availableHours.map((h) => (
                         <Button
                             key={h}
-                            variant={hour === h ? 'contained' : 'outlined'}
+                            variant={activeHour === h ? 'contained' : 'outlined'}
                             onClick={() => {
-                                setHour(h === hour ? null : h);
+                                const next = h === activeHour ? null : h;
+                                setActiveHour(next);
+                                setHour(next);
                                 setPage(1);
                             }}
                         >
@@ -225,6 +232,9 @@ function MainPage() {
                             pr: 1,
                             justifyContent: 'flex-start',
                             alignItems: 'flex-start',
+                            opacity: isValidating && !isLoading ? 0.4 : 1,
+                            transition: 'opacity 0.2s ease',
+                            pointerEvents: isValidating && !isLoading ? 'none' : 'auto',
                         }}
                     >
                         {isLoading &&

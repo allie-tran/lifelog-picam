@@ -14,7 +14,7 @@ import Register from 'pages/Register';
 import SearchPage from 'pages/SearchPage';
 import SimilarImages from 'pages/SimilarImagesPage';
 import { CookiesProvider } from 'react-cookie';
-import { BrowserRouter, Route, Routes } from 'react-router';
+import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
 import './App.css';
 import PasswordLock from './components/PasswordLock';
 
@@ -29,6 +29,11 @@ import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
 import { store } from 'reducers/store';
 var localizedFormat = require('dayjs/plugin/localizedFormat');
+
+function AnimatedRoutes({ children }: { children: React.ReactNode }) {
+    const { pathname } = useLocation();
+    return <div key={pathname} className="page-transition">{children}</div>;
+}
 
 const activityTrackerTheme = createTheme({
     palette: {
@@ -175,6 +180,7 @@ const App = () => {
                                 sx={{ marginTop: '0px', marginBottom: '40px' }}
                             >
                                 <BrowserRouter basename={'/selfhealth/'}>
+                                    <AnimatedRoutes>
                                     <Routes>
                                         <Route
                                             path="/"
@@ -233,6 +239,7 @@ const App = () => {
                                             </PasswordLock>
                                         />
                                     </Routes>
+                                    </AnimatedRoutes>
                                 </BrowserRouter>
                             </Container>
                         </LocalizationProvider>

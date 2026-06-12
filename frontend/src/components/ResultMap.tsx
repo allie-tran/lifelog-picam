@@ -1,6 +1,6 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import { LocationSummaryItem } from 'apis/browsing';
 import { Box, Button, Stack, Typography } from '@mui/material';
@@ -72,14 +72,21 @@ const createMoveIcon = (name: string, count: number) => {
 
 const FitBounds = ({ locations }: { locations: LocWithCoords[] }) => {
     const map = useMap();
+    const hasFit = useRef(false);
     useEffect(() => {
         if (!locations.length) return;
-        if (locations.length === 1) {
-            map.setView([locations[0].latitude, locations[0].longitude], 14);
-            return;
+        if (!hasFit.current) {
+            hasFit.current = true;
+            if (locations.length === 1) {
+                map.setView([locations[0].latitude, locations[0].longitude], 14);
+            } else {
+                const bounds = L.latLngBounds(locations.map((l) => [l.latitude, l.longitude]));
+                map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+            }
+        } else {
+            const bounds = L.latLngBounds(locations.map((l) => [l.latitude, l.longitude]));
+            map.flyToBounds(bounds, { padding: [40, 40], maxZoom: 15, duration: 0.5 });
         }
-        const bounds = L.latLngBounds(locations.map((l) => [l.latitude, l.longitude]));
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
     }, [map, locations]);
     return null;
 };

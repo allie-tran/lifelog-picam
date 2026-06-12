@@ -942,7 +942,7 @@ def location_update_all_devices():
             .outerjoin(ImageGPS, ImageGPS.image_id == Image.id)
             .join(raw_gps_dates, sa.and_(
                 raw_gps_dates.c.dev_str == Image.device,
-                raw_gps_dates.c.gps_date == Image.date,
+                sa.cast(raw_gps_dates.c.gps_date, sa.Text) == Image.date,
             ))
             .where(
                 Image.location_id.is_(None),
