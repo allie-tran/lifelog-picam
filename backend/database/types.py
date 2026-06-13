@@ -23,7 +23,7 @@ from collections import Counter
 from sqlalchemy.orm import Session
 from mongodb_odm import Document
 
-from app_types import DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
+from schemas import DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
 from database.models import Image, ImageGPS, Location
 
 logger = logging.getLogger(__name__)

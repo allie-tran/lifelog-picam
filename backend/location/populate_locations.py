@@ -46,7 +46,8 @@ load_dotenv()
 PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/lsc24")
 engine = create_engine(PG_URI)
 
-COUNTRY_BOUNDING_BOXES = json.load(open("country-bounding-boxes.json"))
+with open("country-bounding-boxes.json") as _f:
+    COUNTRY_BOUNDING_BOXES = json.load(_f)
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 from tqdm.auto import tqdm

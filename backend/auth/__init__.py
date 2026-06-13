@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
@@ -19,9 +19,9 @@ from auth.auth_models import (
 )
 from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
 from database.models import Device, SensorDevice
-from dependencies import CamelCaseModel
+from core.dependencies import CamelCaseModel
 
-auth_app = FastAPI()
+router = APIRouter()
 
 def _require_owner(access_level: AccessLevel):
     if access_level not in (AccessLevel.OWNER, AccessLevel.ADMIN):
@@ -35,16 +35,16 @@ def _require_any_access(access_level: AccessLevel):
 
 def _require_admin(access_level: AccessLevel):
     if access_level != AccessLevel.ADMIN:
-        raise HTTPException(status_code=403, detail="fNot authorized. Admin access required.")
+        raise HTTPException(status_code=403, detail="Not authorized. Admin access required.")
 
-@auth_app.get("/health")
+@router.get("/health")
 def health_check():
     return {"status": "ok"}
 
 # -----------------------------------------------------------------------
 # USERS
 # -----------------------------------------------------------------------
-@auth_app.post(
+@router.post(
     "/register",
     response_model=UserResponse,
     dependencies=[Depends(RateLimiter(limiter=Limiter(Rate(3, 5 * Duration.MINUTE))))],
@@ -64,14 +64,14 @@ def register(request: CreateUserRequest, session: Annotated[session.Session, Dep
             f.write(f" - failed: {str(e)}\n")
             raise e
 
-@auth_app.post("/login", response_model=LoginResponse)
+@router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
     """
     Endpoint to verify user credentials and return an access token
     """
     return verify_user(request)
 
-@auth_app.get("/verify", response_model=dict)
+@router.get("/verify", response_model=dict)
 def verify(token: str):
     """
     Endpoint to verify the token and return the user
@@ -87,7 +87,7 @@ def verify(token: str):
 # -----------------------------------------------------------------------
 # ADMIN
 # -----------------------------------------------------------------------
-@auth_app.get("/users", response_model=list[UserResponse], dependencies=[Depends(auth_dependency)])
+@router.get("/users", response_model=list[UserResponse], dependencies=[Depends(auth_dependency)])
 def get_users(user: Annotated[User, Depends(get_user)]):
     """
     Endpoint to get all users
@@ -97,7 +97,7 @@ def get_users(user: Annotated[User, Depends(get_user)]):
     users = list(User.find({}))
     return [UserResponse.model_validate(u.model_dump()) for u in users]
 
-@auth_app.post("/change-access", dependencies=[Depends(get_user)])
+@router.post("/change-access", dependencies=[Depends(get_user)])
 def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User, Depends(get_user)]):
     """
     Endpoint to change user access levels for devices
@@ -135,7 +135,7 @@ class SensorDeviceRequest(CamelCaseModel):
     secret: str | None = None
     associated_username: str
 
-@auth_app.put("/add-sensor", dependencies=[Depends(get_user)])
+@router.put("/add-sensor", dependencies=[Depends(get_user)])
 def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_user)], session: session.Session = Depends(get_session)):
     """
     Endpoint to add a new device to a user
@@ -180,7 +180,7 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
     return {"success": True, "message": f"Device {device_id} added/updated and access granted to user {associated_username}"}
 
 
-@auth_app.delete("/remove-access", dependencies=[Depends(get_user)])
+@router.delete("/remove-access", dependencies=[Depends(get_user)])
 def remove_device_access(
     username: str = Query(...),
     device_id: str = Query(...),
@@ -201,7 +201,7 @@ def remove_device_access(
     return {"success": True}
 
 
-@auth_app.delete("/remove-sensor", dependencies=[Depends(get_user)])
+@router.delete("/remove-sensor", dependencies=[Depends(get_user)])
 def remove_sensor_access(
     username: str = Query(...),
     device_id: str = Query(...),

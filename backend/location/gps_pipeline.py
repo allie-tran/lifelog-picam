@@ -13,7 +13,7 @@ from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
 
-from scripts.segmentation import load_all_segments
+from services.segmentation import load_all_segments
 
 logger = logging.getLogger(__name__)
 

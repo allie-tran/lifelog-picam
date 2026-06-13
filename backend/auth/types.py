@@ -1,6 +1,6 @@
 from pydantic import field_validator
-from app_types import CustomTarget
-from dependencies import CamelCaseModel
+from schemas import CustomTarget
+from core.dependencies import CamelCaseModel
 from mongodb_odm import Document
 from datetime import datetime
 try:

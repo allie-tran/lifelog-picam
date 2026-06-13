@@ -1,7 +1,7 @@
 import os
 
 from sqlalchemy import delete, select, update, insert
-from constants import DIR, THUMBNAIL_DIR, BACKUP_DIR
+from core.config import DIR, THUMBNAIL_DIR, BACKUP_DIR
 from database.models import Image
 from datetime import datetime, timezone
 

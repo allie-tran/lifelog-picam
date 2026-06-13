@@ -1,6 +1,6 @@
 from typing import Literal
 from mongodb_odm import Document
-from dependencies import CamelCaseModel
+from core.dependencies import CamelCaseModel
 
 class VideoSettings(CamelCaseModel):
     fps: int = 30

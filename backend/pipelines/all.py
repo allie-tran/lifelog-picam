@@ -9,15 +9,15 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import select
 from auth.ortho import apply_transformation, get_matrix
 from auth.types import Person
-from constants import DIR
+from core.config import DIR
 from pipelines.delete import remove_physical_images
-from scripts.date_utils import parse_date
-from scripts.utils import make_video_thumbnail
+from services.date_utils import parse_date
+from services.utils import make_video_thumbnail
 from tasks import yolo_process_images_task
-from visual import clip_model, SIGLIP
+from integrations.visual import clip_model, SIGLIP
 from database.models import Base, Device, DeviceWhitelistEmbedding, DeviceWhitelistEntry, Image, ImageEmbedding, ImagePerson, PeopleCluster
 from sqlalchemy.exc import SQLAlchemyError
-from visual.siglip import SIGLIP
+from integrations.visual.siglip import SIGLIP
 import logging
 
 
