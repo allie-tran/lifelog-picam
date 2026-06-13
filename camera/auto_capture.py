@@ -13,10 +13,11 @@ cam = Camera()
 # orginally 4056 x 3040
 # Capture smaller than the 2028x1520 sensor mode: at 1 image/10s the upload
 # (not the optics) is the bottleneck on the Pi Zero 2W, so fewer pixels means
-# faster encrypt/encode/upload and less SD/server storage. 1456x1088 keeps
+# faster encrypt/encode/upload and less SD/server storage. 1280x960 keeps
 # enough detail for face/object detection; CLIP/LLM downscale further anyway.
-CAPTURE_SIZE = (1456, 1088)
-JPEG_QUALITY = 80  # cv2 default is 95; 80 ~halves file size with little visible loss
+CAPTURE_SIZE = (1280, 960)
+JPEG_QUALITY = 70  # cv2 default is 95; lower tames noisy/low-light scenes that
+                   # otherwise blow JPEG size up to ~1MB
 cam.still_size = CAPTURE_SIZE
 
 def check_if_camera_connected():
