@@ -9,6 +9,7 @@ export type SegmentSelection = number | number[] | 'unsegmented';
 interface DayNavBarProps {
     navSegments: NavSegment[] | undefined;
     selectedSegmentId: SegmentSelection | null;
+    viewingSegmentId?: number | null;
     onSelectSegment: (id: SegmentSelection) => void;
     hasRecent?: boolean;
 }
@@ -59,6 +60,9 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
 
 const MOVE_BG = '#9575cd20';
 
+const segColor = (seg: NavSegment) =>
+    THEME_COLORS[seg.activityGroup] || CATEGORIES[seg.activity] || '#e0e0e0';
+
 // Match map pill color scale (count estimated from duration at 10s/image)
 function stopColour(totalSeconds: number): string {
     const count = totalSeconds / 10;
@@ -67,7 +71,7 @@ function stopColour(totalSeconds: number): string {
     return '#90caf9';                      // blue  — matches map small
 }
 
-export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegment, hasRecent = false }: DayNavBarProps) {
+export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegmentId = null, onSelectSegment, hasRecent = false }: DayNavBarProps) {
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
 
     const segments: NavSegment[] = navSegments ?? [];
@@ -94,12 +98,11 @@ export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegm
                     // Relative widths of segments within this run (normalize to fill the cell)
                     const runTotalMs = run.segments.reduce((sum, seg) =>
                         sum + (dayjs(seg.endTime).valueOf() - dayjs(seg.startTime).valueOf()), 0) || 1;
-
                     return (
                         <Box
                             key={ri}
                             sx={{
-                                flexBasis: 24,
+                                flexBasis: 16,
                                 flexGrow: w,
                                 flexShrink: 0,
                                 display: 'flex',
@@ -121,14 +124,9 @@ export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegm
                             >
                                 <Box
                                     onClick={() => {
-                                        let count = 0;
-                                        const ids: number[] = [];
-                                        for (const seg of run.segments) {
-                                            if (seg.segmentId == null) continue;
-                                            ids.push(seg.segmentId);
-                                            count += Math.ceil(seg.duration / 10);
-                                            if (count >= 100) break;
-                                        }
+                                        const ids = run.segments
+                                            .map((s) => s.segmentId)
+                                            .filter((id): id is number => id != null);
                                         setActiveRunIdx((x) => x === ri ? null : ri);
                                         if (ids.length) onSelectSegment(ids.length === 1 ? ids[0] : ids);
                                     }}
@@ -155,38 +153,43 @@ export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegm
                                 </Box>
                             </Tooltip>
 
-                            {/* Activity cells — fill this run's width */}
+                            {/* Activity cells — one per segment */}
                             <Box sx={{ display: 'flex', height: 36, border: '1px solid #fff', borderRadius: '4px', overflow: 'hidden' }}>
                                 {run.segments.map((seg, si) => {
                                     const segMs = dayjs(seg.endTime).valueOf() - dayjs(seg.startTime).valueOf();
                                     const segRelW = (segMs / runTotalMs) * 100;
                                     const isLastSeg = si === run.segments.length - 1;
-                                    const color =
-                                        THEME_COLORS[seg.activityGroup] ||
-                                        CATEGORIES[seg.activity] ||
-                                        '#e0e0e0';
+                                    const background = segColor(seg);
+                                    const clickable = seg.segmentId != null;
                                     const isSelected = Array.isArray(selectedSegmentId)
                                         ? seg.segmentId != null && selectedSegmentId.includes(seg.segmentId)
                                         : selectedSegmentId === seg.segmentId;
+                                    const isViewing =
+                                        viewingSegmentId != null && seg.segmentId === viewingSegmentId;
+                                    const range = `${dayjs(seg.startTime).format('HH:mm')}–${dayjs(seg.endTime).format('HH:mm')}`;
+                                    const title = `${seg.activity} · ${range}`;
                                     return (
-                                        <Tooltip
-                                            key={seg.segmentId ?? si}
-                                            title={`${seg.activity} · ${dayjs(seg.startTime).format('HH:mm')}–${dayjs(seg.endTime).format('HH:mm')}`}
-                                            followCursor
-                                        >
+                                        <Tooltip key={seg.segmentId ?? si} title={title} followCursor>
                                             <Box
-                                                onClick={() => seg.segmentId != null && onSelectSegment(seg.segmentId)}
+                                                onClick={() => {
+                                                    if (seg.segmentId != null) onSelectSegment(seg.segmentId);
+                                                }}
                                                 sx={{
                                                     flexBasis: `${segRelW}%`,
                                                     flexGrow: isLastSeg ? 1 : 0,
                                                     flexShrink: 1,
                                                     minWidth: 0,
                                                     height: '100%',
-                                                    bgcolor: color,
-                                                    cursor: seg.segmentId != null ? 'pointer' : 'default',
-                                                    boxShadow: isSelected ? 'inset 0 0 0 2px rgba(0,0,0,0.4)' : 'none',
+                                                    background,
+                                                    cursor: clickable ? 'pointer' : 'default',
+                                                    boxShadow: isViewing
+                                                        ? 'inset 0 0 0 3px #1565c0'
+                                                        : isSelected
+                                                          ? 'inset 0 0 0 2px rgba(0,0,0,0.4)'
+                                                          : 'none',
+                                                    zIndex: isViewing ? 1 : 0,
                                                     transition: 'box-shadow 0.1s',
-                                                    '&:hover': seg.segmentId != null ? { filter: 'brightness(0.88)' } : {},
+                                                    '&:hover': clickable ? { filter: 'brightness(0.88)' } : {},
                                                     borderLeft: si > 0 ? '1px solid #fff' : 'none',
                                                 }}
                                             />

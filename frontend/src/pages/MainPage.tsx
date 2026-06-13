@@ -63,6 +63,26 @@ function MainPage() {
         [setSearchParams]
     );
 
+    // Scrollspy: segment currently at the top of the image list, mirrored on
+    // the timeline so you always know where you are. Thumbnails lazy-load, so
+    // rendering a whole location at once stays cheap.
+    const [viewingSegmentId, setViewingSegmentId] = React.useState<
+        number | null
+    >(null);
+    const listRef = React.useRef<HTMLDivElement | null>(null);
+
+    // Forward paging: a single pick renders that segment then loads later ones
+    // as you scroll; a location (array) pages through its own segments.
+    const SEGMENT_PAGE = 4;
+    const [visibleCount, setVisibleCount] = React.useState(SEGMENT_PAGE);
+    const selectionKey = Array.isArray(selectedSegmentId)
+        ? selectedSegmentId.join(',')
+        : String(selectedSegmentId);
+    useEffect(() => {
+        setVisibleCount(Array.isArray(selectedSegmentId) ? SEGMENT_PAGE : 1);
+        listRef.current?.scrollTo({ top: 0 });
+    }, [selectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const { deviceAccess } = useAppSelector((state) => state.auth);
     const dispatch = useAppDispatch();
 
@@ -97,18 +117,6 @@ function MainPage() {
         }
     );
 
-    // Auto-select first segment when nav data loads and nothing is selected
-    useEffect(() => {
-        if (selectedSegmentId !== null) return;
-        if (!navSegments?.length) return;
-        // today → most recent first (last in array); past → earliest (first)
-        const pick =
-            date === today
-                ? navSegments[navSegments.length - 1]
-                : navSegments[0];
-        if (pick?.segmentId != null) setSegment(pick.segmentId);
-    }, [navSegments]); // eslint-disable-line react-hooks/exhaustive-deps
-
     // Keep only device + date when navigating to a new date/device
     useEffect(() => {
         setSearchParams(
@@ -124,36 +132,61 @@ function MainPage() {
         );
     }, [date, device]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Segment images — fetched on demand; arrays = parallel fetch + merge
+    // Chronological segment ids for the day, to page forward from any pick.
+    const orderedIds = React.useMemo(
+        () =>
+            (navSegments ?? [])
+                .map((s) => s.segmentId)
+                .filter((id): id is number => id != null),
+        [navSegments]
+    );
+
+    // Resolve selection into the ordered ids to page through. Both a single
+    // segment and a location/mixed cell (array) page forward from their first
+    // segment through the rest of the day, so scrolling always continues.
+    const playlistIds = React.useMemo<number[]>(() => {
+        const first = Array.isArray(selectedSegmentId)
+            ? selectedSegmentId[0]
+            : typeof selectedSegmentId === 'number'
+              ? selectedSegmentId
+              : null;
+        if (first == null) return [];
+        const i = orderedIds.indexOf(first);
+        return i >= 0
+            ? orderedIds.slice(i)
+            : Array.isArray(selectedSegmentId)
+              ? selectedSegmentId
+              : [first];
+    }, [selectedSegmentId, orderedIds]);
+
+    const pageIds = playlistIds.slice(0, visibleCount);
+    const hasMoreSegments = visibleCount < playlistIds.length;
+
+    // Segment images — paged through playlistIds; thumbnails lazy-load so each
+    // page stays light. 'unsegmented' (Recent) is a single fetch.
     const { data, mutate, isLoading, isValidating } = useSWR(
         selectedSegmentId !== null && date && device && isAuthorised
             ? [
                   'segment',
                   device,
                   date,
-                  Array.isArray(selectedSegmentId)
-                      ? selectedSegmentId.join(',')
-                      : selectedSegmentId,
+                  selectedSegmentId === 'unsegmented'
+                      ? 'unsegmented'
+                      : pageIds.join(','),
               ]
             : null,
         async () => {
             const d = date || '';
-            if (Array.isArray(selectedSegmentId)) {
-                const results = await Promise.all(
-                    selectedSegmentId.map((id) =>
-                        getImagesBySegment(device, d, id)
-                    )
-                );
-                return {
-                    segments: results.flatMap((r) => r.segments),
-                    gps: results.flatMap((r) => r.gps),
-                };
+            if (selectedSegmentId === 'unsegmented') {
+                return getImagesBySegment(device, d, 'unsegmented');
             }
-            return getImagesBySegment(
-                device,
-                d,
-                selectedSegmentId as number | 'unsegmented'
+            const results = await Promise.all(
+                pageIds.map((id) => getImagesBySegment(device, d, id))
             );
+            return {
+                segments: results.flatMap((r) => r.segments),
+                gps: results.flatMap((r) => r.gps),
+            };
         },
         {
             revalidateOnFocus: false,
@@ -205,26 +238,39 @@ function MainPage() {
     );
     const isToday = date === today;
 
-    // For today, show most recent first: newest image at the top of each event,
-    // and newest event before older ones. Past days keep chronological order.
-    const orderForView = React.useCallback(
+    // The main list is always chronological for consistency. Only the "Recent"
+    // block shows newest-first (newest image atop each event, newest event first).
+    const newestFirst = React.useCallback(
         (segs: ResultSegment[]): ResultSegment[] => {
-            if (!isToday) return segs;
-            const newestFirst = (a: ImageObject, b: ImageObject) =>
+            const byNewest = (a: ImageObject, b: ImageObject) =>
                 dayjs(b.timestamp).valueOf() - dayjs(a.timestamp).valueOf();
             return segs
-                .map((s) => ({ ...s, images: [...s.images].sort(newestFirst) }))
+                .map((s) => ({ ...s, images: [...s.images].sort(byNewest) }))
                 .sort((a, b) => {
                     const at = a.images[0]?.timestamp;
                     const bt = b.images[0]?.timestamp;
                     return dayjs(bt).valueOf() - dayjs(at).valueOf();
                 });
         },
-        [isToday]
+        []
     );
 
-    const recentSegments = orderForView(recentData?.segments ?? []);
+    const recentSegments = newestFirst(recentData?.segments ?? []);
     const hasRecent = isToday && recentSegments.length > 0;
+
+    // Auto-select when nothing is chosen: prefer Recent (unsegmented), else the
+    // newest segment. On today, wait for the recent fetch before deciding.
+    useEffect(() => {
+        if (selectedSegmentId !== null) return;
+        if (!navSegments?.length) return;
+        if (isToday && recentData === undefined) return;
+        if (hasRecent) {
+            setSegment('unsegmented');
+            return;
+        }
+        const newest = navSegments[navSegments.length - 1];
+        if (newest?.segmentId != null) setSegment(newest.segmentId);
+    }, [navSegments, recentData]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // "Recent" (unsegmented, newest-of-all) belongs with the most recent
     // location. Show it as a block on top only when that last segment is
@@ -241,7 +287,10 @@ function MainPage() {
             : selectedSegmentId === lastNavSegmentId);
 
     const imageGps: GPSData[] = gpsData?.imageGps ?? [];
-    const segments = orderForView(data?.segments || []);
+    const segments = data?.segments || [];
+    // Stable signature of the rendered segment set, to re-arm the scrollspy
+    // only when the segments actually change (not on every render).
+    const segmentsKey = segments.map((s) => s.segmentId).join(',');
 
     const activeSegmentIds = React.useMemo(() => {
         if (typeof selectedSegmentId === 'number')
@@ -249,6 +298,56 @@ function MainPage() {
         if (Array.isArray(selectedSegmentId)) return new Set(selectedSegmentId);
         return undefined;
     }, [selectedSegmentId]);
+
+    // Scrollspy — track the segment nearest the top of the list and surface it
+    // on the timeline. Re-arms whenever the rendered segment set changes.
+    useEffect(() => {
+        const root = listRef.current;
+        if (!root) return;
+        const els = Array.from(
+            root.querySelectorAll<HTMLElement>('[data-seg-id]')
+        );
+        if (!els.length) return;
+        const tops = new Map<Element, number>();
+        const obs = new IntersectionObserver(
+            (entries) => {
+                for (const e of entries) {
+                    if (e.isIntersecting)
+                        tops.set(e.target, e.boundingClientRect.top);
+                    else tops.delete(e.target);
+                }
+                const visible = Array.from(tops.entries());
+                if (!visible.length) return;
+                const [topEl] = visible.reduce((a, b) =>
+                    b[1] < a[1] ? b : a
+                );
+                const id = Number((topEl as HTMLElement).dataset.segId);
+                if (!Number.isNaN(id)) setViewingSegmentId(id);
+            },
+            { root, threshold: 0 }
+        );
+        els.forEach((el) => obs.observe(el));
+        return () => obs.disconnect();
+    }, [segmentsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Infinite scroll — load the next page of segments as the sentinel nears
+    // the bottom of the list.
+    const loadMoreRef = React.useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (!hasMoreSegments || isValidating) return;
+        const root = listRef.current;
+        const el = loadMoreRef.current;
+        if (!root || !el) return;
+        const obs = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting)
+                    setVisibleCount((c) => c + SEGMENT_PAGE);
+            },
+            { root, rootMargin: '400px' }
+        );
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, [hasMoreSegments, isValidating, segmentsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const deleteRow = async (imagePaths: string[]) => {
         dispatch(setLoading(true));
@@ -316,6 +415,7 @@ function MainPage() {
                     <DayNavBar
                         navSegments={navSegments}
                         selectedSegmentId={selectedSegmentId}
+                        viewingSegmentId={viewingSegmentId}
                         onSelectSegment={setSegment}
                         hasRecent={hasRecent}
                     />
@@ -341,6 +441,7 @@ function MainPage() {
                         dayStops={dayStops}
                     />
                     <Stack
+                        ref={listRef}
                         sx={{
                             width: 'calc(100% - 400px)',
                             height: '100%',
@@ -398,21 +499,31 @@ function MainPage() {
                         {segments.map((segment, index) => {
                             if (segment.images.length === 0) return null;
                             return (
-                                <LifelogEvent
+                                <Box
                                     key={index}
-                                    segment={segment.images}
-                                    location={segment.location}
-                                    gpsList={segment.gps}
-                                    onChange={() => {
-                                        dispatch(setLoading(true));
-                                        mutate().then(() =>
-                                            dispatch(setLoading(false))
-                                        );
-                                    }}
-                                    deleteRow={deleteRow}
-                                />
+                                    data-seg-id={segment.segmentId}
+                                    sx={{ width: '100%' }}
+                                >
+                                    <LifelogEvent
+                                        segment={segment.images}
+                                        location={segment.location}
+                                        gpsList={segment.gps}
+                                        onChange={() => {
+                                            dispatch(setLoading(true));
+                                            mutate().then(() =>
+                                                dispatch(setLoading(false))
+                                            );
+                                        }}
+                                        deleteRow={deleteRow}
+                                    />
+                                </Box>
                             );
                         })}
+                        {hasMoreSegments && (
+                            <Box ref={loadMoreRef} sx={{ width: '100%' }}>
+                                <LifelogEventSkeleton />
+                            </Box>
+                        )}
                     </Stack>
                 </Stack>
             </Stack>

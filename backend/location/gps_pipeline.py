@@ -18,14 +18,19 @@ from services.segmentation import load_all_segments
 logger = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-# DBSCAN params (haversine expects radians)
-EPS = 0.05 / 6371          # ~50 metres
-MIN_PTS = 5
-
 GAP_SECONDS = 5 * 60       # 5-minute gap → new track
 SPEED_THRESHOLD = 50       # m/s outlier cutoff
-STOP_RUN_LENGTH = 10       # consecutive same-cluster points to call "stop"
-SMOOTH_WINDOW = 5          # rolling-mode window for stop/move label
+
+# Stay-point detection (Li et al. 2008) — replaces per-track DBSCAN.
+# A stop = a run of consecutive points all within STAY_DIST of the run's anchor,
+# lasting at least STAY_TIME seconds. Bounds each stop's diameter to ~2*STAY_DIST,
+# so slow walks across a large venue (campus/airport) no longer chain into one
+# giant cluster the way DBSCAN's transitive linking did.
+STAY_DIST = 50             # metres — max distance from anchor to remain in a stop
+STAY_TIME = 120            # seconds — min dwell to count as a stop
+
+# Cross-track merge: glue nearby stop centroids into one place_id (haversine radians)
+MERGE_EPS = 0.15 / 6371    # ~150 m
 
 # ─── Step 1: Load all points for a device/date into a single DataFrame ─────────
 
@@ -115,65 +120,69 @@ def filter_speed_outliers(df: pd.DataFrame, threshold_ms: float = SPEED_THRESHOL
     return result
 
 
-# ─── Step 4: DBSCAN clustering + stop/move labelling ─────────────────────────
+# ─── Step 4: Stay-point detection + stop/move labelling ───────────────────────
 
-def run_dbscan(coords_rad: np.ndarray) -> np.ndarray:
-    clustering = DBSCAN(
-        eps=EPS,
-        min_samples=MIN_PTS,
-        algorithm="ball_tree",
-        metric="haversine",
-    )
-    return clustering.fit_predict(coords_rad)
-
-
-def label_stop_move(cluster_labels: np.ndarray, run_length: int = STOP_RUN_LENGTH) -> np.ndarray:
+def detect_stay_points(
+    grp: pd.DataFrame,
+    dist_thresh: float = STAY_DIST,
+    time_thresh: float = STAY_TIME,
+) -> np.ndarray:
     """
-    If at least run_length consecutive points share the same non-noise cluster,
-    mark them 'stop'; everything else is 'move'.
-    """
-    n = len(cluster_labels)
-    labels = np.array([0] * n, dtype=object)
+    Li et al. (2008) stay-point detection over a single time-ordered track.
 
+    Returns an int array (one per point): -1 = move, and 0,1,2,… for each
+    distinct stay within the track.
+
+    A stay is a maximal run of consecutive points all within ``dist_thresh``
+    metres of the run's *anchor* (its first point), spanning at least
+    ``time_thresh`` seconds. Measuring every point against the fixed anchor
+    bounds a stop's diameter to ~2*dist_thresh — unlike DBSCAN, whose
+    transitive linking let a slow walk chain an entire building into one
+    cluster.
+    """
+    n = len(grp)
+    cluster = np.full(n, -1, dtype=int)
+    lat = grp["latitude"].values
+    lon = grp["longitude"].values
+    ts = grp["timestamp"].values  # numpy datetime64[ns]
+
+    stay_id = 0
     i = 0
     while i < n:
-        cl = cluster_labels[i]
-        if cl == -1:           # noise → always move
-            i += 1
-            continue
-        j = i
-        while j < n and cluster_labels[j] == cl:
+        # Extend the window while points stay within dist_thresh of anchor i.
+        j = i + 1
+        while j < n:
+            d = haversine_distance(lat[i], lon[i], lat[j], lon[j], 0, 0)
+            if d > dist_thresh:
+                break
             j += 1
-        run = j - i
-        if run >= run_length:
-            labels[i:j] = 1
-        i = j
 
-    return labels
+        # Points i..j-1 are all within dist_thresh of the anchor.
+        dwell = (ts[j - 1] - ts[i]) / np.timedelta64(1, "s")
+        if dwell >= time_thresh:
+            cluster[i:j] = stay_id
+            stay_id += 1
+            i = j               # resume scanning from the first point that left
+        else:
+            i += 1              # too brief — anchor moves on by one point
 
-
-def smooth_labels(labels: np.ndarray, window: int = SMOOTH_WINDOW):
-    """Rolling majority-vote smoothing."""
-    s = pd.Series(labels)
-    smoothed = s.rolling(window, center=True, min_periods=1).apply(
-        lambda x: 1 if (x.sum() > len(x) / 2) else 0
-    )
-    return smoothed.astype(int).values
+    return cluster
 
 
 def annotate_track(grp: pd.DataFrame) -> pd.DataFrame:
     grp = grp.sort_values("timestamp").copy().reset_index(drop=True)
-    if len(grp) < MIN_PTS:
+    grp["elevation"] = grp["elevation"].fillna(0.0)  # Handle missing elevation
+    if len(grp) < 2:
         grp["cluster"] = -1
         grp["label"] = 0
         grp["label_smooth"] = 0
         return grp
 
-    coords_rad = np.radians(grp[["latitude", "longitude"]].values)
-    grp["elevation"] = grp["elevation"].fillna(0.0)  # Handle missing elevation
-    grp["cluster"] = run_dbscan(coords_rad)
-    grp["label"] = label_stop_move(grp["cluster"].values)
-    grp["label_smooth"] = smooth_labels(grp["label"].values)
+    grp["cluster"] = detect_stay_points(grp)
+    grp["label"] = (grp["cluster"] >= 0).astype(int)
+    # Stay-point runs are already contiguous and non-overlapping, so no
+    # rolling-mode smoothing is needed (it would only blur stop boundaries).
+    grp["label_smooth"] = grp["label"]
     return grp
 
 
@@ -229,7 +238,6 @@ def assign_stop_and_place_ids(df: pd.DataFrame) -> pd.DataFrame:
         df["place_id"] = None
         return df
 
-    MERGE_EPS = 0.1 / 6371   # ~100 m merge radius — adjust to taste
     coords_rad = np.radians(centroids[["lat", "lon"]].values)
     merge_labels = run_dbscan_custom(coords_rad, eps=MERGE_EPS, min_samples=1)
 
@@ -323,7 +331,17 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
         seg_start = 0
 
         for i in range(1, len(grp) + 1):
-            if i == len(grp) or grp.loc[i, "label_smooth"] != grp.loc[seg_start, "label_smooth"]:
+            boundary = (
+                i == len(grp)
+                or grp.loc[i, "label_smooth"] != grp.loc[seg_start, "label_smooth"]
+            )
+            # Within a stop run, also break when place_id changes so two
+            # back-to-back stays (no move point between them) don't collapse
+            # into one segment with a blended centroid. Only checked for stops,
+            # where place_id is always a valid string — avoids NaN!=NaN on moves.
+            if not boundary and grp.loc[seg_start, "label_smooth"] == 1:
+                boundary = grp.loc[i, "place_id"] != grp.loc[seg_start, "place_id"]
+            if boundary:
                 seg = grp.iloc[seg_start:i]
                 entry = {
                     "track_id":     track_id,
@@ -342,6 +360,7 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                     "end_lon":      seg["longitude"].iloc[-1],
                     "end_alt":      seg["elevation"].iloc[-1],
                     "n_points":     len(seg),
+                    "place_id":     seg["place_id"].iloc[0] if "place_id" in seg else None,
                     "interpolated": seg["interpolated"].mode()[0] if "interpolated" in seg else None,
                 }
                 segments.append(entry)

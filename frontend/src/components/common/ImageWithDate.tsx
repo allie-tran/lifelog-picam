@@ -139,6 +139,7 @@ const ImageWithDate = ({
                     onClick={onClick}
                     src={imageUrl}
                     alt={formattedDate}
+                    loading="lazy"
                 />
             ) : (
                 <Box
