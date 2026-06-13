@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate, useSearchParams } from 'react-router';
-import { verifyTokenRequest } from '../apis/auth';
+import { verifyTokenRequest } from 'apis/auth';
 import {
     AppBar,
     Box,
@@ -20,7 +20,7 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { login, logout } from 'reducers/auth';
 import axios from 'axios';
 import { useSWRConfig } from 'swr';
-import DeletedImages from './DeletedImages';
+import DeletedImages from 'components/browse/DeletedImages';
 import {
     AdminPanelSettingsRounded,
     CheckCircleOutlineRounded,
@@ -32,9 +32,9 @@ import {
     SearchRounded,
     UploadRounded,
 } from '@mui/icons-material';
-import DeviceSelect from '../pages/DeviceSelect';
-import DRESSettings from './DRESSettings';
-import NotificationsPanel from './NotificationsPanel';
+import DeviceSelect from 'pages/DeviceSelect';
+import DRESSettings from 'components/meta/DRESSettings';
+import NotificationsPanel from 'components/notifications/NotificationsPanel';
 
 const DRESWidget = () => {
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);

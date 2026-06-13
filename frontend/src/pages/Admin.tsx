@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import { addSensorToUser, changeUserAccess, getUsers, removeDeviceAccess, removeSensorAccess } from 'apis/auth';
 import { getAllDeviceSettings, setRecognitionMode } from 'apis/browsing';
-import ModalWithCloseButton from 'components/ModalWithCloseButton';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import React from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate } from 'react-router';

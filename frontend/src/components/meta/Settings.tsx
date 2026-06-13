@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSettingsRequest, toogleModeRequest } from '../apis/controls';
+import { getSettingsRequest, toogleModeRequest } from 'apis/controls';
 import useSWR from 'swr';
 import { Stack, Switch, Typography } from '@mui/material';
 import { PhotoOutlined, VideocamOutlined } from '@mui/icons-material';

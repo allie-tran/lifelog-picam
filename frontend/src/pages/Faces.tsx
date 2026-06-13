@@ -23,13 +23,13 @@ import {
     removeFromWhiteList,
     setRecognitionMode,
 } from 'apis/browsing';
-import FaceClusters from 'components/FaceClusters';
-import FaceEnroll from 'components/FaceEnroll';
-import ModalWithCloseButton from 'components/ModalWithCloseButton';
+import FaceClusters from 'components/faces/FaceClusters';
+import FaceEnroll from 'components/faces/FaceEnroll';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
-import ImageWithDate from 'components/ImageWithDate';
+import ImageWithDate from 'components/common/ImageWithDate';
 import { useAppDispatch } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 

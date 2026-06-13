@@ -31,8 +31,8 @@ import {
     timeOfDayOptions,
 } from 'types/filters';
 import { ImageObject } from 'utils/types';
-import { THUMBNAIL_HOST_URL } from '../constants/urls';
-import TimeHeatmap from './TimeHeatmap';
+import { THUMBNAIL_HOST_URL } from 'constants/urls';
+import TimeHeatmap from 'components/temporal/TimeHeatmap';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);

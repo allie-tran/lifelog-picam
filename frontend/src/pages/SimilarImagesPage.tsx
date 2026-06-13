@@ -1,8 +1,8 @@
 import { Divider, LinearProgress, Stack, Typography } from '@mui/material';
 import { ImageObject } from '@utils/types';
 import { similarImages } from 'apis/browsing';
-import ImageWithDate from 'components/ImageWithDate';
-import { ImageZoom } from 'components/ImageZoom';
+import ImageWithDate from 'components/common/ImageWithDate';
+import { ImageZoom } from 'components/image/ImageZoom';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';

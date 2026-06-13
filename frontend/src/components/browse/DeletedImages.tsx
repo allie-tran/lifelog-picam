@@ -19,9 +19,9 @@ import {
     forceDeleteImages,
     getDeletedImages,
     restoreImage,
-} from '../apis/browsing';
-import ImageWithDate from './ImageWithDate';
-import ModalWithCloseButton from './ModalWithCloseButton';
+} from 'apis/browsing';
+import ImageWithDate from 'components/common/ImageWithDate';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 
 const IMAGES_PER_PAGE = 20;
 

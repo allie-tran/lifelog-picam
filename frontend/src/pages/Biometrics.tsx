@@ -1,7 +1,7 @@
 import { Container, Stack } from '@mui/material';
-import SensorHistory from 'components/Biometrics';
-import CustomDatePicker from 'components/CustomDatePicker';
-import DaySummaryComponent from 'components/DaySummary';
+import SensorHistory from 'components/meta/Biometrics';
+import CustomDatePicker from 'components/temporal/CustomDatePicker';
+import DaySummaryComponent from 'components/browse/DaySummary';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';

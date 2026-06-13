@@ -7,7 +7,7 @@ import {
     VideocamRounded,
 } from '@mui/icons-material';
 import { Box, Button, CircularProgress, Stack, Tooltip, Typography } from '@mui/material';
-import { THUMBNAIL_HOST_URL } from '../constants/urls';
+import { THUMBNAIL_HOST_URL } from 'constants/urls';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -19,9 +19,9 @@ import { addSubmittedImages } from 'reducers/dres';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useEffect, useState } from 'react';
 import { showNotification } from 'reducers/feedback';
-import Annotator from './Annotator';
-import ModalWithCloseButton from './ModalWithCloseButton';
-import LifelogEvent from './LifelogEvent';
+import Annotator from 'components/common/Annotator';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
+import LifelogEvent from 'components/browse/LifelogEvent';
 import { parseErrorResponse } from '@utils/misc';
 
 dayjs.extend(utc);

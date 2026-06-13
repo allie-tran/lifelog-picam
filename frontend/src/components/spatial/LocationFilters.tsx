@@ -25,7 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LocationData } from '@utils/types';
 import { useSearchParams } from 'react-router';
 import useSWR from 'swr';
-import MapSearch from './MapSearch';
+import MapSearch from 'components/spatial/MapSearch';
 import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
 import { LocationSummaryItem } from 'apis/browsing';
 // { countryCode: [countryName, [minLat, minLng, maxLat, maxLng]] }

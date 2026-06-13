@@ -16,10 +16,9 @@ import SimilarImages from 'pages/SimilarImagesPage';
 import { CookiesProvider } from 'react-cookie';
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
 import './App.css';
-import PasswordLock from './components/PasswordLock';
+import PasswordLock from 'components/common/PasswordLock';
 
-import FeedbackComponents from 'components/FeedbackComponents';
-import NotificationsPanel from 'components/NotificationsPanel';
+import FeedbackComponents from 'components/common/FeedbackComponents';
 import dayjs from 'dayjs';
 import Admin from 'pages/Admin';
 import Biometrics from 'pages/Biometrics';

@@ -10,12 +10,12 @@ import {
 import SyncIcon from '@mui/icons-material/Sync';
 import { GPSData } from '@utils/types';
 import { getGPSByDate, GpsTrackData } from 'apis/process';
-import CurrentStatus from 'components/CurrentStatus';
-import CustomDatePicker from 'components/CustomDatePicker';
-import DayNavBar, { SegmentSelection } from 'components/DayNavBar';
-import DeleteRange from 'components/DeleteRange';
-import GpsTrack from 'components/GpsTrack';
-import LifelogEvent, { LifelogEventSkeleton } from 'components/LifelogEvent';
+import CurrentStatus from 'components/meta/CurrentStatus';
+import CustomDatePicker from 'components/temporal/CustomDatePicker';
+import DayNavBar, { SegmentSelection } from 'components/browse/DayNavBar';
+import DeleteRange from 'components/browse/DeleteRange';
+import GpsTrack from 'components/spatial/GpsTrack';
+import LifelogEvent, { LifelogEventSkeleton } from 'components/browse/LifelogEvent';
 import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
@@ -33,7 +33,7 @@ import {
     getImagesBySegment,
     resyncDay,
 } from '../apis/browsing';
-import { ImageZoom } from '../components/ImageZoom';
+import { ImageZoom } from 'components/image/ImageZoom';
 
 function MainPage() {
     const [searchParams, setSearchParams] = useSearchParams();

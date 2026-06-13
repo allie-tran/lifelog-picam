@@ -14,14 +14,13 @@ import {
     Card,
     CardContent,
     Chip,
-    CircularProgress,
     Grid,
     Skeleton,
     Stack,
     Typography
 } from '@mui/material';
-import { ImageWithMetadata, ObjectDetection, PersonDetection } from '@utils/types';
-import { getAllFaces } from '../apis/searchFilters';
+import { ImageWithMetadata, ObjectDetection } from '@utils/types';
+import { getAllFaces } from 'apis/searchFilters';
 import dayjs from 'dayjs';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
@@ -36,10 +35,10 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
-import { deleteImage, getImage } from '../apis/browsing';
-import { IMAGE_HOST_URL } from '../constants/urls';
-import Annotator from './Annotator';
-import ModalWithCloseButton from './ModalWithCloseButton';
+import { deleteImage, getImage } from 'apis/browsing';
+import { IMAGE_HOST_URL } from 'constants/urls';
+import Annotator from 'components/common/Annotator';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);

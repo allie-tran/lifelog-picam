@@ -4,9 +4,9 @@ import { TimePicker } from '@mui/x-date-pickers';
 import { ImageObject } from '@utils/types';
 import dayjs, { Dayjs } from 'dayjs';
 import React from 'react';
-import ModalWithCloseButton from './ModalWithCloseButton';
+import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import { useSearchParams } from 'react-router';
-import ImageWithDate from './ImageWithDate';
+import ImageWithDate from 'components/common/ImageWithDate';
 import { DeleteRounded } from '@mui/icons-material';
 
 const DeleteRange = ({
