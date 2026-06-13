@@ -58,6 +58,28 @@ def get_thumbnail_path(image_path: str) -> tuple[str, bool]:
     return output_path, False
 
 
+# Small derivative shown in the browse grid. Cards are ~200px tall, so 480px
+# covers a 2x-DPR display; the full-size thumbnail is kept for zoom/annotate.
+GRID_THUMBNAIL_MAX = 480
+GRID_THUMBNAIL_QUALITY = 72
+
+
+def grid_thumbnail_path(thumbnail_path: str) -> str:
+    """Grid-thumbnail path for a full thumbnail: insert `_grid` before .webp."""
+    base, ext = os.path.splitext(thumbnail_path)
+    return f"{base}_grid{ext}"
+
+
+def make_grid_thumbnail(thumbnail_img: "Image.Image", thumbnail_path: str) -> str:
+    """Write the small grid derivative next to a full thumbnail and return its
+    path. `thumbnail_img` is the already-resized full thumbnail (PIL image)."""
+    grid_path = grid_thumbnail_path(thumbnail_path)
+    grid = thumbnail_img.copy()
+    grid.thumbnail((GRID_THUMBNAIL_MAX, GRID_THUMBNAIL_MAX))
+    grid.save(grid_path, "WEBP", quality=GRID_THUMBNAIL_QUALITY)
+    return grid_path
+
+
 def compress_image(image_path, quality=85):
     output_path, exists = get_thumbnail_path(image_path)
     if exists:
@@ -68,6 +90,7 @@ def compress_image(image_path, quality=85):
     # Resize to max 800x800 while maintaining aspect ratio
     img.thumbnail((800, 800))
     img.save(output_path, "WEBP", quality=quality)
+    make_grid_thumbnail(img, output_path)
     return output_path
 
 
@@ -118,6 +141,7 @@ def blur_image(image_path: str, boxes: List[ObjectDetection], blur_strength=30):
     output_path = f"{THUMBNAIL_DIR}/{rel_path.rsplit('.', 1)[0]}.webp"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     image.save(output_path, "WEBP")
+    make_grid_thumbnail(image, output_path)
 
 
 def make_video_thumbnail(video_path):

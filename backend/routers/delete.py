@@ -32,9 +32,9 @@ class DeleteImagesRequest(CamelCaseModel):
 
 def _resolve_image_path(device: str, image_path: str) -> str:
     """Resolve image path, adding extension if missing."""
-    if image_path.endswith((".jpg", ".mp4")):
+    if image_path.endswith((".jpg", ".webp", ".mp4")):
         return image_path
-    for ext in (".jpg", ".mp4"):
+    for ext in (".webp", ".jpg", ".mp4"):
         if os.path.exists(f"{DIR}/{device}/{image_path}{ext}"):
             return f"{image_path}{ext}"
     raise HTTPException(status_code=404, detail="Image not found")

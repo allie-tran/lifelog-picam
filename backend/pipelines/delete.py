@@ -20,11 +20,13 @@ def remove_physical_images(session, device_id: str, image_paths: list[str]):
             # os.remove(full_path)
             temp_backup(full_path)
 
-        thumbnail_path = os.path.join(
-            THUMBNAIL_DIR, device_id, image_path.replace(".jpg", ".webp")
-        )
-        if os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
+        # Thumbnail + its small grid derivative, keyed by stem (original may be
+        # .jpg or .webp; thumbnails are always .webp).
+        stem = image_path.rsplit(".", 1)[0]
+        for rel in (f"{stem}.webp", f"{stem}_grid.webp"):
+            thumbnail_path = os.path.join(THUMBNAIL_DIR, device_id, rel)
+            if os.path.exists(thumbnail_path):
+                os.remove(thumbnail_path)
 
     # Database
     stmt = delete(Image).where(Image.device == device_id, Image.image_path.in_(image_paths))

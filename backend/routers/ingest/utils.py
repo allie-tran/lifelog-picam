@@ -79,7 +79,7 @@ def process_file(
         filename = Path(member).name
 
         # Check extension
-        if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".mp4")):
+        if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".mp4")):
             return None
 
         if filename.startswith(".") or filename.startswith("__MACOSX"):

@@ -9,7 +9,7 @@ import cv2
 import pynmea2
 from picamzero import Camera
 
-from common import OUTPUT, box, load_gps, save_gps
+from common import OUTPUT, IMAGE_EXTENSION, box, load_gps, save_gps
 
 cam = Camera()
 # orginally 4056 x 3040
@@ -18,8 +18,9 @@ cam = Camera()
 # faster encrypt/encode/upload and less SD/server storage. 1280x960 keeps
 # enough detail for face/object detection; CLIP/LLM downscale further anyway.
 CAPTURE_SIZE = (1280, 960)
-JPEG_QUALITY = 70  # cv2 default is 95; lower tames noisy/low-light scenes that
-                   # otherwise blow JPEG size up to ~1MB
+# WebP encodes ~25-35% smaller than JPEG at matching quality — less to encrypt,
+# upload (the Pi Zero 2W bottleneck) and store. q80 webp ≈ q90 jpeg visually.
+WEBP_QUALITY = 80
 cam.still_size = CAPTURE_SIZE
 
 def check_if_camera_connected():
@@ -115,7 +116,8 @@ async def image_worker():
     while True:
         # Capture an image immediately when the loop starts / hits interval
         file_name = (
-            datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S%z.jpg")
+            datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S%z")
+            + IMAGE_EXTENSION
         )
         DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
@@ -129,16 +131,16 @@ async def image_worker():
             array = cam.capture_array()
             frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
             io_buf = cv2.imencode(
-                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+                IMAGE_EXTENSION, frame, [int(cv2.IMWRITE_WEBP_QUALITY), WEBP_QUALITY]
             )[1].tobytes()
 
             encrypted = box.encrypt(io_buf)
 
-            # Write the GPS sidecar first so the uploader never sees a .jpg without it.
+            # Write the GPS sidecar first so the uploader never sees an image without it.
             gps = load_gps()
             if gps["latitude"] and time.time() - datetime.fromisoformat(gps["timestamp"]).timestamp() < 60:
                 # Snapshot the current values of LATEST_GPS.
-                txt_path = image_path.replace(".jpg", ".txt")
+                txt_path = os.path.splitext(image_path)[0] + ".txt"
                 with open(txt_path, "w") as f:
                     f.write(
                         f"{gps['timestamp']},{gps['latitude']},{gps['longitude']},{gps['elevation']}"

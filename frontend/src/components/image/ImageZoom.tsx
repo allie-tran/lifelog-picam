@@ -36,7 +36,7 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import { deleteImage, getImage } from 'apis/browsing';
-import { IMAGE_HOST_URL } from 'constants/urls';
+import { IMAGE_HOST_URL, THUMBNAIL_HOST_URL } from 'constants/urls';
 import Annotator from 'components/common/Annotator';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 
@@ -345,7 +345,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                     >
                         <img
                             ref={imageRef}
-                            src={data.imagePath}
+                            src={`${THUMBNAIL_HOST_URL}/${device}/${data.imagePath.replace(/\.jpg$/, '.webp')}`}
                             alt="Source"
                             style={{ width: '100%', maxHeight: 'calc(80dvh - 120px)', height: 'auto', display: 'block', objectFit: 'contain' }}
                             draggable={false}

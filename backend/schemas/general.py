@@ -209,9 +209,28 @@ class LifelogImage(CamelCaseModel):
     new: bool = True
 
 
+class GridImage(CamelCaseModel):
+    """Slim image payload for the browse grid. Only the fields the frontend
+    actually renders — drops device/date/hour/localTimestamp/secondsFromMidnight/
+    deleted/deletedTime/activityTags that LifelogImage carries but the grid never
+    reads, to keep day/segment responses small."""
+    image_path: str
+    thumbnail: str | None = None
+    grid_thumbnail: str | None = None  # small derivative for the grid (see services.utils)
+    timestamp: datetime
+    timezone: str | None = None
+    is_video: bool = False
+    segment_id: Optional[int] = None
+    activity: Optional[str] = None
+    activity_group: Optional[str] = None
+    activity_description: Optional[str] = None
+    activity_confidence: Optional[str] = None
+    new: bool = True
+
+
 class ResultSegment(CamelCaseModel):
     segment_id: Optional[int] = None
-    images: list[LifelogImage]
+    images: list[GridImage]
     location: Optional[LocationInfo] = None
     gps: list[GPSInfo] = []
 

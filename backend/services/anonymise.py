@@ -10,7 +10,7 @@ from ultralytics.models.sam import SAM3SemanticPredictor
 from ultralytics.models import FastSAM
 import logging
 
-from services.utils import to_base64
+from services.utils import to_base64, make_grid_thumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def anonymise_image(image_path, thumbnail_path, blur_face_boxes, whitelist_boxes
     torch.cuda.empty_cache()
 
     os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
-    # 4. Resize to max 800x800 while maintaining aspect ratio
+    # 4. Resize to max 1080x1080 while maintaining aspect ratio
     anonymised_image = cv2.cvtColor(
         anonymised_image, cv2.COLOR_BGR2RGB
     )  # Convert to RGB for PIL
@@ -227,6 +227,9 @@ def anonymise_image(image_path, thumbnail_path, blur_face_boxes, whitelist_boxes
             if tag in exif:
                 del exif[tag]
     img.save(thumbnail_path, "WEBP", quality=quality, exif=exif)
+    # Small derivative for the browse grid (cards are ~200px tall). Same webp,
+    # separate file alongside the full thumbnail; full one is kept for zoom.
+    make_grid_thumbnail(img, thumbnail_path)
 
 # Create a FastSAM model
 model = FastSAM("FastSAM-x.pt")  # or FastSAM-x.pt

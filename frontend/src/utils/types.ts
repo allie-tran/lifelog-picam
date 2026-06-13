@@ -48,6 +48,7 @@ export type LocationData = {
 type ImageObject = {
     imagePath: string;
     thumbnail: string;
+    gridThumbnail?: string; // small derivative for grid; falls back to thumbnail
     timestamp: string;
     timezone: string;
     isVideo: boolean;

@@ -13,6 +13,7 @@ from auth.types import AccessLevel
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 from typing import Annotated, List
 
@@ -98,6 +99,10 @@ app.include_router(notifications_router, prefix="/notify", tags=["notifications"
 app.include_router(status_router, prefix="/status", tags=["status"])
 # Day summary / targets / segment-activity — kept at root paths (no prefix).
 app.include_router(day_summary_router, tags=["day-summary"])
+
+# Compress JSON responses (segments, gps, day-nav) — repetitive text shrinks
+# ~80-90%, the biggest win for browsing over slow connections.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,

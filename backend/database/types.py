@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 import time
 
 from typing import (
@@ -23,7 +24,7 @@ from collections import Counter
 from sqlalchemy.orm import Session
 from mongodb_odm import Document
 
-from schemas import DaySummary, GPSInfo, LifelogImage, LocationInfo, ResultSegment
+from schemas import DaySummary, GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
 from database.models import Image, ImageGPS, Location
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,16 @@ DocumentType = TypeVar("DocumentType", bound=Mapping[str, Any])
 def _orm_to_lifelog(row: Image) -> LifelogImage:
     """Convert a SQLAlchemy Image row → LifelogImage Pydantic model."""
     return LifelogImage.model_validate(row.__dict__)
+
+def _orm_to_grid(row: Image) -> GridImage:
+    """Convert a SQLAlchemy Image row → slim GridImage for browse responses.
+    Grid-thumbnail filename is derived by convention (`*_grid.webp`) from the
+    full thumbnail — no extra DB column needed."""
+    grid = GridImage.model_validate(row.__dict__)
+    if grid.thumbnail:
+        base, ext = os.path.splitext(grid.thumbnail)
+        grid.grid_thumbnail = f"{base}_grid{ext}"
+    return grid
 
 def _apply_kwargs_filters(stmt, model, kwargs: dict):
     """Apply arbitrary column=value filters from kwargs."""
@@ -284,7 +295,7 @@ class ImageRecord:
 
             gps_info = [GPSInfo.model_validate(g.__dict__) for g in gps_raw]
 
-            images = [_orm_to_lifelog(img) for img in images_orm]
+            images = [_orm_to_grid(img) for img in images_orm]
             if today:
                 images = images[::-1]
             all_images.update(image_paths)

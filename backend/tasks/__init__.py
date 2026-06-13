@@ -313,6 +313,18 @@ def resync_day_task(self, device: str, date: str):
     ]
     _day_summary_bg(device, date, target_dicts)
 
+@celery.task(name="tasks.schedule_resync_day_task", bind=True)
+def schedule_resync_day_task(self):
+    with Session(engine) as session:
+        today = datetime.now().date()
+        devices = session.execute(
+            select(Image.device)
+            .where(Image.date == today)
+            .distinct()
+        ).scalars().all()
+        for device in devices:
+            resync_day_task.delay(device, today.isoformat())
+            logging.info("Scheduled resync_day_task for device %s on %s", device, today.isoformat())
 
 @celery.task(name="tasks.yolo_process_images_task", bind=True)
 def yolo_process_images_task(

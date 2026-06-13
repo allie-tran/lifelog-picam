@@ -58,7 +58,13 @@ export const getImagesBySegment = async (
     const response = await axios.get(
         `${BACKEND_URL}/browse/get-images-by-segment?date=${date}&device=${encodeURIComponent(device)}&${params}`
     );
-    return response.data as {
+    const data = response.data as { segments: ResultSegment[] };
+    // GPS now lives only on each segment (no duplicated top-level list); flatten
+    // it here so callers keep the { segments, gps } shape.
+    return {
+        segments: data.segments,
+        gps: data.segments.flatMap((s) => s.gps ?? []),
+    } as {
         segments: ResultSegment[];
         gps: GPSData[];
     };

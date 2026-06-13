@@ -57,7 +57,13 @@ const ImageWithDate = ({
     const device = deviceProp ?? searchParams.get('device') ?? '';
     const { evaluationId, sessionId, currentTask, submittedImages } = useAppSelector((state) => state.dres);
     const isDresSubmitted = submittedImages.includes(image.imagePath);
-    const imageUrl = image.thumbnail
+    // Grid uses the small derivative; full thumbnail is the fallback if the
+    // grid file isn't there yet (e.g. before backfill) — see onError below.
+    const gridSrc = image.gridThumbnail ?? image.thumbnail;
+    const imageUrl = gridSrc
+        ? `${THUMBNAIL_HOST_URL}/${device}/${gridSrc}`
+        : '';
+    const fullThumbUrl = image.thumbnail
         ? `${THUMBNAIL_HOST_URL}/${device}/${image.thumbnail}`
         : '';
     const formattedDate = timeOnly
@@ -140,6 +146,13 @@ const ImageWithDate = ({
                     src={imageUrl}
                     alt={formattedDate}
                     loading="lazy"
+                    onError={(e) => {
+                        // Grid derivative missing → fall back to full thumbnail once.
+                        const el = e.currentTarget as HTMLImageElement;
+                        if (fullThumbUrl && el.src !== fullThumbUrl) {
+                            el.src = fullThumbUrl;
+                        }
+                    }}
                 />
             ) : (
                 <Box

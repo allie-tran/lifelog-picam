@@ -1,5 +1,3 @@
-import base64
-import io
 import logging
 import os
 from typing import Annotated, Any, List, Literal, Optional
@@ -12,21 +10,20 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
 
-from schemas.general import GPSInfo, LifelogImage, LocationInfo, ResultSegment
+from schemas.general import GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
 from auth import _require_owner, _require_any_access
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from core.config import DIR
 from database import get_session
 from database.models import HeartRateData as HeartRateTable, Image, ImageGPS, ImagePerson, Location, MagnetometerData as MagnetometerTable, AccelerometerData as AccelerometerTable, GyroscopeData as GyroscopeTable, PPGData as PPGTable, PPIData as PPITable
-from database.types import ImageRecord, _orm_to_lifelog
+from database.types import ImageRecord, _orm_to_lifelog, _orm_to_grid
 from core.dependencies import CamelCaseModel
 from pipelines.all import process_image
 from services.anonymise import anonymise_image
 from services.segmentation import load_all_segments
 from services.utils import get_thumbnail_path
 from integrations.sessions.redis import redis_client
-from PIL import Image as PILImage
 
 from tasks import anonymise_image_task
 
@@ -445,7 +442,7 @@ async def get_images_by_segment(
         most_common_id, _ = Counter(str(loc.id) for loc in seg_locs).most_common(1)[0]
         location = next((loc for loc in seg_locs if str(loc.id) == most_common_id), None)
 
-    images = [_orm_to_lifelog(r) for r in rows]
+    images = [_orm_to_grid(r) for r in rows]
     gps_raw = [g for p in image_paths for g in path_to_gps.get(p, [])]
     gps_info = [GPSInfo.model_validate(g, from_attributes=True) for g in gps_raw]
 
@@ -457,7 +454,8 @@ async def get_images_by_segment(
     )
 
     today = datetime.now().strftime("%Y-%m-%d")
-    response = jsonable_encoder({"segments": [segment], "gps": gps_info})
+    # GPS lives on the segment; don't repeat the full list at the top level.
+    response = jsonable_encoder({"segments": [segment]})
     ttl = _BROWSE_CACHE_TTL_TODAY if date == today else _BROWSE_CACHE_TTL_PAST
     redis_client.set_json_with_ttl(cache_key, response, ttl)
     return response
@@ -560,8 +558,8 @@ def get_context_images(
         .scalars()
         .all()
     )
-    records = [_orm_to_lifelog(r) for r in rows]  # type: ignore
-    group_by_segment: dict[Optional[int], List[LifelogImage]] = {}
+    records = [_orm_to_grid(r) for r in rows]  # type: ignore
+    group_by_segment: dict[Optional[int], List[GridImage]] = {}
     for r in records:
         if r.segment_id in group_by_segment:
             group_by_segment[r.segment_id].append(r)
@@ -645,10 +643,6 @@ def get_image(
             )
         raise HTTPException(status_code=404, detail="Thumbnail not found.")
 
-    img = PILImage.open(thumbnail_path)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-
     # fetch metadata
     stmt = (select(Image)
             .options(
@@ -665,7 +659,9 @@ def get_image(
     image_metadata = session.execute(stmt).scalar_one_or_none()
 
     return ImageInfoResponse(
-        image_path=f"data:image/jpeg;base64, {base64.b64encode(buf.getvalue()).decode('utf-8')}",
+        # Relative path; the client loads the full thumbnail webp directly from
+        # the thumbnail host (cacheable, binary) instead of an inline base64 blob.
+        image_path=filename,
         timestamp=image.timestamp,
         timezone=image_metadata.gps.timezone if image_metadata and image_metadata.gps else "UTC",
         gps=GPSData(

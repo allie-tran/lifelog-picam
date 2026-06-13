@@ -32,7 +32,8 @@ UPLOAD_VIDEO_URL = f"{BACKEND_URL}/upload-video"
 
 OUTPUT = "Camera/timelapse"
 
-IMAGE_EXTENSION = ".jpg"
+IMAGE_EXTENSION = ".webp"
+IMAGE_MIME = "image/webp"
 
 # Shared HTTP session so uploads reuse one TCP + TLS connection instead of
 # doing a fresh handshake every ~10s. Saves CPU, radio time and latency on the
@@ -73,7 +74,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
     # Send form-data request
     with open(image_path, "rb") as img_file:
         files = {
-            "file": (os.path.basename(image_path), img_file, f"image/jpeg"),
+            "file": (os.path.basename(image_path), img_file, IMAGE_MIME),
         }
         response = session.put(
             UPLOAD_URL,

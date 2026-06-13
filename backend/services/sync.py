@@ -25,11 +25,19 @@ def to_id(image_path):
     return image_path.replace("/", "_")
 
 
+def _stem(path: str) -> str:
+    """Path without its file extension — the stable key shared by an original
+    (.jpg or .webp) and its thumbnail (.webp)."""
+    return path.rsplit(".", 1)[0]
+
+
 def sync_images(session, device: str):
     print(f"Syncing images for device: {device}")
 
-    # 1. Collect all the "databases"
-    raw_images = glob.glob(f"{DIR}/{device}/**/*.jpg", recursive=True)
+    # 1. Collect all the "databases" — originals may be .jpg (legacy) or .webp.
+    raw_images = glob.glob(f"{DIR}/{device}/**/*.jpg", recursive=True) + glob.glob(
+        f"{DIR}/{device}/**/*.webp", recursive=True
+    )
     raw_images = set(raw_images)
     raw_images = set(image.split(device + "/")[1] for image in raw_images)
     # raw_images = set(image for image in raw_images if "-" not in image.split("/")[-1])
@@ -86,13 +94,15 @@ def sync_images(session, device: str):
         batch = missing_in_yolo[i : i + batch_size]
         yolo_process_images(device, whitelist, batch)
 
-    # 4. Check missing in thumbnail
-    thumbnail_images = glob.glob(f"{THUMBNAIL_DIR}/{device}/**/*.webp", recursive=True)
-    thumbnail_images = set(thumbnail_images)
-    thumbnail_images = set(image.split(device + "/")[1] for image in thumbnail_images)
-    thumbnail_images = set(image.replace(".webp", ".jpg") for image in thumbnail_images)
-    print(f"Total thumbnail images: {len(thumbnail_images)}")
-    missing_in_thumbnail = raw_images - thumbnail_images
+    # 4. Check missing in thumbnail. Thumbnails are .webp keyed by stem; the
+    # small grid derivatives (*_grid.webp) are not standalone thumbnails, so
+    # exclude them or they'd be mistaken for orphans and deleted below.
+    thumbnail_files = glob.glob(f"{THUMBNAIL_DIR}/{device}/**/*.webp", recursive=True)
+    thumbnail_files = [t for t in thumbnail_files if not t.endswith("_grid.webp")]
+    thumbnail_rel = set(t.split(device + "/")[1] for t in thumbnail_files)
+    thumbnail_stems = set(_stem(t) for t in thumbnail_rel)
+    print(f"Total thumbnail images: {len(thumbnail_stems)}")
+    missing_in_thumbnail = set(img for img in raw_images if _stem(img) not in thumbnail_stems)
     missing_in_thumbnail = missing_in_thumbnail - bad_images
     print(f"Missing in Thumbnail: {len(missing_in_thumbnail)}")
     missing_in_thumbnail = sorted(missing_in_thumbnail, reverse=True)
@@ -123,13 +133,17 @@ def sync_images(session, device: str):
         session.flush()
 
     # 6. Base on raw_images, find the extra ones in mongo and zvec
-    extra_in_thumbnail = thumbnail_images - raw_images
-    print(f"Extra in Thumbnail: {len(extra_in_thumbnail)}")
-    print(list(extra_in_thumbnail)[:10])
-    for image in tqdm(extra_in_thumbnail):
-        thumbnail_path = f"{THUMBNAIL_DIR}/{device}/{image.replace('.jpg', '.webp')}"
-        if os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
+    raw_stems = set(_stem(img) for img in raw_images)
+    extra_thumbnail_stems = thumbnail_stems - raw_stems
+    print(f"Extra in Thumbnail: {len(extra_thumbnail_stems)}")
+    print(list(extra_thumbnail_stems)[:10])
+    for stem in tqdm(extra_thumbnail_stems):
+        for path in (
+            f"{THUMBNAIL_DIR}/{device}/{stem}.webp",
+            f"{THUMBNAIL_DIR}/{device}/{stem}_grid.webp",
+        ):
+            if os.path.exists(path):
+                os.remove(path)
 
     # extra_in_embedding = session.execute(
     #     select(Image.image_path)

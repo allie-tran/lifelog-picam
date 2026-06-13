@@ -62,6 +62,11 @@ celery.conf.update(
             "schedule": crontab(minute="*/60"),
             "options": {"expires": 600},
         },
+        "resync_day": {
+            "task": "tasks.schedule_resync_day_task",
+            "schedule": crontab(minute="*/5"),
+            "options": {"expires": 240},
+        },
         # every 5 min — enforce 30-min TTL on non-whitelisted face embeddings
         "purge-face-embeddings": {
             "task": "tasks.purge_expired_face_embeddings_task",
