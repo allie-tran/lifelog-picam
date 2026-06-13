@@ -9,8 +9,10 @@ from watchdog.observers import Observer
 
 from common import (
     CHECK_ALL_URL,
+    DISCARD,
     IMAGE_EXTENSION,
     OUTPUT,
+    RETRY,
     check_if_connected,
     send_image,
     send_video,
@@ -68,14 +70,24 @@ def process_queue():
             break
         try:
             if file_path.endswith(".mp4"):
-                success = send_video(file_path, uploaded_files, LOG_FILE)
+                result = send_video(file_path, uploaded_files, LOG_FILE)
             elif file_path.endswith(IMAGE_EXTENSION):
-                success = send_image(file_path, uploaded_files, LOG_FILE)
+                result = send_image(file_path, uploaded_files, LOG_FILE)
             else:
                 continue
-            if not success:
+
+            if result is DISCARD:
+                # Server rejected the file permanently — delete so it never
+                # re-enters the queue and keeps the backlog clear.
+                try:
+                    os.remove(file_path)
+                    print(f"Discarded {file_path} (server rejected it).")
+                except OSError as e:
+                    print(f"Could not delete discarded {file_path}: {e}")
+            elif result is RETRY or not result:
                 failed.append(file_path)
         except Exception as e:
+            # Network error / server down — keep the file and retry later.
             print(f"Error uploading {file_path}: {e}")
             failed.append(file_path)
 

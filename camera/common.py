@@ -35,8 +35,31 @@ OUTPUT = "Camera/timelapse"
 IMAGE_EXTENSION = ".jpg"
 
 
+# Sentinel outcomes for a failed upload. Distinct objects so callers can tell
+# them apart from a successful (truthy) response body.
+RETRY = object()    # server down / transient — keep the file and try again
+DISCARD = object()  # server rejected the file — delete it, never re-upload
+
 
 _UPLOAD_TIMEOUT = 30  # seconds — generous for slow Pi WiFi but not infinite
+
+
+# Statuses that mean the file's *payload* is permanently unusable: the server
+# cannot decode/decrypt it, so re-uploading will never succeed. Only these
+# trigger deletion. NOTE: auth/config failures (401/403/404) are deliberately
+# excluded — they affect every image and are usually transient (device not yet
+# provisioned, key rotation, DB hiccup); discarding on those would wipe the
+# whole backlog. When in doubt we keep the file.
+_DISCARD_STATUSES = {400, 413, 415, 422}
+
+
+def _failure_outcome(status_code):
+    """Map an HTTP error status to a retry/discard decision.
+
+    Default is RETRY (keep the file) so nothing is lost on transient or
+    misclassified errors. Only a known bad-payload status causes DISCARD.
+    """
+    return DISCARD if status_code in _DISCARD_STATUSES else RETRY
 
 def send_image(image_path, uploaded_files, LOG_FILE):
     if image_path in uploaded_files:
@@ -60,11 +83,11 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         with open(LOG_FILE, "a") as log:
             log.write(f"{image_path}\n")
         return response.json()
-    else:
-        print(f"Failed to upload {image_path}: {response.status_code} - {response.text}")
 
-    # Return a falsy value so the caller re-queues this file for retry.
-    return False
+    outcome = _failure_outcome(response.status_code)
+    action = "retrying" if outcome is RETRY else "discarding"
+    print(f"Failed to upload {image_path}: {response.status_code} - {response.text} ({action})")
+    return outcome
 
 
 def send_video(video_path, uploaded_files, LOG_FILE):
@@ -94,8 +117,10 @@ def send_video(video_path, uploaded_files, LOG_FILE):
             log.write(f"{video_path}\n")
         return response.json()
 
-    # Return a falsy value so the caller re-queues this file for retry.
-    return False
+    outcome = _failure_outcome(response.status_code)
+    action = "retrying" if outcome is RETRY else "discarding"
+    print(f"Failed to upload {video_path}: {response.status_code} - {response.text} ({action})")
+    return outcome
 
 
 def send_gps(gps_path):
