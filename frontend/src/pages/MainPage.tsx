@@ -8,7 +8,7 @@ import {
     Tooltip,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
-import { GPSData } from '@utils/types';
+import { GPSData, ImageObject, ResultSegment } from '@utils/types';
 import { getGPSByDate, GpsTrackData } from 'apis/process';
 import CurrentStatus from 'components/meta/CurrentStatus';
 import CustomDatePicker from 'components/temporal/CustomDatePicker';
@@ -168,6 +168,24 @@ function MainPage() {
         { revalidateOnFocus: false }
     );
 
+    // No date in the URL → land on the latest available day (ISO dates sort
+    // chronologically, so the max is the most recent).
+    useEffect(() => {
+        if (date) return;
+        if (!allDates?.length) return;
+        const sorted = [...allDates].sort();
+        const latest = sorted[sorted.length - 1];
+        if (!latest) return;
+        setSearchParams(
+            (prev) => {
+                const next = new URLSearchParams(prev);
+                next.set('date', latest);
+                return next;
+            },
+            { replace: true }
+        );
+    }, [date, allDates]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const { data: dayStops } = useSWR(
         date && device && isAuthorised ? ['day-stops', device, date] : null,
         () => getDayStops(device, date || ''),
@@ -185,10 +203,45 @@ function MainPage() {
         () => getImagesBySegment(device, date || '', 'unsegmented'),
         { revalidateOnFocus: false, refreshInterval: 60 * 1000 }
     );
-    const recentSegments = recentData?.segments ?? [];
+    const isToday = date === today;
+
+    // For today, show most recent first: newest image at the top of each event,
+    // and newest event before older ones. Past days keep chronological order.
+    const orderForView = React.useCallback(
+        (segs: ResultSegment[]): ResultSegment[] => {
+            if (!isToday) return segs;
+            const newestFirst = (a: ImageObject, b: ImageObject) =>
+                dayjs(b.timestamp).valueOf() - dayjs(a.timestamp).valueOf();
+            return segs
+                .map((s) => ({ ...s, images: [...s.images].sort(newestFirst) }))
+                .sort((a, b) => {
+                    const at = a.images[0]?.timestamp;
+                    const bt = b.images[0]?.timestamp;
+                    return dayjs(bt).valueOf() - dayjs(at).valueOf();
+                });
+        },
+        [isToday]
+    );
+
+    const recentSegments = orderForView(recentData?.segments ?? []);
+    const hasRecent = isToday && recentSegments.length > 0;
+
+    // "Recent" (unsegmented, newest-of-all) belongs with the most recent
+    // location. Show it as a block on top only when that last segment is
+    // selected; older locations don't show it. The Recent nav pill instead
+    // selects 'unsegmented' and shows the same images in the main list.
+    const lastNavSegmentId = navSegments?.length
+        ? navSegments[navSegments.length - 1].segmentId
+        : null;
+    const showRecent =
+        hasRecent &&
+        lastNavSegmentId != null &&
+        (Array.isArray(selectedSegmentId)
+            ? selectedSegmentId.includes(lastNavSegmentId)
+            : selectedSegmentId === lastNavSegmentId);
 
     const imageGps: GPSData[] = gpsData?.imageGps ?? [];
-    const segments = data?.segments || [];
+    const segments = orderForView(data?.segments || []);
 
     const activeSegmentIds = React.useMemo(() => {
         if (typeof selectedSegmentId === 'number')
@@ -264,6 +317,7 @@ function MainPage() {
                         navSegments={navSegments}
                         selectedSegmentId={selectedSegmentId}
                         onSelectSegment={setSegment}
+                        hasRecent={hasRecent}
                     />
                 </Box>
 
@@ -300,8 +354,9 @@ function MainPage() {
                                 isValidating && !isLoading ? 'none' : 'auto',
                         }}
                     >
-                        {/* Recent — unsegmented images for today */}
-                        {recentSegments.length > 0 && (
+                        {/* Recent — unsegmented images for today; shown only
+                            with the most recent location selected */}
+                        {showRecent && (
                             <Box sx={{ width: '100%', mb: 1 }}>
                                 <Box
                                     sx={{

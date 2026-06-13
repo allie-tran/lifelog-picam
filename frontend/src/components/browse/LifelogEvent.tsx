@@ -52,8 +52,12 @@ const LifelogEvent = ({
     const { evaluationId, sessionId, currentTask } = useAppSelector((s) => s.dres);
     const dresReady = !!(evaluationId && sessionId);
     const firstImage = segment[0];
-    const lastImage = segment[segment.length - 1];
-    const date = dayjs(firstImage.timestamp).format('YYYY-MM-DD');
+    // Time-range label must read earliest–latest regardless of how the images
+    // are ordered (today is shown newest-first), so derive the bounds.
+    const times = segment.map((img) => dayjs(img.timestamp));
+    const startTime = times.reduce((a, b) => (a.isBefore(b) ? a : b), times[0]);
+    const endTime = times.reduce((a, b) => (a.isAfter(b) ? a : b), times[0]);
+    const date = startTime.format('YYYY-MM-DD');
     // const count = segment.length;
     const [edit, setEdit] = React.useState(false);
     const [activityEditText, setActivityEditText] = React.useState('');
@@ -211,12 +215,10 @@ const LifelogEvent = ({
                         textAlign="right"
                         sx={{ flexShrink: 0, minWidth: 300 }}
                     >
-                        {dayjs(lastImage.timestamp).format('HH:mm:ss')} -{' '}
-                        {dayjs(firstImage.timestamp).format('HH:mm:ss')}{' '}
+                        {startTime.format('HH:mm:ss')} -{' '}
+                        {endTime.format('HH:mm:ss')}{' '}
                         {fullTime && (
-                            <strong>
-                                {dayjs(firstImage.timestamp).format('ll')}
-                            </strong>
+                            <strong>{startTime.format('ll')}</strong>
                         )}
                     </Typography>
                 </Stack>

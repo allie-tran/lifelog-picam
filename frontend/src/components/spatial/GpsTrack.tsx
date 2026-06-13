@@ -188,43 +188,33 @@ export function GpsTrackMap({
     const stops = useMemo<StopEntry[]>(() => {
         const map = new Map<string, StopEntry>();
 
-        // Background: whole-day stops (low opacity via active=false)
+        // Pills are always the whole day's stops — same set, label and count
+        // regardless of selection. With no active filter everything is focused.
         for (const s of dayStops) {
             if (!s.stop) continue;
             const key = `${s.latitude.toFixed(4)}_${s.longitude.toFixed(4)}`;
             if (!map.has(key)) {
-                map.set(key, { lat: s.latitude, lon: s.longitude, name: s.name, count: s.count, active: false });
+                map.set(key, { lat: s.latitude, lon: s.longitude, name: s.name, count: s.count, active: !hasActiveFilter });
             }
         }
 
-        // Foreground: currently loaded segments (active)
-        for (const seg of segments) {
-            const loc = seg.location;
-            if (
-                !loc ||
-                loc.stop !== true ||
-                loc.latitude == null ||
-                loc.longitude == null
-            )
-                continue;
-            const key =
-                loc.id ??
-                `${loc.latitude.toFixed(4)}_${loc.longitude.toFixed(4)}`;
-            const isActive =
-                !hasActiveFilter ||
-                (seg.segmentId != null && activeSegmentIds!.has(seg.segmentId));
-            const existing = map.get(key);
-            if (existing) {
-                existing.count = Math.max(existing.count, seg.images.length);
-                if (isActive) existing.active = true;
-            } else {
-                map.set(key, {
-                    lat: loc.latitude,
-                    lon: loc.longitude,
-                    name: loc.name ?? '',
-                    count: seg.images.length,
-                    active: isActive,
-                });
+        // Selection only toggles focus (opacity) on existing pills — it never
+        // adds pills or changes their counts.
+        if (hasActiveFilter) {
+            for (const seg of segments) {
+                const loc = seg.location;
+                if (
+                    !loc ||
+                    loc.stop !== true ||
+                    loc.latitude == null ||
+                    loc.longitude == null
+                )
+                    continue;
+                if (seg.segmentId == null || !activeSegmentIds!.has(seg.segmentId))
+                    continue;
+                const key = `${loc.latitude.toFixed(4)}_${loc.longitude.toFixed(4)}`;
+                const existing = map.get(key);
+                if (existing) existing.active = true;
             }
         }
         return Array.from(map.values());

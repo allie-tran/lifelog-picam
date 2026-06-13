@@ -10,6 +10,7 @@ interface DayNavBarProps {
     navSegments: NavSegment[] | undefined;
     selectedSegmentId: SegmentSelection | null;
     onSelectSegment: (id: SegmentSelection) => void;
+    hasRecent?: boolean;
 }
 
 function fmtDuration(totalSeconds: number): string {
@@ -66,7 +67,7 @@ function stopColour(totalSeconds: number): string {
     return '#90caf9';                      // blue  — matches map small
 }
 
-export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegment }: DayNavBarProps) {
+export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegment, hasRecent = false }: DayNavBarProps) {
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
 
     const segments: NavSegment[] = navSegments ?? [];
@@ -103,7 +104,12 @@ export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegm
                                 flexShrink: 0,
                                 display: 'flex',
                                 flexDirection: 'column',
-                                opacity: activeRunIdx !== null && !isActive ? 0.35 : 1,
+                                opacity:
+                                    selectedSegmentId === 'unsegmented'
+                                        ? 0.35
+                                        : activeRunIdx !== null && !isActive
+                                          ? 0.35
+                                          : 1,
                                 transition: 'opacity 0.15s',
                                 overflow: 'hidden',
                             }}
@@ -191,6 +197,43 @@ export default function DayNavBar({ navSegments, selectedSegmentId, onSelectSegm
                         </Box>
                     );
                 })}
+
+                {/* Recent — newest images not yet grouped; appended last */}
+                {hasRecent && (
+                    <Tooltip title="Recent — newest images not yet grouped" followCursor>
+                        <Box
+                            onClick={() => {
+                                setActiveRunIdx(null);
+                                onSelectSegment('unsegmented');
+                            }}
+                            sx={{
+                                flexBasis: 70,
+                                flexGrow: 0,
+                                flexShrink: 0,
+                                ml: '4px',
+                                height: 82,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                bgcolor: '#26a69a',
+                                color: '#fff',
+                                cursor: 'pointer',
+                                border: '1px solid white',
+                                borderRadius: '4px',
+                                opacity: selectedSegmentId === 'unsegmented' ? 1 : 0.6,
+                                boxShadow:
+                                    selectedSegmentId === 'unsegmented'
+                                        ? 'inset 0 0 0 2px rgba(0,0,0,0.4)'
+                                        : 'none',
+                                transition: 'opacity 0.15s, box-shadow 0.1s',
+                            }}
+                        >
+                            <Typography variant="caption" fontWeight={700} noWrap sx={{ lineHeight: 1.2 }}>
+                                Recent
+                            </Typography>
+                        </Box>
+                    </Tooltip>
+                )}
             </Box>
 
             {/* Time labels */}
