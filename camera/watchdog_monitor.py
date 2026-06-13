@@ -23,7 +23,7 @@ LOG_FILE = "synced.txt"
 
 device_id = os.getenv("DEVICE_ID", "omi")
 
-_FILE_READY_TIMEOUT = 10   # seconds to wait for file to stop growing
+_FILE_READY_TIMEOUT = 5   # seconds to wait for file to stop growing
 _FILE_READY_POLL   = 0.25  # poll interval while waiting
 
 
@@ -161,14 +161,6 @@ if __name__ == "__main__":
             if not upload_queue.empty():
                 if check_if_connected():
                     failures = process_queue()
-                    if failures:
-                        # Re-queued files failed to upload; back off exponentially
-                        # (cap 60s) so we don't hammer the server every second.
-                        print(f"{failures} upload(s) failed, backing off {backoff}s...")
-                        time.sleep(backoff)
-                        backoff = min(backoff * 2, 60)
-                    else:
-                        backoff = 1
                 else:
                     print("No internet, waiting 60s...")
                     time.sleep(60)
