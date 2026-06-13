@@ -51,7 +51,11 @@ class NewFileHandler(FileSystemEventHandler):
         if not (path.endswith(".mp4") or path.endswith(IMAGE_EXTENSION)):
             return
         if _wait_for_file_ready(path):
-            print(f"Queuing: {path}")
+            try:
+                size_kb = os.path.getsize(path) / 1024
+                print(f"Queuing: {path} ({size_kb:.1f} KB)")
+            except OSError:
+                print(f"Queuing: {path}")
             upload_queue.put(path)
         else:
             print(f"File never became ready, skipping: {path}")

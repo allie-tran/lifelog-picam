@@ -11,7 +11,13 @@ from common import OUTPUT, box, load_gps, save_gps
 
 cam = Camera()
 # orginally 4056 x 3040
-cam.still_size = (2028, 1520)
+# Capture smaller than the 2028x1520 sensor mode: at 1 image/10s the upload
+# (not the optics) is the bottleneck on the Pi Zero 2W, so fewer pixels means
+# faster encrypt/encode/upload and less SD/server storage. 1456x1088 keeps
+# enough detail for face/object detection; CLIP/LLM downscale further anyway.
+CAPTURE_SIZE = (1456, 1088)
+JPEG_QUALITY = 80  # cv2 default is 95; 80 ~halves file size with little visible loss
+cam.still_size = CAPTURE_SIZE
 
 def check_if_camera_connected():
     try:
@@ -119,8 +125,10 @@ async def image_worker():
             # Capture logic (keeps your exact encoding steps)
             array = cam.capture_array()
             frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
-            frame = cv2.resize(frame, (2028, 1520), interpolation=cv2.INTER_AREA)
-            io_buf = cv2.imencode(".jpg", frame)[1].tobytes()
+            frame = cv2.resize(frame, CAPTURE_SIZE, interpolation=cv2.INTER_AREA)
+            io_buf = cv2.imencode(
+                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+            )[1].tobytes()
 
             encrypted = box.encrypt(io_buf)
 
