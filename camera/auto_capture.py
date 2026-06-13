@@ -7,7 +7,7 @@ import aioserial
 import cv2
 from picamzero import Camera
 
-from common import OUTPUT, box, get_latest_gps, save_gps
+from common import OUTPUT, box, load_gps, save_gps
 
 cam = Camera()
 # orginally 4056 x 3040
@@ -55,8 +55,14 @@ async def gps_worker():
         aioserial_instance = aioserial.AioSerial(
             port=SERIAL_PORT, baudrate=BAUD_RATE, timeout=0.1
         )
+    except Exception as e:
+        # Failure to open the serial port is fatal for this worker; bail out so the
+        # supervising script can restart the process.
+        print(f"GPS Worker fatal error (serial open): {e}")
+        return
 
-        while True:
+    while True:
+        try:
             # Check if there is data to read natively without stalling the event loop
             if aioserial_instance.in_waiting > 0:
                 # Read a line asynchronously
@@ -67,7 +73,9 @@ async def gps_worker():
                 if line.startswith("$GPRMC"):
                     data = line.split(",")
 
-                    if len(data) > 2 and data[2] == "A":  # 'A' = Valid Active Fix
+                    # A valid $GPRMC with the fields we read needs at least 7 commas
+                    # (index 6 for lon hemisphere); guard against truncated sentences.
+                    if len(data) > 6 and data[2] == "A":  # 'A' = Valid Active Fix
                         lat = parse_nmea_degrees(data[3], data[4])
                         lon = parse_nmea_degrees(data[5], data[6])
                         elevation = float(data[9]) if len(data) > 9 and data[9] else 0.0
@@ -82,12 +90,12 @@ async def gps_worker():
                             "elevation": elevation,
                         }
                         save_gps(gps)
+        except Exception as e:
+            # A single malformed line / transient read error must not kill the worker.
+            print(f"GPS Worker read error (continuing): {e}")
 
-            # Yield control to allow the image worker to run
-            await asyncio.sleep(0.1)
-
-    except Exception as e:
-        print(f"GPS Worker Error: {e}")
+        # Yield control to allow the image worker to run
+        await asyncio.sleep(0.1)
 
 
 # --- Async Task 2: Strict Camera Schedule ---
@@ -115,9 +123,8 @@ async def image_worker():
             io_buf = cv2.imencode(".jpg", frame)[1].tobytes()
 
             encrypted = box.encrypt(io_buf)
-            with open(image_path, "wb") as f:
-                f.write(encrypted)
 
+            # Write the GPS sidecar first so the uploader never sees a .jpg without it.
             gps = load_gps()
             if gps["latitude"] and time.time() - datetime.fromisoformat(gps["timestamp"]).timestamp() < 60:
                 # Snapshot the current values of LATEST_GPS.
@@ -126,6 +133,13 @@ async def image_worker():
                     f.write(
                         f"{gps['timestamp']},{gps['latitude']},{gps['longitude']},{gps['elevation']}"
                     )
+
+            # Write the image atomically: the watchdog uploader watches for the final
+            # path, so write to a temp file and rename to avoid uploading a partial file.
+            tmp_path = image_path + ".tmp"
+            with open(tmp_path, "wb") as f:
+                f.write(encrypted)
+            os.replace(tmp_path, image_path)
 
             print(f"Captured image & text: {file_name} | Lat: {gps['latitude']}")
 

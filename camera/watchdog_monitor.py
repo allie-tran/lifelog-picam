@@ -155,11 +155,20 @@ if __name__ == "__main__":
     observer.start()
 
     # 3. Main loop — upload whenever there is work and connectivity
+    backoff = 1
     try:
         while True:
             if not upload_queue.empty():
                 if check_if_connected():
-                    process_queue()
+                    failures = process_queue()
+                    if failures:
+                        # Re-queued files failed to upload; back off exponentially
+                        # (cap 60s) so we don't hammer the server every second.
+                        print(f"{failures} upload(s) failed, backing off {backoff}s...")
+                        time.sleep(backoff)
+                        backoff = min(backoff * 2, 60)
+                    else:
+                        backoff = 1
                 else:
                     print("No internet, waiting 60s...")
                     time.sleep(60)

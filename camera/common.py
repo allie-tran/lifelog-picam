@@ -63,7 +63,8 @@ def send_image(image_path, uploaded_files, LOG_FILE):
     else:
         print(f"Failed to upload {image_path}: {response.status_code} - {response.text}")
 
-    return "photo"
+    # Return a falsy value so the caller re-queues this file for retry.
+    return False
 
 
 def send_video(video_path, uploaded_files, LOG_FILE):
@@ -93,7 +94,8 @@ def send_video(video_path, uploaded_files, LOG_FILE):
             log.write(f"{video_path}\n")
         return response.json()
 
-    return "video"
+    # Return a falsy value so the caller re-queues this file for retry.
+    return False
 
 
 def send_gps(gps_path):
@@ -160,8 +162,9 @@ def start_timezone_sync(interval_seconds: int = 300):
     return t
 
 def load_gps():
-    if os.path.exists("latest_gps.josn"):
-        return json.load(open("latest_gps.json"))
+    if os.path.exists("latest_gps.json"):
+        with open("latest_gps.json") as f:
+            return json.load(f)
     else:
         return {"timestamp": "", "latitude": "", "longitude": "", "elevation": "", "timezone": str(get_localzone())}
 
@@ -178,7 +181,8 @@ def check_if_connected() -> bool:
         return True
     try:
         response = requests.head("https://www.google.com", timeout=5)
-        ok = response.status_code < 500
+        # Only 2xx/3xx mean we actually reached a working network; 4xx/5xx do not.
+        ok = response.status_code < 400
     except Exception:
         ok = False
     _connectivity_cache["ok"] = ok
