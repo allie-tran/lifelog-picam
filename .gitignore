@@ -1,10 +1,40 @@
 timelapse/
 IMAGES/
+Camera/
 Lifelog/
 *.log
 *.log.bak
 
+# Secrets — never commit
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.ruff_cache/
+
+# Editor / OS
+.DS_Store
+
+# Backend data / caches (large, machine-local)
 backend/siglip_features.npz
+backend/features/
+backend/features.bak/
+backend/cachedir/
+backend/files/
+
+# Frontend build output
+frontend/build/
+
+# Large ML model weights
+*.pt
+*.onnx
+
+# Camera client local logs/state
+synced.txt
+note_for_claude.md
 
 # Android — ignore build artifacts, track source only
 android/node_modules/

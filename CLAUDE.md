@@ -18,7 +18,12 @@ Started automatically via crontab (`auto_capture.sh`, `monitor.sh`). Device iden
 ### `backend/` — FastAPI server
 Runs at port 8082. Key dependencies: PostgreSQL (pgvector), MongoDB (ODM for user/auth documents), Redis (Celery broker + cache), Celery workers.
 
-**App structure** — `main.py` mounts sub-apps:
+**App structure** — `main.py` composes one FastAPI app from `APIRouter` modules
+in `routers/` (via `include_router`, prefixes preserve the original paths).
+Business logic lives in `services/` (formerly `scripts/`), Pydantic models in
+`schemas/` (formerly `app_types/`), config/logging/deps in `core/`, and external
+clients in `integrations/` (`llm/`, `visual/`, `biometrics/`, `sessions/`). Route
+prefixes:
 - `/auth` — JWT auth, user/device management
 - `/ingest` — chunked zip upload endpoint; processes zip into image records
 - `/browse` — date/device browsing
@@ -29,11 +34,11 @@ Runs at port 8082. Key dependencies: PostgreSQL (pgvector), MongoDB (ODM for use
 
 **Pipeline** — after upload, images go through `pipelines/`: segmentation (clustering by CLIP embedding similarity, threshold `SEGMENT_THRESHOLD=0.85`), activity annotation via LLM (Gemini by default), and day summary generation.
 
-**LLM layer** — `backend/llm/` wraps Gemini (`gemini.py`), OpenAI (`openai.py`), and Ollama (`ollama.py`). The active model is set via `GEMINI_MODEL_NAME` / `OPENAI_MODEL_NAME` env vars.
+**LLM layer** — `backend/integrations/llm/` wraps Gemini (`gemini.py`), OpenAI (`openai.py`), and Ollama (`ollama.py`). The active model is set via `GEMINI_MODEL_NAME` / `OPENAI_MODEL_NAME` env vars.
 
 **Database** — PostgreSQL via SQLAlchemy ORM (`database/models.py`): `Image`, `ImageEmbedding`, `ImageGPS`, `ImageObject`, `ImagePerson`, `Location`, `Device`. MongoDB via `mongodb-odm` for `User` and `DaySummaryRecord`. `database/types.py` contains `ImageRecord` — a helper class wrapping SQLAlchemy queries in a MongoDB-compatible API.
 
-**Celery tasks** (`tasks.py`) — `describe_segment_task` calls the LLM to annotate a segment; runs in a solo worker pool with Redis backend.
+**Celery tasks** (`tasks/` package — the app is `tasks.celery_app`) — `describe_segment_task` calls the LLM to annotate a segment; runs in a solo worker pool with Redis backend. Task names stay `tasks.<func>` (jobs live in `tasks/__init__.py`).
 
 ### `frontend/` — React/TypeScript SPA
 Uses `react-app-rewired` (CRA with overrides). State via Redux Toolkit. UI via MUI. Key pages: `MainPage`, `SearchPage`, `Faces`, `Biometrics`, `Admin`.
@@ -54,15 +59,15 @@ Manages the PostgreSQL schema. The `batch/models.py` defines the batch-side ORM;
 cd backend
 uvicorn main:app --host 0.0.0.0 --port 8082 --reload
 # In a separate terminal, start the Celery worker:
-celery -A celery_app worker --loglevel=info
+celery -A tasks.celery_app worker --loglevel=info
 ```
 Requires `.env` with at minimum: `PG_URI`, `JWT_SECRET`, `GEMINI_API`, `GEMINI_MODEL_NAME`, `DIR`, `THUMBNAIL_DIR`.
 
 ### Frontend
 ```bash
 cd frontend
-npm run dev       # development server (port 3000)
-npm run build     # production build
+yarn dev          # development server (port 3000) — use yarn, not npm
+yarn build        # production build
 ```
 
 ### Camera (Pi only)
