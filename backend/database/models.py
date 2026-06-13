@@ -84,6 +84,27 @@ class Location(Base):
     info: Mapped[str | None] = mapped_column(Text)
 
     images = relationship("Image", back_populates="location")
+    labels = relationship("LocationLabel", back_populates="location", cascade="all, delete-orphan")
+
+
+class LocationLabel(Base):
+    """Per-user label for a location (e.g. Home / Work). Keyed by Mongo username."""
+    __tablename__ = "location_labels"
+    __table_args__ = (
+        UniqueConstraint("username", "location_id", name="uq_location_label_user_loc"),
+        Index("ix_location_labels_username", "username"),
+        Index("ix_location_labels_location", "location_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    location_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("locations.id", ondelete="CASCADE"), nullable=False
+    )
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    label_kind: Mapped[str] = mapped_column(Text, nullable=False, default="other")  # home / work / other
+
+    location = relationship("Location", back_populates="labels")
 
 
 # ---------------------------------------------------------------------------

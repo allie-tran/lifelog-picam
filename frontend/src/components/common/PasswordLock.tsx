@@ -24,7 +24,7 @@ import DeletedImages from 'components/browse/DeletedImages';
 import {
     AdminPanelSettingsRounded,
     CheckCircleOutlineRounded,
-    FaceRounded,
+    ManageAccountsRounded,
     HomeRounded,
     LoginRounded,
     LogoutRounded,
@@ -203,13 +203,13 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                                 <SearchRounded />
                             </IconButton>
                         </Tooltip>
-                        <Tooltip title="People">
+                        <Tooltip title="Your Profile">
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navTo('/faces')}
+                                onClick={() => navTo('/profile')}
                             >
-                                <FaceRounded />
+                                <ManageAccountsRounded />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title="Admin Panel">

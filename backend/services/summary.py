@@ -296,15 +296,22 @@ def time_to_ms(date_str, time_str):
         * 1000
     )
 
-def _fetch_segment_locations(session, device: str, date: str) -> dict[int, tuple[str, bool, float | None, float | None]]:
+def _fetch_segment_locations(session, device: str, date: str, username: str | None = None) -> dict[int, tuple[str, bool, float | None, float | None]]:
     """
     Return {segment_id: (display_name, stop, latitude, longitude)} for the given date/device.
-    One query, grouped in Python.
+    When `username` is given, a user's label for a location (Home/Work/…) overrides
+    the geocoded display name. One query, grouped in Python.
     """
     from collections import Counter
+    from database.models import LocationLabel
     rows = session.execute(
-        select(Image.segment_id, Location.name, Location.address, Location.stop, Location.latitude, Location.longitude)
+        select(Image.segment_id, Location.name, Location.address, Location.stop, Location.latitude, Location.longitude, LocationLabel.label)
         .join(Location, Image.location_id == Location.id)
+        .outerjoin(
+            LocationLabel,
+            (LocationLabel.location_id == Location.id)
+            & (LocationLabel.username == username),
+        )
         .where(
             Image.device == device,
             Image.date == date,
@@ -314,8 +321,8 @@ def _fetch_segment_locations(session, device: str, date: str) -> dict[int, tuple
     ).all()
 
     seg_locs: dict[int, list[tuple[str, bool, float | None, float | None]]] = {}
-    for seg_id, name, address, stop, lat, lon in rows:
-        display = name if name and name not in ("---", "Unknown Place", "") else (address or "")
+    for seg_id, name, address, stop, lat, lon, label in rows:
+        display = label or (name if name and name not in ("---", "Unknown Place", "") else (address or ""))
         seg_locs.setdefault(seg_id, []).append((display, bool(stop), lat, lon))
 
     result: dict[int, tuple[str, bool, float | None, float | None]] = {}

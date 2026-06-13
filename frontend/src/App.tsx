@@ -22,7 +22,7 @@ import FeedbackComponents from 'components/common/FeedbackComponents';
 import dayjs from 'dayjs';
 import Admin from 'pages/Admin';
 import Biometrics from 'pages/Biometrics';
-import FaceIntelligence from 'pages/Faces';
+import Profile from 'pages/Profile';
 import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
 import { Provider } from 'react-redux';
@@ -226,9 +226,15 @@ const App = () => {
                                             </PasswordLock>
                                         />
                                         <Route
+                                            path="/profile"
+                                            element=<PasswordLock>
+                                                <Profile />
+                                            </PasswordLock>
+                                        />
+                                        <Route
                                             path="/faces"
                                             element=<PasswordLock>
-                                                <FaceIntelligence />
+                                                <Profile />
                                             </PasswordLock>
                                         />
                                         <Route

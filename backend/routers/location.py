@@ -1,23 +1,24 @@
 import logging
+import uuid
 
 from fastapi import Depends, APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, delete
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from typing import  Annotated, Optional
+from typing import  Annotated, List, Optional
 
 from tasks import update_location_task
 from schemas.general import GPSInfo
-from auth import _require_owner
-from auth.auth_models import auth_dependency
+from auth import _require_owner, _require_any_access
+from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_and_user
 from auth.types import AccessLevel
 from database import get_session
 from schemas import CamelCaseModel
 
 from location.gps_pipeline import run_pipeline
-from database.models import Image, RawGPS, ImageGPS, SensorDevice
+from database.models import Image, RawGPS, ImageGPS, SensorDevice, Location, LocationLabel
 from datetime import datetime, timezone as py_timezone
 from sqlalchemy import update as sa_update
 from integrations.sessions.redis import redis_client as _redis_client
@@ -230,3 +231,207 @@ def get_gps_by_date(
         _redis_client.set_json_with_ttl(cache_key, result, ttl)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Labeled locations (per-user — Home / Work / custom, stored in location_labels)
+# ---------------------------------------------------------------------------
+
+class LabeledLocationOut(CamelCaseModel):
+    location_id: str
+    label: str
+    label_kind: str
+    name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address: Optional[str] = None
+
+
+class LabelRequest(CamelCaseModel):
+    location_id: Optional[str] = None   # existing detected stop; None => manual pin
+    label: str
+    label_kind: str = "other"           # home / work / other
+    name: Optional[str] = None          # required for a manual pin
+    latitude: Optional[float] = None    # required for a manual pin
+    longitude: Optional[float] = None
+
+
+def _bust_location_caches() -> None:
+    # Location names surface in cached day-nav + day browse payloads; relabeling
+    # is rare, so a broad bust is fine — the next read recomputes.
+    _redis_client.delete_pattern("day-nav:*")
+    _redis_client.delete_pattern("browse:day:*")
+
+
+@router.get("/labeled", summary="Get the user's labeled locations", response_model=List[LabeledLocationOut])
+def get_labeled_locations(
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_any_access(access_level)
+    rows = session.execute(
+        select(
+            LocationLabel.location_id,
+            LocationLabel.label,
+            LocationLabel.label_kind,
+            Location.name,
+            Location.address,
+            Location.latitude,
+            Location.longitude,
+        )
+        .join(Location, Location.id == LocationLabel.location_id)
+        .where(LocationLabel.username == user.username)
+    ).all()
+    return [
+        LabeledLocationOut(
+            location_id=str(lid),
+            label=label,
+            label_kind=kind,
+            name=name,
+            address=address,
+            latitude=lat,
+            longitude=lon,
+        )
+        for lid, label, kind, name, address, lat, lon in rows
+    ]
+
+
+@router.put("/label", summary="Set/replace a user's label for a location")
+def upsert_label(
+    req: LabelRequest,
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+
+    if req.location_id:
+        location_id = uuid.UUID(req.location_id)
+        if session.get(Location, location_id) is None:
+            raise HTTPException(status_code=404, detail="Location not found")
+    else:
+        # Manual pin — create (or reuse) a stop Location row for these coords.
+        if req.latitude is None or req.longitude is None:
+            raise HTTPException(status_code=400, detail="latitude/longitude required for a manual pin")
+        key = f"stop=True,manual_{req.latitude:.5f}_{req.longitude:.5f}"
+        name = req.name or "Custom place"
+        tz = find_timezone(req.longitude, req.latitude)
+        loc_stmt = (
+            insert(Location)
+            .values(
+                id=uuid.uuid4(),
+                key=key,
+                name=name,
+                stop=True,
+                latitude=req.latitude,
+                longitude=req.longitude,
+                timezone=tz,
+            )
+            .on_conflict_do_update(index_elements=["key"], set_={"name": name})
+            .returning(Location.id)
+        )
+        location_id = session.execute(loc_stmt).scalar_one()
+
+    label_stmt = (
+        insert(LocationLabel)
+        .values(
+            id=uuid.uuid4(),
+            username=user.username,
+            location_id=location_id,
+            label=req.label,
+            label_kind=req.label_kind,
+        )
+        .on_conflict_do_update(
+            constraint="uq_location_label_user_loc",
+            set_={"label": req.label, "label_kind": req.label_kind},
+        )
+    )
+    session.execute(label_stmt)
+    session.commit()
+    _bust_location_caches()
+    return {"success": True, "locationId": str(location_id)}
+
+
+@router.delete("/label", summary="Remove a user's label from a location")
+def delete_label(
+    location_id: str,
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    session.execute(
+        delete(LocationLabel).where(
+            LocationLabel.username == user.username,
+            LocationLabel.location_id == uuid.UUID(location_id),
+        )
+    )
+    session.commit()
+    _bust_location_caches()
+    return {"success": True}
+
+
+class StopOption(CamelCaseModel):
+    location_id: str
+    name: str
+    address: Optional[str] = None
+    latitude: float
+    longitude: float
+    count: int
+    label: Optional[str] = None
+    label_kind: Optional[str] = None
+
+
+@router.get("/stops", summary="List detected stop locations for a device", response_model=List[StopOption])
+def list_stops(
+    device: str,
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_any_access(access_level)
+    rows = session.execute(
+        select(
+            Location.id,
+            Location.name,
+            Location.address,
+            Location.latitude,
+            Location.longitude,
+            func.count(Image.id),
+            LocationLabel.label,
+            LocationLabel.label_kind,
+        )
+        .join(Image, Image.location_id == Location.id)
+        .outerjoin(
+            LocationLabel,
+            (LocationLabel.location_id == Location.id)
+            & (LocationLabel.username == user.username),
+        )
+        .where(
+            Image.device == device,
+            Image.deleted == False,
+            Location.stop == True,
+            Location.latitude.isnot(None),
+            Location.longitude.isnot(None),
+        )
+        .group_by(Location.id, LocationLabel.label, LocationLabel.label_kind)
+        .order_by(func.count(Image.id).desc())
+    ).all()
+
+    stops: list[StopOption] = []
+    for lid, name, address, lat, lon, count, label, label_kind in rows:
+        display = name if name and name not in ("---", "Unknown Place", "") else (address or "")
+        if not display:
+            continue
+        stops.append(StopOption(
+            location_id=str(lid),
+            name=display,
+            address=address,
+            latitude=lat,
+            longitude=lon,
+            count=count,
+            label=label,
+            label_kind=label_kind,
+        ))
+    return stops

@@ -12,7 +12,7 @@ from sqlalchemy.sql import func, select
 
 from schemas.general import GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
 from auth import _require_owner, _require_any_access
-from auth.auth_models import auth_dependency
+from auth.auth_models import auth_dependency, get_user
 from auth.types import AccessLevel
 from core.config import DIR
 from database import get_session
@@ -222,6 +222,7 @@ def get_sensor_logs(
 async def get_day_nav(
     device: str,
     date: str,
+    user=Depends(get_user),
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
@@ -256,7 +257,7 @@ async def get_day_nav(
     if not rows:
         return []
 
-    seg_to_location = _fetch_segment_locations(session, device, date)
+    seg_to_location = _fetch_segment_locations(session, device, date, username=user.username)
 
     segments = []
     for row in rows:

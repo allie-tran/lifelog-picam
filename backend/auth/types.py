@@ -40,6 +40,12 @@ class SensorDeviceWithDate(CamelCaseModel):
     device_id: str
     device_nickname: str | None = None
     sensor_type: SensorType
+
+class SensorStatus(CamelCaseModel):
+    device_id: str
+    device_nickname: str | None = None
+    sensor_type: str
+    last_seen: datetime | None = None
 class LoginResponse(CamelCaseModel):
     token: str
     token_type: str = "bearer"

@@ -5,7 +5,6 @@ import {
     Card,
     CardContent,
     CircularProgress,
-    Container,
     Divider,
     FormControlLabel,
     IconButton,
@@ -26,10 +25,9 @@ import {
 import FaceClusters from 'components/faces/FaceClusters';
 import FaceEnroll from 'components/faces/FaceEnroll';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
-import React, { useEffect } from 'react';
-import { useSearchParams } from 'react-router';
-import useSWR from 'swr';
 import ImageWithDate from 'components/common/ImageWithDate';
+import React, { useEffect } from 'react';
+import useSWR from 'swr';
 import { useAppDispatch } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
 
@@ -73,16 +71,16 @@ const PersonPhotosModal = ({
                             placement="top"
                         >
                             <ImageWithDate
-                                image={{...photo, timezone: 'UTC', isVideo: false}}
+                                image={{ ...photo, timezone: 'UTC', isVideo: false }}
                                 device={device}
                                 onClick={() => {
-                                dispatch(
-                                    setZoomedImage({
-                                        image: photo.imagePath,
-                                        isVideo: false,
-                                    })
-                                );
-                            }}
+                                    dispatch(
+                                        setZoomedImage({
+                                            image: photo.imagePath,
+                                            isVideo: false,
+                                        })
+                                    );
+                                }}
                             />
                         </Tooltip>
                     ))}
@@ -155,6 +153,53 @@ const WhiteListedPerson = ({
         </>
     );
 };
+
+// ---------------------------------------------------------------------------
+// Add-face placeholder card
+// ---------------------------------------------------------------------------
+
+const DummyFaceCard = ({ onClick }: { onClick: () => void }) => (
+    <Stack alignItems="center" spacing={1} sx={{ width: 200 }}>
+        <Stack
+            spacing={2}
+            sx={{
+                p: 2,
+                border: '1px dashed',
+                borderColor: 'primary.main',
+                borderRadius: 1,
+                width: '100%',
+                '&:hover': { backgroundColor: 'background.default', cursor: 'pointer' },
+            }}
+            onClick={onClick}
+        >
+            <Typography variant="subtitle1" align="center" sx={{ mb: 1 }}>
+                <b>Add New Face</b>
+            </Typography>
+            <Box
+                sx={{
+                    backgroundColor: 'background.paper',
+                    height: 228,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 1,
+                }}
+            >
+                <IconButton
+                    color="primary"
+                    disableRipple
+                    sx={{ border: '1px dashed', borderColor: 'primary.main', alignSelf: 'center' }}
+                    size="large"
+                >
+                    <AddRounded />
+                </IconButton>
+            </Box>
+        </Stack>
+        <Button variant="outlined" color="primary" size="small" onClick={onClick} sx={{ mt: 1 }}>
+            Enroll Face
+        </Button>
+    </Stack>
+);
 
 // ---------------------------------------------------------------------------
 // Whitelist management section (only shown in whitelist mode)
@@ -263,12 +308,10 @@ const WhitelistSection = ({ device }: { device: string }) => {
 };
 
 // ---------------------------------------------------------------------------
-// Main page
+// People section — recognition mode toggle + clusters + whitelist
 // ---------------------------------------------------------------------------
 
-const FaceIntelligence = () => {
-    const [searchParams] = useSearchParams();
-    const device = searchParams.get('device') || '';
+const PeopleSection = ({ device }: { device: string }) => {
     const [toggling, setToggling] = React.useState(false);
     const [modeSnackbar, setModeSnackbar] = React.useState<string | null>(null);
     const [selectedPerson, setSelectedPerson] = React.useState<string | null>(null);
@@ -300,7 +343,7 @@ const FaceIntelligence = () => {
     };
 
     return (
-        <Container maxWidth="md" sx={{ py: 4 }}>
+        <Box>
             <Snackbar
                 open={modeSnackbar !== null}
                 autoHideDuration={7000}
@@ -308,7 +351,6 @@ const FaceIntelligence = () => {
                 message={modeSnackbar}
             />
 
-            {/* Mode toggle */}
             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
                     <GroupsRounded color="primary" />
@@ -343,7 +385,6 @@ const FaceIntelligence = () => {
                 <FaceClusters onSelect={(name) => setSelectedPerson(name)} />
             </Box>
 
-            {/* Whitelist management — only in whitelist mode */}
             {keepFaceRecognition && (
                 <>
                     <Divider sx={{ my: 3 }} />
@@ -358,55 +399,8 @@ const FaceIntelligence = () => {
                     onClose={() => setSelectedPerson(null)}
                 />
             )}
-        </Container>
+        </Box>
     );
 };
 
-// ---------------------------------------------------------------------------
-// Add-face placeholder card
-// ---------------------------------------------------------------------------
-
-const DummyFaceCard = ({ onClick }: { onClick: () => void }) => (
-    <Stack alignItems="center" spacing={1} sx={{ width: 200 }}>
-        <Stack
-            spacing={2}
-            sx={{
-                p: 2,
-                border: '1px dashed',
-                borderColor: 'primary.main',
-                borderRadius: 1,
-                width: '100%',
-                '&:hover': { backgroundColor: 'background.default', cursor: 'pointer' },
-            }}
-            onClick={onClick}
-        >
-            <Typography variant="subtitle1" align="center" sx={{ mb: 1 }}>
-                <b>Add New Face</b>
-            </Typography>
-            <Box
-                sx={{
-                    backgroundColor: 'background.paper',
-                    height: 228,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 1,
-                }}
-            >
-                <IconButton
-                    color="primary"
-                    disableRipple
-                    sx={{ border: '1px dashed', borderColor: 'primary.main', alignSelf: 'center' }}
-                    size="large"
-                >
-                    <AddRounded />
-                </IconButton>
-            </Box>
-        </Stack>
-        <Button variant="outlined" color="primary" size="small" onClick={onClick} sx={{ mt: 1 }}>
-            Enroll Face
-        </Button>
-    </Stack>
-);
-
-export default FaceIntelligence;
+export default PeopleSection;

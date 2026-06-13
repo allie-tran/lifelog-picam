@@ -3,7 +3,7 @@ from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update as sa_update
 from database import get_session
 
 from sqlalchemy.dialects.postgresql import insert
@@ -17,7 +17,7 @@ from auth.auth_models import (
     verify_token,
     verify_user,
 )
-from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, User, UserResponse
+from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, SensorStatus, User, UserResponse
 from database.models import Device, SensorDevice
 from core.dependencies import CamelCaseModel
 
@@ -201,6 +201,13 @@ def remove_device_access(
     return {"success": True}
 
 
+def _owns_sensor(user: User, device_id: str, sensor_type: str) -> bool:
+    return any(
+        s.device_id == device_id and s.sensor_type == sensor_type
+        for s in (user.sensors or [])
+    )
+
+
 @router.delete("/remove-sensor", dependencies=[Depends(get_user)])
 def remove_sensor_access(
     username: str = Query(...),
@@ -209,7 +216,10 @@ def remove_sensor_access(
     admin_user: User = Depends(get_user),
     db_session: session.Session = Depends(get_session),
 ):
-    if not admin_user.is_admin:
+    # Admin can remove any sensor; a user may remove a sensor they own.
+    if not admin_user.is_admin and not (
+        username == admin_user.username and _owns_sensor(admin_user, device_id, sensor_type)
+    ):
         raise HTTPException(status_code=403, detail="Not authorized")
 
     db_session.execute(
@@ -225,3 +235,55 @@ def remove_sensor_access(
         {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}},
     )
     return {"success": True}
+
+
+@router.get("/my-sensors", response_model=list[SensorStatus], dependencies=[Depends(get_user)])
+def my_sensors(
+    user: User = Depends(get_user),
+    db_session: session.Session = Depends(get_session),
+):
+    """List the logged-in user's sensor devices, enriched with last-seen from Postgres."""
+    sensors = user.sensors or []
+    if not sensors:
+        return []
+    device_ids = [s.device_id for s in sensors]
+    rows = db_session.execute(
+        select(SensorDevice.device_id, SensorDevice.sensor_type, SensorDevice.last_seen)
+        .where(SensorDevice.device_id.in_(device_ids))
+    ).all()
+    last_seen_map = {(d, t): ls for d, t, ls in rows}
+    return [
+        SensorStatus(
+            device_id=s.device_id,
+            device_nickname=s.device_nickname,
+            sensor_type=s.sensor_type,
+            last_seen=last_seen_map.get((s.device_id, s.sensor_type)),
+        )
+        for s in sensors
+    ]
+
+
+@router.put("/rename-sensor", dependencies=[Depends(get_user)])
+def rename_sensor(
+    device_id: str = Query(...),
+    sensor_type: str = Query(...),
+    nickname: str = Query(...),
+    user: User = Depends(get_user),
+    db_session: session.Session = Depends(get_session),
+):
+    """Rename a sensor device. Admin can rename any; a user may rename a sensor they own."""
+    if not user.is_admin and not _owns_sensor(user, device_id, sensor_type):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    db_session.execute(
+        sa_update(SensorDevice)
+        .where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == sensor_type)
+        .values(device_nickname=nickname)
+    )
+    db_session.commit()
+
+    User.update_one(
+        {"username": user.username, "sensors.device_id": device_id, "sensors.sensor_type": sensor_type},
+        {"$set": {"sensors.$.device_nickname": nickname}},
+    )
+    return {"success": True, "deviceNickname": nickname}
