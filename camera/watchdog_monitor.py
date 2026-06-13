@@ -180,29 +180,33 @@ if __name__ == "__main__":
     observer.schedule(event_handler, OUTPUT, recursive=True)
     observer.start()
 
-    # 3. Main loop — upload whenever there is work and connectivity.
-    # A periodic re-scan of today's folder is the safety net: if the watchdog
-    # ever misses a file (e.g. an event type it doesn't handle, or a dropped
-    # inotify event), the reconcile with the server still finds and queues it,
-    # so new images can't get stuck unuploaded.
-    RESCAN_INTERVAL = 120  # seconds
-    last_scan = 0.0
+    # 3. Main loop — batched uploads.
+    # Images keep arriving (~1 per 10s) and queue up via the watchdog, but we
+    # only open the network once per BATCH_INTERVAL and push the whole backlog
+    # in a single burst. Between bursts there is no traffic, so the WiFi radio
+    # can drop into power-save/doze instead of waking every 10s — saves battery
+    # on the Pi Zero 2W. Tradeoff: images arrive in bursts, up to BATCH_INTERVAL
+    # late. Every 2nd burst also reconciles today's folder with the server, so a
+    # file the watchdog ever missed still gets uploaded.
+    BATCH_INTERVAL = 60  # seconds between upload bursts
+    last_batch = 0.0     # 0 -> first burst fires immediately (drains startup backlog)
+    burst_count = 0
     try:
         while True:
             now = time.monotonic()
-            if now - last_scan >= RESCAN_INTERVAL:
-                last_scan = now
+            if now - last_batch >= BATCH_INTERVAL:
+                last_batch = now
                 if check_if_connected():
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    for f in check_if_folder_is_synced(today):
-                        upload_queue.put(f)
-
-            if not upload_queue.empty():
-                if check_if_connected():
-                    failures = process_queue()
+                    burst_count += 1
+                    # Reconcile roughly every 2nd burst (~2 * BATCH_INTERVAL).
+                    if burst_count % 2 == 0:
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        for f in check_if_folder_is_synced(today):
+                            upload_queue.put(f)
+                    if not upload_queue.empty():
+                        failures = process_queue()
                 else:
-                    print("No internet, waiting 60s...")
-                    time.sleep(60)
+                    print("No internet, will retry next burst...")
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
