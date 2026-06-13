@@ -1,6 +1,7 @@
 pynacl
 tzlocal
 aioserial
+pynmea2
 watchdog
 opencv-python
 picamzero

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import aioserial
 import cv2
+import pynmea2
 from picamzero import Camera
 
 from common import OUTPUT, box, load_gps, save_gps
@@ -35,24 +36,6 @@ SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 9600
 CAPTURE_INTERVAL = 10  # seconds
 
-# Global dictionary holding the latest valid state.
-# If no fix has happened yet, it will fallback gracefully to "Searching..."
-def parse_nmea_degrees(nmea_value, direction):
-    """Converts NMEA DDMM.MMMM to Decimal Degrees"""
-    if not nmea_value:
-        return ""
-    try:
-        float_val = float(nmea_value)
-        degrees = int(float_val / 100)
-        minutes = float_val - (degrees * 100)
-        decimal_degrees = degrees + (minutes / 60.0)
-        if direction in ["S", "W"]:
-            decimal_degrees = -decimal_degrees
-        return decimal_degrees
-    except ValueError:
-        return ""
-
-
 # --- Async Task 1: Continuous GPS Monitor ---
 async def gps_worker():
     global gps
@@ -69,6 +52,10 @@ async def gps_worker():
         print(f"GPS Worker fatal error (serial open): {e}")
         return
 
+    # Altitude only appears in GGA sentences (RMC has none), so remember the last
+    # good one and attach it to the next position fix.
+    last_altitude = None
+
     while True:
         try:
             # Check if there is data to read natively without stalling the event loop
@@ -76,28 +63,42 @@ async def gps_worker():
                 # Read a line asynchronously
                 raw_line = await aioserial_instance.readline_async()
                 line = raw_line.decode("utf-8", errors="replace").strip()
-                print("Debug GPS Line:", line)
+                if not line.startswith("$"):
+                    await asyncio.sleep(0.1)
+                    continue
 
-                if line.startswith("$GPRMC"):
-                    data = line.split(",")
+                try:
+                    # pynmea2 is talker-agnostic: it parses $GPRMC, $GNRMC, $GLRMC,
+                    # etc. (the old code only matched $GP* and missed multi-GNSS
+                    # modules that emit $GN*), and validates the checksum.
+                    msg = pynmea2.parse(line)
+                except pynmea2.ParseError:
+                    await asyncio.sleep(0.1)
+                    continue
 
-                    # A valid $GPRMC with the fields we read needs at least 7 commas
-                    # (index 6 for lon hemisphere); guard against truncated sentences.
-                    if len(data) > 6 and data[2] == "A":  # 'A' = Valid Active Fix
-                        lat = parse_nmea_degrees(data[3], data[4])
-                        lon = parse_nmea_degrees(data[5], data[6])
-                        elevation = float(data[9]) if len(data) > 9 and data[9] else 0.0
+                stype = msg.sentence_type
 
-                        # Update the global object immediately
-                        gps = {
-                            "timestamp": datetime.now(timezone.utc)
-                            .astimezone()
-                            .isoformat(),
-                            "latitude": lat,
-                            "longitude": lon,
-                            "elevation": elevation,
-                        }
-                        save_gps(gps)
+                if stype == "GGA":
+                    # gps_qual 0 = no fix; altitude is field-named, not guessed.
+                    if getattr(msg, "gps_qual", 0) and msg.altitude is not None:
+                        last_altitude = float(msg.altitude)
+
+                elif stype == "RMC" and getattr(msg, "status", "V") == "A":
+                    # 'A' = active/valid fix. .latitude/.longitude are already
+                    # signed decimal degrees.
+                    gps = {
+                        "timestamp": datetime.now(timezone.utc)
+                        .astimezone()
+                        .isoformat(),
+                        "latitude": msg.latitude,
+                        "longitude": msg.longitude,
+                        "elevation": last_altitude,
+                    }
+                    save_gps(gps)
+                    print(
+                        f"GPS fix: {msg.latitude:.6f},{msg.longitude:.6f} "
+                        f"alt={last_altitude}"
+                    )
         except Exception as e:
             # A single malformed line / transient read error must not kill the worker.
             print(f"GPS Worker read error (continuing): {e}")
