@@ -95,7 +95,7 @@ def describe_segment(
     )
 
     image_bytes = []
-    if len(segment) > 20:
+    if len(segment) > 16:
         segment = [segment[i] for i in sorted(random.sample(range(len(segment)), 20))]
         logger.debug(f"Segment {segment_id}: downsampled to 20 images")
 
@@ -104,6 +104,8 @@ def describe_segment(
             image_path = f"{THUMBNAIL_DIR}/{device}/{image_path}"
         try:
             image = Image.open(image_path).convert("RGB")
+            # resize to 512x512 for LLM input
+            # image.thumbnail((512, 512), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
             image.save(buf, format="JPEG")
             image_bytes.append(buf.getvalue())
