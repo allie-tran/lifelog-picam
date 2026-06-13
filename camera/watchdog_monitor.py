@@ -47,10 +47,7 @@ def _wait_for_file_ready(file_path: str) -> bool:
 
 
 class NewFileHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        path = event.src_path
+    def _queue(self, path: str):
         if not (path.endswith(".mp4") or path.endswith(IMAGE_EXTENSION)):
             return
         if _wait_for_file_ready(path):
@@ -58,6 +55,19 @@ class NewFileHandler(FileSystemEventHandler):
             upload_queue.put(path)
         else:
             print(f"File never became ready, skipping: {path}")
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        self._queue(event.src_path)
+
+    def on_moved(self, event):
+        # auto_capture writes atomically (temp file -> os.replace), so the final
+        # .jpg arrives as a move/rename, not a create. Watch the destination too,
+        # otherwise new images are never queued for upload.
+        if event.is_directory:
+            return
+        self._queue(event.dest_path)
 
 
 def process_queue():
@@ -166,10 +176,23 @@ if __name__ == "__main__":
     observer.schedule(event_handler, OUTPUT, recursive=True)
     observer.start()
 
-    # 3. Main loop — upload whenever there is work and connectivity
-    backoff = 1
+    # 3. Main loop — upload whenever there is work and connectivity.
+    # A periodic re-scan of today's folder is the safety net: if the watchdog
+    # ever misses a file (e.g. an event type it doesn't handle, or a dropped
+    # inotify event), the reconcile with the server still finds and queues it,
+    # so new images can't get stuck unuploaded.
+    RESCAN_INTERVAL = 120  # seconds
+    last_scan = 0.0
     try:
         while True:
+            now = time.monotonic()
+            if now - last_scan >= RESCAN_INTERVAL:
+                last_scan = now
+                if check_if_connected():
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    for f in check_if_folder_is_synced(today):
+                        upload_queue.put(f)
+
             if not upload_queue.empty():
                 if check_if_connected():
                     failures = process_queue()
