@@ -3,7 +3,6 @@ import time
 from datetime import datetime
 from queue import Queue, Empty
 
-import requests
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -16,6 +15,7 @@ from common import (
     check_if_connected,
     send_image,
     send_video,
+    session,
     start_timezone_sync,
 )
 
@@ -122,7 +122,7 @@ def check_if_folder_is_synced(date: str):
 
     try:
         print(f"Checking sync status for folder {date} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        response = requests.post(CHECK_ALL_URL, json=payload, timeout=10)
+        response = session.post(CHECK_ALL_URL, json=payload, timeout=10)
         if response.status_code == 200:
             missing, deleted = response.json()
             missing = set(os.path.join(DATE_DIR, f) for f in missing)

@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import os
 import time
 from datetime import datetime, timezone
@@ -117,16 +118,15 @@ async def image_worker():
         )
         DATE_DIR = os.path.join(OUTPUT, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
-        if not os.path.exists(DATE_DIR):
-            os.makedirs(DATE_DIR)
+        os.makedirs(DATE_DIR, exist_ok=True)
 
         image_path = os.path.join(DATE_DIR, file_name)
 
         try:
-            # Capture logic (keeps your exact encoding steps)
+            # capture_array() already returns frames at CAPTURE_SIZE (still_size),
+            # so no resize is needed — just RGB->BGR for cv2's JPEG encoder.
             array = cam.capture_array()
             frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
-            frame = cv2.resize(frame, CAPTURE_SIZE, interpolation=cv2.INTER_AREA)
             io_buf = cv2.imencode(
                 ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
             )[1].tobytes()
@@ -160,8 +160,21 @@ async def image_worker():
         await asyncio.sleep(CAPTURE_INTERVAL)
 
 
+def cleanup_partial_files():
+    """Remove orphaned *.tmp left by an interrupted atomic write so they don't
+    accumulate on the SD card (the uploader ignores them by extension)."""
+    for tmp in glob.glob(os.path.join(OUTPUT, "**", "*.tmp"), recursive=True):
+        try:
+            os.remove(tmp)
+            print(f"Removed stale temp file: {tmp}")
+        except OSError:
+            pass
+
+
 # --- Core Async Loop Controller ---
 async def main():
+    cleanup_partial_files()
+
     while not check_if_camera_connected():
         print("Camera not connected. Retrying in 10 seconds...")
         await asyncio.sleep(10)

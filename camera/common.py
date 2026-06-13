@@ -34,6 +34,11 @@ OUTPUT = "Camera/timelapse"
 
 IMAGE_EXTENSION = ".jpg"
 
+# Shared HTTP session so uploads reuse one TCP + TLS connection instead of
+# doing a fresh handshake every ~10s. Saves CPU, radio time and latency on the
+# Pi Zero 2W. All backend calls (image/video/GPS/sync) go through this.
+session = requests.Session()
+
 
 # Sentinel outcomes for a failed upload. Distinct objects so callers can tell
 # them apart from a successful (truthy) response body.
@@ -70,7 +75,7 @@ def send_image(image_path, uploaded_files, LOG_FILE):
         files = {
             "file": (os.path.basename(image_path), img_file, f"image/jpeg"),
         }
-        response = requests.put(
+        response = session.put(
             UPLOAD_URL,
             files=files,
             data={"rotation": -90, "device": device_id, "tz": str(get_localzone())},
@@ -103,7 +108,7 @@ def send_video(video_path, uploaded_files, LOG_FILE):
         files = {
             "file": (os.path.basename(video_path), vid_file, "video/h264"),
         }
-        response = requests.put(
+        response = session.put(
             UPLOAD_VIDEO_URL,
             files=files,
             headers={"X-Device-ID": device_id},
@@ -138,7 +143,7 @@ def send_gps(gps_path):
             "device_id": device_id,
             "elevation": float(elevation) if elevation != "None" else None,
         }
-        response = requests.put(UPLOAD_GPS_URL, json=payload)
+        response = session.put(UPLOAD_GPS_URL, json=payload, timeout=_UPLOAD_TIMEOUT)
 
         if response.status_code == 200:
             print(f"Uploaded GPS data: {payload}")
@@ -151,7 +156,7 @@ def send_gps(gps_path):
 
 
 def get_latest_gps():
-    response = requests.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}", timeout=10)
+    response = session.get(f"{BACKEND_URL}/location/latest-gps?device={device_id}", timeout=10)
     if response.status_code == 200:
         gps_data = response.json()
         return gps_data
