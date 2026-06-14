@@ -94,6 +94,8 @@ export type NavSegment = {
     activityGroup: string;
     locationName?: string | null;
     locationStop?: boolean | null;
+    mode?: string | null;
+    labelKind?: string | null;
 };
 
 export const getDayNavSegments = async (device: string, date: string): Promise<NavSegment[]> => {

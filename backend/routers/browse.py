@@ -218,6 +218,52 @@ def get_sensor_logs(
 
     return LogResponse(keys=list(all_res.keys()), logs=all_res)
 
+def _modal_by_segment(rows) -> dict[int, str]:
+    """Collapse (segment_id, value) rows into {segment_id: modal value}, skipping falsy values."""
+    by_seg: dict[int, list[str]] = {}
+    for seg_id, value in rows:
+        if value:
+            by_seg.setdefault(seg_id, []).append(value)
+    return {sid: Counter(vs).most_common(1)[0][0] for sid, vs in by_seg.items()}
+
+
+def _fetch_segment_modes(session, device: str, date: str) -> dict[int, str]:
+    """{segment_id: modal transport mode} from ImageGPS.mode."""
+    rows = session.execute(
+        select(Image.segment_id, ImageGPS.mode)
+        .join(ImageGPS, ImageGPS.image_id == Image.id)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+            ImageGPS.mode.isnot(None),
+        )
+    ).all()
+    return _modal_by_segment(rows)
+
+
+def _fetch_segment_label_kinds(session, device: str, date: str, username: str | None = None) -> dict[int, str]:
+    """{segment_id: modal user label_kind (home/work/other)} for the segment's location."""
+    from database.models import LocationLabel
+    rows = session.execute(
+        select(Image.segment_id, LocationLabel.label_kind)
+        .join(Location, Image.location_id == Location.id)
+        .join(
+            LocationLabel,
+            (LocationLabel.location_id == Location.id)
+            & (LocationLabel.username == username),
+        )
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+        )
+    ).all()
+    return _modal_by_segment(rows)
+
+
 @router.get("/day-nav")
 async def get_day_nav(
     device: str,
@@ -229,7 +275,7 @@ async def get_day_nav(
     """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
     _require_owner(access_level)
 
-    cache_key = f"day-nav:{device}:{date}"
+    cache_key = f"day-nav:v2:{device}:{date}"
     cached = redis_client.get_json(cache_key)
     if cached is not None:
         return cached
@@ -258,6 +304,8 @@ async def get_day_nav(
         return []
 
     seg_to_location = _fetch_segment_locations(session, device, date, username=user.username)
+    seg_mode = _fetch_segment_modes(session, device, date)
+    seg_label_kind = _fetch_segment_label_kinds(session, device, date, username=user.username)
 
     segments = []
     for row in rows:
@@ -274,6 +322,8 @@ async def get_day_nav(
             "activityGroup": row.activity_group or "",
             "locationName": loc[0] if loc else None,
             "locationStop": loc[1] if loc else None,
+            "mode": seg_mode.get(row.segment_id),
+            "labelKind": seg_label_kind.get(row.segment_id),
         })
 
     today = datetime.now().strftime("%Y-%m-%d")

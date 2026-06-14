@@ -21,6 +21,46 @@ function fmtDuration(totalSeconds: number): string {
     return `${m}m`;
 }
 
+// Transport-mode → emoji (from ImageGPS.mode). 'stationary'/null → no icon.
+const MODE_ICON: Record<string, string> = {
+    flight: '✈️',
+    car: '🚗',
+    vehicle: '🚗',
+    public_transport: '🚌',
+    train: '🚆',
+    walk: '🚶',
+    cycle: '🚴',
+};
+
+// User location label kind → emoji.
+const LABEL_ICON: Record<string, string> = {
+    home: '🏠',
+    work: '💼',
+};
+
+function modal<T>(items: T[]): T | null {
+    if (!items.length) return null;
+    const counts = new Map<T, number>();
+    for (const it of items) counts.set(it, (counts.get(it) ?? 0) + 1);
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+// Header label + tooltip text for a location run (transit vs. place, with icons).
+function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
+    const modeIcon = run.mode ? MODE_ICON[run.mode] ?? '' : '';
+    const labelIcon = run.labelKind ? LABEL_ICON[run.labelKind] ?? '' : '';
+    const headerText = run.isMove
+        ? `${modeIcon} In transit`.trim()
+        : `${labelIcon} ${run.name ?? '—'}`.trim();
+    const tipBits = [
+        run.isMove ? `${modeIcon} In transit` : `📍 ${run.name ?? 'Unknown'}`,
+        `${dayjs(run.startMs).format('HH:mm')}–${dayjs(run.endMs).format('HH:mm')}`,
+        fmtDuration(run.totalSeconds),
+    ];
+    if (run.mode && !run.isMove) tipBits.push(`${modeIcon} ${run.mode}`.trim());
+    return { headerText, tipTitle: tipBits.join(' · ') };
+}
+
 type LocationRun = {
     name: string | null;
     startMs: number;
@@ -28,6 +68,8 @@ type LocationRun = {
     totalSeconds: number;
     segments: NavSegment[];
     isMove: boolean;
+    mode: string | null;
+    labelKind: string | null;
 };
 
 function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
@@ -47,6 +89,8 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
                 totalSeconds: seg.duration,
                 segments: [seg],
                 isMove: false,
+                mode: null,
+                labelKind: null,
             });
         }
     }
@@ -54,6 +98,11 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
         run.isMove = run.segments.some(
             (s) => (s.locationName ?? '').includes('→')
         );
+        run.mode = modal(run.segments.map((s) => s.mode).filter(Boolean) as string[]);
+        // labelKind isn't modal: a single home/work label anywhere in the run
+        // wins (a labeled place dominates over its unlabeled neighbour segments).
+        run.labelKind =
+            run.segments.map((s) => s.labelKind).find((k) => k === 'home' || k === 'work') ?? null;
     }
     return runs;
 }
@@ -98,6 +147,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                     // Relative widths of segments within this run (normalize to fill the cell)
                     const runTotalMs = run.segments.reduce((sum, seg) =>
                         sum + (dayjs(seg.endTime).valueOf() - dayjs(seg.startTime).valueOf()), 0) || 1;
+                    const header = runHeader(run);
                     return (
                         <Box
                             key={ri}
@@ -119,7 +169,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                         >
                             {/* Location header */}
                             <Tooltip
-                                title={`📍 ${run.name ?? 'Unknown'} · ${dayjs(run.startMs).format('HH:mm')}–${dayjs(run.endMs).format('HH:mm')} · ${fmtDuration(run.totalSeconds)}`}
+                                title={header.tipTitle}
                                 followCursor
                             >
                                 <Box
@@ -145,7 +195,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     }}
                                 >
                                     <Typography variant="caption" fontWeight={700} noWrap sx={{ lineHeight: 1.2, color: '#fff' }}>
-                                        {run.isMove ? 'In transit' : (run.name ?? '—')}
+                                        {header.headerText}
                                     </Typography>
                                     <Typography variant="caption" noWrap sx={{ fontSize: '0.65rem', lineHeight: 1.2, color: 'rgba(255,255,255,0.8)' }}>
                                         {fmtDuration(run.totalSeconds)}

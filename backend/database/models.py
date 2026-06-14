@@ -391,6 +391,7 @@ class ImageGPS(Base):
     satellites: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str | None] = mapped_column(Text)
     gap_s: Mapped[float | None] = mapped_column(Float)
+    mode: Mapped[str | None] = mapped_column(Text)  # transport mode of the segment this image falls in
     interpolated: Mapped[bool | None] = mapped_column(Boolean, default=False)
     timezone: Mapped[str | None] = mapped_column(Text)
     geog: Mapped[Any] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)

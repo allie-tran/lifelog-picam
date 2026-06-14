@@ -12,6 +12,7 @@ from sqlalchemy import bindparam, func, select, update
 from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
 from location.utils import find_timezone
+from location import transport_mode as tmode
 
 from services.segmentation import load_all_segments
 
@@ -430,6 +431,10 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
     stats = Counter()
     gaps = []  # track actual time deltas for distribution insight
     rows = []
+    # Memoize the flight decision per GPS gap (keyed by the right point's index).
+    # Many consecutive images interpolate within the same (left, right) pair, and
+    # is_flight_pair does two airport-polygon lookups — compute it once per gap.
+    flight_gap_cache: dict[int, bool] = {}
 
     for image in images:
         img_ts = image.timestamp.replace(
@@ -471,12 +476,29 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                 if total_gap > 0:
                     img_gap = (img_ts - left["timestamp"]).total_seconds()
                     ratio = img_gap / total_gap
+                    # Flight hops curve over hundreds of km, so a straight lat/lon
+                    # blend would place mid-flight images far off the real path.
+                    # Slerp along the great circle instead when both ends are
+                    # airports (or the hop is unambiguously airborne).
+                    is_flight = flight_gap_cache.get(j)
+                    if is_flight is None:
+                        is_flight = tmode.is_flight_pair(
+                            left["latitude"], left["longitude"],
+                            right["latitude"], right["longitude"], total_gap,
+                        )
+                        flight_gap_cache[j] = is_flight
+                    if is_flight:
+                        lat_i, lon_i = tmode.great_circle_point(
+                            left["latitude"], left["longitude"],
+                            right["latitude"], right["longitude"], ratio,
+                        )
+                    else:
+                        lat_i = left["latitude"] + ratio * (right["latitude"] - left["latitude"])
+                        lon_i = left["longitude"] + ratio * (right["longitude"] - left["longitude"])
                     closest.update(
                         {
-                            "latitude": left["latitude"]
-                            + ratio * (right["latitude"] - left["latitude"]),
-                            "longitude": left["longitude"]
-                            + ratio * (right["longitude"] - left["longitude"]),
+                            "latitude": lat_i,
+                            "longitude": lon_i,
                             "elevation": left["elevation"]
                             + ratio * (right["elevation"] - left["elevation"]),
                             "timestamp": img_ts,
@@ -532,6 +554,14 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
     return rows
 
 # ─── Step 8: Geocode segments → Location table ───────────────────────────────
+
+# Buffer added around a segment's [start, end] when assigning images to it, so
+# images captured just outside the GPS bounds still attach. The same window is
+# reused for transport-mode assignment so an image's mode and location_id come
+# from the same segment.
+_SEG_IMG_PRE = timedelta(seconds=5)
+_SEG_IMG_POST = timedelta(seconds=15)
+
 
 def enrich_and_index_segments(
     session: Session,
@@ -666,14 +696,163 @@ def enrich_and_index_segments(
             session.execute(
                 update(Image)
                 .where(Image.device == device)
-                .where(Image.timestamp.between(start_dt - timedelta(seconds=5),
-                                               end_dt + timedelta(seconds=15))) # Add small buffer to capture images just outside segment bounds
+                .where(Image.timestamp.between(start_dt - _SEG_IMG_PRE,
+                                               end_dt + _SEG_IMG_POST))
                 .values(location_id=location_id)
             )
 
         logger.info(f"Upserted location {name} (stop={is_stop}) with key={key} and assigned to images between {start_ts} and {end_ts}")
 
     session.commit()
+
+# ─── Step 7b: Transport mode per segment ─────────────────────────────────────
+
+
+def _segment_speed_p85(df: pd.DataFrame, start_ts, end_ts) -> tuple[float, float]:
+    """Robust (p85) consecutive-point speed [m/s] and total span distance [m]."""
+    seg = df[(df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)]
+    seg = seg.sort_values("timestamp")
+    lat = seg["latitude"].to_numpy()
+    lon = seg["longitude"].to_numpy()
+    alt = seg["elevation"].fillna(0.0).to_numpy() if "elevation" in seg else np.zeros(len(seg))
+    ts = seg["timestamp"].to_numpy()
+    if len(seg) < 2:
+        return 0.0, 0.0
+    speeds = []
+    for i in range(1, len(seg)):
+        dt = (ts[i] - ts[i - 1]) / np.timedelta64(1, "s")
+        if dt <= 0:
+            continue
+        d = haversine_distance(lat[i - 1], lon[i - 1], lat[i], lon[i], alt[i - 1], alt[i])
+        speeds.append(d / dt)
+    p85 = float(np.percentile(speeds, 85)) if speeds else 0.0
+    span = haversine_distance(lat[0], lon[0], lat[-1], lon[-1], alt[0], alt[-1])
+    return p85, span
+
+
+def compute_segment_modes(
+    session: Session,
+    segments: list[dict],
+    df: pd.DataFrame,
+    device: str,
+    date: str,
+    image_rows: list[dict],
+) -> None:
+    """
+    Set seg["mode"] for every segment that has a pending image, and d["mode"]
+    for image rows that don't already have a stored mode.
+
+    GPS kinematics give a coarse mode (stationary/walk/cycle/vehicle/flight);
+    the segment's CLIP image features then split vehicle→car/public_transport
+    and confirm flights via tmode.fuse_mode.
+
+    Images whose ImageGPS row already has a non-null mode are left untouched:
+    they're skipped here (no GPS/CLIP recompute) and the upsert preserves the
+    stored value via COALESCE. Only first-time/unset images get classified.
+    """
+    # Image ids that already carry a stored mode — skip them entirely.
+    already_moded: set = set(
+        session.execute(
+            select(ImageGPS.image_id)
+            .join(Image, Image.id == ImageGPS.image_id)
+            .where(Image.device == device, Image.date == date, ImageGPS.mode.isnot(None))
+        ).scalars()
+    )
+    pending = [d for d in image_rows if d["image_id"] not in already_moded]
+    if not pending:
+        return
+
+    # Fetch CLIP features for just the pending images, keyed by image_id —
+    # already-moded images never get reclassified, so loading their embeddings
+    # is wasted work on every rerun.
+    pending_ids = [d["image_id"] for d in pending]
+    feat_by_id: dict = {}
+    try:
+        from database.models import CLIPEmbedding
+        rows = session.execute(
+            select(CLIPEmbedding.image_id, CLIPEmbedding.embedding)
+            .where(CLIPEmbedding.image_id.in_(pending_ids))
+        )
+        feat_by_id = {r.image_id: np.asarray(r.embedding, dtype=np.float32) for r in rows}
+    except Exception as exc:
+        logger.warning("Could not load CLIP embeddings for mode refinement: %s", exc)
+
+    # Map each pending image row to the segment it falls in. Prefer strict
+    # [start, end] containment (the same span that set its location_id); only
+    # fall back to the buffered window when no segment strictly contains it.
+    # Buffered windows overlap (_SEG_IMG_PRE/_SEG_IMG_POST), so a first-match on the
+    # buffer alone could grab an earlier neighbour than the locating segment.
+    img_seg: dict = {}  # image_id -> segment index
+    for d in pending:
+        ts = pd.Timestamp(d["timestamp"])
+        strict = None
+        buffered = None
+        for si, seg in enumerate(segments):
+            if seg["start_ts"] <= ts <= seg["end_ts"]:
+                strict = si
+                break
+            if buffered is None and (
+                seg["start_ts"] - _SEG_IMG_PRE <= ts <= seg["end_ts"] + _SEG_IMG_POST
+            ):
+                buffered = si
+        match = strict if strict is not None else buffered
+        if match is not None:
+            img_seg[d["image_id"]] = match
+
+    for si in set(img_seg.values()):
+        seg = segments[si]
+        if seg.get("is_stop"):
+            mode = tmode.STATIONARY
+        else:
+            p85, span = _segment_speed_p85(df, seg["start_ts"], seg["end_ts"])
+            flight = tmode.is_flight_pair(
+                seg["start_lat"], seg["start_lon"],
+                seg["end_lat"], seg["end_lon"],
+                (seg["end_ts"] - seg["start_ts"]).total_seconds(),
+            )
+            gps_mode = tmode.classify_segment_gps(p85, span, flight)
+            # CLIP refinement over this segment's images.
+            feats = [
+                feat_by_id[iid]
+                for iid, s in img_seg.items()
+                if s == si and iid in feat_by_id
+            ]
+            clip_mode = tmode.clip_mode_for_features(np.stack(feats)) if feats else None
+            mode = tmode.fuse_mode(gps_mode, clip_mode)
+        seg["mode"] = mode
+
+    # Only set mode on pending rows that matched a segment. Rows with no segment
+    # match are left without "mode" → insert NULL → no stored value to preserve,
+    # so they reclassify on the next run (don't pin them to "unknown", which the
+    # COALESCE upsert would make permanent).
+    for d in pending:
+        si = img_seg.get(d["image_id"])
+        mode = segments[si].get("mode") if si is not None else None
+        if mode is not None:
+            d["mode"] = mode
+
+
+# ─── Persistence ──────────────────────────────────────────────────────────────
+
+def _upsert_image_gps(session, rows: list[dict]) -> None:
+    """Insert/update a batch of ImageGPS rows, preserving any already-stored mode."""
+    stmt = insert(ImageGPS).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="image_gps_image_id_key",
+        set_={
+            "latitude": stmt.excluded.latitude,
+            "longitude": stmt.excluded.longitude,
+            "elevation": stmt.excluded.elevation,
+            "timestamp": stmt.excluded.timestamp,
+            "timezone": stmt.excluded.timezone,
+            "formatted_time": stmt.excluded.formatted_time,
+            "source": stmt.excluded.source,
+            "gap_s": stmt.excluded.gap_s,
+            "mode": func.coalesce(ImageGPS.mode, stmt.excluded.mode),
+        },
+    )
+    session.execute(stmt)
+
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -717,6 +896,10 @@ def run_pipeline(session: Session, device: str, date: str):
     # Insert assigned GPS data for images in batches
     data = assign_gps_to_images(session, date, device, all_points, point_timestamps)
 
+    # 7b. Classify transport mode per segment (GPS kinematics + CLIP visual),
+    # tagging each image row with its segment's mode.
+    compute_segment_modes(session, segments, df, device, date, data)
+
     rows = []
     for d in data:
         if str(d["timezone"]) in ("None", "nan", ""):
@@ -733,19 +916,16 @@ def run_pipeline(session: Session, device: str, date: str):
                 "formatted_time": d["formatted_time"],
                 "source": "interpolated" if d.get("interpolated") else "nearest",
                 "gap_s": d.get("gaps_s", None),
+                "mode": d.get("mode"),
             }
         )
 
         if len(rows) >= 100:
-            stmt = insert(ImageGPS).values(rows)
-            stmt = stmt.on_conflict_do_update(constraint="image_gps_image_id_key", set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
-            session.execute(stmt)
+            _upsert_image_gps(session, rows)
             rows = []
 
     if rows:
-        stmt = insert(ImageGPS).values(rows)
-        stmt = stmt.on_conflict_do_update(constraint="image_gps_image_id_key", set_={"latitude": stmt.excluded.latitude, "longitude": stmt.excluded.longitude, "elevation": stmt.excluded.elevation, "timestamp": stmt.excluded.timestamp, "timezone": stmt.excluded.timezone, "formatted_time": stmt.excluded.formatted_time, "source": stmt.excluded.source, "gap_s": stmt.excluded.gap_s})
-        session.execute(stmt)
+        _upsert_image_gps(session, rows)
 
     # Update timezone to image
     rows = []
