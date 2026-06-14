@@ -188,15 +188,21 @@ if __name__ == "__main__":
     # on the Pi Zero 2W. Tradeoff: images arrive in bursts, up to BATCH_INTERVAL
     # late. Every 2nd burst also reconciles today's folder with the server, so a
     # file the watchdog ever missed still gets uploaded.
-    BATCH_INTERVAL = 60  # seconds between upload bursts
+    BATCH_INTERVAL = 60        # seconds between upload bursts when online
+    OFFLINE_MAX_INTERVAL = 1800  # cap backoff at 30 min when offline for hours
     last_batch = 0.0     # 0 -> first burst fires immediately (drains startup backlog)
     burst_count = 0
+    # When offline, back off the connectivity check exponentially (60s -> 120 ->
+    # 240 ... capped at OFFLINE_MAX_INTERVAL) so the WiFi radio isn't woken every
+    # minute during a multi-hour outage. Reset to BATCH_INTERVAL once back online.
+    current_interval = BATCH_INTERVAL
     try:
         while True:
             now = time.monotonic()
-            if now - last_batch >= BATCH_INTERVAL:
+            if now - last_batch >= current_interval:
                 last_batch = now
                 if check_if_connected():
+                    current_interval = BATCH_INTERVAL
                     burst_count += 1
                     # Reconcile roughly every 2nd burst (~2 * BATCH_INTERVAL).
                     if burst_count % 2 == 0:
@@ -206,7 +212,8 @@ if __name__ == "__main__":
                     if not upload_queue.empty():
                         failures = process_queue()
                 else:
-                    print("No internet, will retry next burst...")
+                    current_interval = min(current_interval * 2, OFFLINE_MAX_INTERVAL)
+                    print(f"No internet, next check in {current_interval}s...")
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
