@@ -5,3 +5,5 @@ deleted_images.txt
 auth.log
 *.pt
 features/
+celerybeat-schedule.dat
+celerybeat-schedule.dir

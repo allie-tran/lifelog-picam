@@ -87,6 +87,58 @@ class Location(Base):
     labels = relationship("LocationLabel", back_populates="location", cascade="all, delete-orphan")
 
 
+class OSMPoi(Base):
+    """
+    Offline gazetteer of named OSM points-of-interest (shops, cafes, amenities),
+    imported from a Geofabrik extract via ``batch/import_osm_pois.py``.
+
+    Live geocoders are unreliable for the "which of several adjacent venues was
+    I in" question — Overpass is frequently down and Foursquare is unwanted, so
+    candidates are served from this local table (same offline strategy as
+    ``location/airports.py``). ``location/poi_gazetteer.nearby_pois`` queries it
+    by ``geog`` radius; the stop's visual vector then disambiguates the
+    candidates so a GPS centroid drifting onto the shop next door is corrected.
+    """
+    __tablename__ = "osm_pois"
+    __table_args__ = (
+        Index("ix_osm_pois_geog", "geog", postgresql_using="gist"),
+        UniqueConstraint("osm_type", "osm_id", name="uq_osm_pois_element"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    osm_type: Mapped[str] = mapped_column(Text, nullable=False)   # node / way / relation
+    osm_id: Mapped[str] = mapped_column(Text, nullable=False)     # OSM element id
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(Text)            # human type, e.g. "cafe", "supermarket"
+    wikidata_id: Mapped[str | None] = mapped_column(Text)         # OSM wikidata=* tag, if present
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    country: Mapped[str | None] = mapped_column(Text)            # ISO code, for region-scoped imports
+    # spatial_index=False: the GIST index is declared explicitly above (and in
+    # the migration) so geoalchemy2's listener doesn't add a second one.
+    geog: Mapped[Any] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326, spatial_index=False), nullable=False
+    )
+
+
+class OSMTile(Base):
+    """
+    Coverage ledger for the lazily-filled ``osm_pois`` gazetteer.
+
+    The pipeline populates POIs on demand: the first stop in a grid cell triggers
+    one Overpass fetch for that cell, whose result is cached into ``osm_pois``.
+    A row here marks the cell as fetched so later stops reuse the cache instead
+    of re-querying Overpass. ``status='failed'`` rows are re-attempted (Overpass
+    is flaky); ``status='ok'`` rows are refreshed only once stale.
+    """
+    __tablename__ = "osm_tiles"
+
+    tile_lat: Mapped[float] = mapped_column(Float, primary_key=True)   # grid-floored
+    tile_lon: Mapped[float] = mapped_column(Float, primary_key=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str | None] = mapped_column(Text)                  # 'ok' | 'failed'
+
+
 class LocationLabel(Base):
     """Per-user label for a location (e.g. Home / Work). Keyed by Mongo username."""
     __tablename__ = "location_labels"

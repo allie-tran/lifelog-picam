@@ -325,7 +325,20 @@ _EMPTY: dict = {
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
-def enrich_stop(lat: float, lon: float) -> dict:
+def _poi_only_geo(poi: dict) -> dict:
+    """Build a geo dict from a gazetteer POI alone (Nominatim returned nothing)."""
+    geo = _EMPTY.copy()
+    geo.update({
+        "name": poi.get("name", ""),
+        "wikidata_id": poi.get("wikidata_id", ""),
+        "osm_type": poi.get("osm_type", ""),
+        "osm_id": str(poi.get("osm_id", "")),
+        "categories": [poi["category"]] if poi.get("category") else [],
+    })
+    return geo
+
+
+def enrich_stop(lat: float, lon: float, poi: dict | None = None) -> dict:
     """
     Reverse-geocode a stop centroid.
 
@@ -336,9 +349,17 @@ def enrich_stop(lat: float, lon: float) -> dict:
       - Admin hierarchy (city / region / country)
 
     If a Wikidata QID is found, enriches with P31 types and description.
+
+    ``poi`` — an optional venue chosen by visual disambiguation
+    (``poi_gazetteer.disambiguate_poi``). When supplied it overrides the venue
+    *identity* (name, category, OSM/Wikidata provenance) so a centroid that
+    drifted onto the wrong storefront is corrected; the admin hierarchy still
+    comes from Nominatim. Geocoding is otherwise unchanged.
     """
     raw = nominatim_reverse(lat, lon, zoom=18, extratags=True)
     if not raw:
+        if poi:
+            return _poi_only_geo(poi)
         return _EMPTY.copy()
 
     addr = raw.get("address", {})
@@ -416,6 +437,21 @@ def enrich_stop(lat: float, lon: float) -> dict:
         categories = list(dict.fromkeys(["airport"] + categories))
     else:
         osm_type, osm_id = raw.get("osm_type", ""), str(raw.get("osm_id", ""))
+
+    # Visual disambiguation override: the chosen venue replaces the geocoder's
+    # identity (name / category / provenance), keeping Nominatim's admin
+    # hierarchy. Skipped inside an airport, where the gazetteer footprint wins.
+    if poi and not airport:
+        name = poi.get("name") or name
+        if poi.get("category"):
+            categories = list(dict.fromkeys([poi["category"]] + categories))
+        osm_type, osm_id = poi["osm_type"], str(poi["osm_id"])
+        if poi.get("wikidata_id") and poi["wikidata_id"] != wikidata_id:
+            wikidata_id = poi["wikidata_id"]
+            wd = wikidata_fetch(wikidata_id)
+            description = wd.get("description", "") or description
+            if wd.get("instance_of"):
+                categories = list(dict.fromkeys(categories + wd["instance_of"]))
 
     return {
         "name": name,

@@ -11,6 +11,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy import bindparam, func, select, update
 from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
+from location import poi_gazetteer as pgaz
 from location.utils import find_timezone
 from location import transport_mode as tmode
 
@@ -34,7 +35,7 @@ SPIKE_RATIO = 2.5          # (in+out − chord) must exceed RATIO×chord to drop
 # so slow walks across a large venue (campus/airport) no longer chain into one
 # giant cluster the way DBSCAN's transitive linking did.
 STAY_DIST = 50             # metres — max distance from anchor to remain in a stop
-STAY_TIME = 120            # seconds — min dwell to count as a stop
+STAY_TIME = 60 * 5         # seconds — min dwell to count as a stop
 
 # Cross-track merge: glue nearby stop centroids into one place_id (haversine radians)
 MERGE_EPS = 0.15 / 6371    # ~150 m
@@ -360,6 +361,17 @@ def analyze_track_gaps(df: pd.DataFrame, speed_threshold_ms: float = 0.5):
     return pd.DataFrame(gaps)
 
 # ─── Step 6: Build segment list ──────────────────────────────────────────────
+def remove_outliers(values: np.ndarray):
+    """
+    Remove outliers from a 1D array using the IQR method.
+    Returns a boolean mask where True indicates non-outlier values.
+    """
+    q1 = np.percentile(values, 25)
+    q3 = np.percentile(values, 75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    return (values >= lower_bound) & (values <= upper_bound)
 
 def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     """
@@ -384,8 +396,15 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
             # where place_id is always a valid string — avoids NaN!=NaN on moves.
             if not boundary and grp.loc[seg_start, "label_smooth"] == 1:
                 boundary = grp.loc[i, "place_id"] != grp.loc[seg_start, "place_id"]
+
+
+
             if boundary:
                 seg = grp.iloc[seg_start:i]
+                # Remove outliers from the segment before calculating centroid and other stats
+                lat_mask = remove_outliers(seg["latitude"].values)
+                lon_mask = remove_outliers(seg["longitude"].values)
+
                 entry = {
                     "track_id":     track_id,
                     "start":        seg["formatted_time"].iloc[0],
@@ -393,8 +412,8 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                     "start_ts":     seg["timestamp"].iloc[0],
                     "end_ts":       seg["timestamp"].iloc[-1],
                     "is_stop":      seg["label_smooth"].iloc[0],
-                    "centroid_lat": seg["latitude"].mean(),
-                    "centroid_lon": seg["longitude"].mean(),
+                    "centroid_lat": seg["latitude"][lat_mask].mean() if lat_mask.any() else seg["latitude"].mean(),
+                    "centroid_lon": seg["longitude"][lon_mask].mean() if lon_mask.any() else seg["longitude"].mean(),
                     "centroid_alt": seg["elevation"].mean(),
                     "start_lat":    seg["latitude"].iloc[0],
                     "start_lon":    seg["longitude"].iloc[0],
@@ -563,6 +582,21 @@ _SEG_IMG_PRE = timedelta(seconds=5)
 _SEG_IMG_POST = timedelta(seconds=15)
 
 
+def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts) -> dict | None:
+    """
+    Pick the venue a stop was actually in by matching its photos against nearby
+    gazetteer candidates. Returns the chosen POI dict, or None to defer to the
+    geocoder (no candidates, no images, or a sub-θ visual match).
+    """
+    candidates = pgaz.nearby_pois(session, lat, lon)
+    if not candidates:
+        return None
+    visual_vec = pgaz.stop_visual_vector(session, device, start_ts, end_ts)
+    if visual_vec is None:
+        return None
+    return pgaz.disambiguate_poi(candidates, visual_vec)
+
+
 def enrich_and_index_segments(
     session: Session,
     segments: list[dict],
@@ -586,7 +620,15 @@ def enrich_and_index_segments(
         if lat is None or lon is None or pd.isna(lat) or pd.isna(lon):
             continue
         if bool(seg.get("is_stop")):
-            stop_geos[i] = enrich_stop(float(lat), float(lon))
+            # Visual disambiguation: pull nearby venues from the offline gazetteer
+            # and let the stop's own photos pick which one, correcting a centroid
+            # that drifted onto the shop next door. Falls through to Nominatim
+            # when there are no candidates/images or the pick is below θ.
+            poi = _disambiguate_stop_poi(
+                session, device, float(lat), float(lon),
+                seg.get("start_ts"), seg.get("end_ts"),
+            )
+            stop_geos[i] = enrich_stop(float(lat), float(lon), poi=poi)
 
     for i, seg in enumerate(segments):
         lat = seg.get("centroid_lat")
@@ -711,7 +753,7 @@ def enrich_and_index_segments(
 def _segment_speed_p85(df: pd.DataFrame, start_ts, end_ts) -> tuple[float, float]:
     """Robust (p85) consecutive-point speed [m/s] and total span distance [m]."""
     seg = df[(df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)]
-    seg = seg.sort_values("timestamp")
+    seg = seg.sort_values("timestamp")  # type: ignore
     lat = seg["latitude"].to_numpy()
     lon = seg["longitude"].to_numpy()
     alt = seg["elevation"].fillna(0.0).to_numpy() if "elevation" in seg else np.zeros(len(seg))
@@ -742,9 +784,9 @@ def compute_segment_modes(
     Set seg["mode"] for every segment that has a pending image, and d["mode"]
     for image rows that don't already have a stored mode.
 
-    GPS kinematics give a coarse mode (stationary/walk/cycle/vehicle/flight);
-    the segment's CLIP image features then split vehicle→car/public_transport
-    and confirm flights via tmode.fuse_mode.
+    GPS kinematics decide the mode (stationary/walk/cycle/vehicle/flight);
+    CLIP image features only confirm the vehicle sub-type (car vs
+    public_transport) via tmode.fuse_mode and never override the GPS mode.
 
     Images whose ImageGPS row already has a non-null mode are left untouched:
     they're skipped here (no GPS/CLIP recompute) and the upsert preserves the
@@ -768,10 +810,12 @@ def compute_segment_modes(
     pending_ids = [d["image_id"] for d in pending]
     feat_by_id: dict = {}
     try:
-        from database.models import CLIPEmbedding
+        # ImageEmbedding is the populated CLIP/search embedding (clip_embedding
+        # table is empty/vestigial); both are Vector(768) in clip_model space.
+        from database.models import ImageEmbedding
         rows = session.execute(
-            select(CLIPEmbedding.image_id, CLIPEmbedding.embedding)
-            .where(CLIPEmbedding.image_id.in_(pending_ids))
+            select(ImageEmbedding.image_id, ImageEmbedding.embedding)
+            .where(ImageEmbedding.image_id.in_(pending_ids))
         )
         feat_by_id = {r.image_id: np.asarray(r.embedding, dtype=np.float32) for r in rows}
     except Exception as exc:
@@ -811,13 +855,17 @@ def compute_segment_modes(
                 (seg["end_ts"] - seg["start_ts"]).total_seconds(),
             )
             gps_mode = tmode.classify_segment_gps(p85, span, flight)
-            # CLIP refinement over this segment's images.
-            feats = [
-                feat_by_id[iid]
-                for iid, s in img_seg.items()
-                if s == si and iid in feat_by_id
-            ]
-            clip_mode = tmode.clip_mode_for_features(np.stack(feats)) if feats else None
+            # Visual confirms only — GPS decides the mode. The single thing it
+            # can't resolve is car vs public_transport, so run CLIP only for the
+            # ambiguous "vehicle" bucket; every other GPS mode stands as-is.
+            clip_mode = None
+            if gps_mode == tmode.VEHICLE:
+                feats = [
+                    feat_by_id[iid]
+                    for iid, s in img_seg.items()
+                    if s == si and iid in feat_by_id
+                ]
+                clip_mode = tmode.clip_mode_for_features(np.stack(feats)) if feats else None
             mode = tmode.fuse_mode(gps_mode, clip_mode)
         seg["mode"] = mode
 
@@ -856,7 +904,15 @@ def _upsert_image_gps(session, rows: list[dict]) -> None:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def run_pipeline(session: Session, device: str, date: str):
+def run_pipeline(session: Session, device: str, date: str, modes_only: bool = False):
+    """
+    ``modes_only=True`` recomputes/refreshes only the per-segment transport mode
+    (steps up to the ImageGPS mode upsert) and skips the slow tail — geocoding
+    (enrich_and_index_segments) and segment annotation (load_all_segments). Used
+    to backfill modes after the GPS-authoritative fusion change without
+    re-hitting Nominatim/Overpass/LLM. Clear ImageGPS.mode first, else the
+    COALESCE upsert keeps the stored value.
+    """
     logger.info(f"Processing device={device} date={date}")
     df = load_all_points(session, device, date)
     if len(df) == 0:
@@ -945,6 +1001,10 @@ def run_pipeline(session: Session, device: str, date: str):
 
     image_data.extend(data)
     session.commit()
+
+    if modes_only:
+        logger.info(f"modes_only: refreshed transport modes for device={device} date={date}")
+        return
 
     # 8. Enriching segments with place info and indexing them for search.
     enrich_and_index_segments(session, segments, df, device)
