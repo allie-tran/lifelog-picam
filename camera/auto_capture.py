@@ -9,7 +9,7 @@ import cv2
 import pynmea2
 from picamzero import Camera
 
-from common import OUTPUT, IMAGE_EXTENSION, box, load_gps, save_gps
+from common import OUTPUT, IMAGE_EXTENSION, box, load_gps, save_gps, start_timezone_sync
 
 cam = Camera()
 # orginally 4056 x 3040
@@ -177,6 +177,10 @@ def cleanup_partial_files():
 # --- Core Async Loop Controller ---
 async def main():
     cleanup_partial_files()
+
+    # Capture runs in its own process from the uploader, so it must sync its own
+    # timezone — os.environ["TZ"]/tzset() set by the monitor don't cross processes.
+    start_timezone_sync(interval_seconds=300)
 
     while not check_if_camera_connected():
         print("Camera not connected. Retrying in 10 seconds...")
