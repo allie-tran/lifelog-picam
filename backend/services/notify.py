@@ -23,7 +23,7 @@ from database.models import Image, Location, Notification
 logger = logging.getLogger(__name__)
 
 _LOCATION_LOOKBACK_DAYS = 30
-_ACTIVITY_LOOKBACK_DAYS = 7
+_ACTIVITY_LOOKBACK_DAYS = 30
 _BORING_ACTIVITIES = frozenset({"No Activity", "Unclear Activity", "Unclear", ""})
 
 
@@ -39,7 +39,10 @@ def _upsert_notification(
     image_path: Optional[str] = None,
     extra: Optional[dict] = None,
 ) -> None:
-    """Insert a notification; silently skips if the same event already exists."""
+    """Insert a notification; silently skips if the same event already exists.
+
+    On a genuinely new insert, also fires a Web Push to the device's browsers.
+    """
     stmt = (
         insert(Notification)
         .values(
@@ -56,7 +59,31 @@ def _upsert_notification(
         )
         .on_conflict_do_nothing()
     )
-    session.execute(stmt)
+    result = session.execute(stmt)
+
+    # rowcount == 0 means ON CONFLICT skipped it — don't re-push duplicates.
+    if result.rowcount:
+        # Persist the notification before any push side-effect: a push must only
+        # go out for a committed row, and send_to_device() may commit the session
+        # when it prunes dead subscriptions — committing here first stops that
+        # prune from flushing a half-finished transaction (or a row that later
+        # rolls back).
+        session.commit()
+        try:
+            from services.push import send_to_device
+
+            # segment_id keeps the tag distinct per meal slot / segment, so the
+            # browser doesn't collapse (renotify) separate same-day alerts —
+            # e.g. late breakfast / lunch / dinner no longer overwrite each other.
+            send_to_device(
+                session,
+                device,
+                title=title,
+                body=body or "",
+                tag=f"{notif_type}:{date}:{segment_id}",
+            )
+        except Exception as e:  # noqa: BLE001 — never let push break the pipeline
+            logger.warning("Web push dispatch failed (%s/%s): %s", device, notif_type, e)
 
 
 def maybe_notify_segment(
@@ -106,16 +133,32 @@ def maybe_notify_segment(
             )
 
     # ── Unusual activity ─────────────────────────────────────────────────────
-    if activity and activity not in _BORING_ACTIVITIES:
+    if activity and activity.strip() not in _BORING_ACTIVITIES:
+        # Cap at one unusual-activity notification per device per day — the
+        # pipeline calls this once per segment, so without this guard a single
+        # day could spawn many near-duplicate alerts.
+        already = session.execute(
+            select(func.count(Notification.id))
+            .where(
+                Notification.device == device,
+                Notification.date == date,
+                Notification.type == "unusual_activity",
+            )
+        ).scalar_one()
+        if already:
+            return
+
         cutoff = (
             datetime.strptime(date, "%Y-%m-%d") - timedelta(days=_ACTIVITY_LOOKBACK_DAYS)
         ).strftime("%Y-%m-%d")
 
+        # Case-insensitive match so "Eating lunch" / "eating lunch" count as the
+        # same activity and don't each look brand-new.
         recent_count = session.execute(
             select(func.count(Image.id))
             .where(
                 Image.device == device,
-                Image.activity == activity,
+                func.lower(func.trim(Image.activity)) == activity.strip().lower(),
                 Image.date >= cutoff,
                 Image.date < date,
                 Image.deleted == False,
@@ -154,6 +197,34 @@ def notify_day_complete(
         notif_type="day_complete",
         title="Day summary ready",
         body=summary_text[:200] if summary_text else f"Your day summary for {date} is ready.",
+    )
+
+
+# Synthetic segment_id per meal slot so the partial unique index
+# uq_notif_with_segment (device, date, segment_id, type) yields exactly one
+# late_meal notification per meal per day. Negative values never collide with
+# real (positive) segment ids.
+_MEAL_SLOT_ID = {"breakfast": -1, "lunch": -2, "dinner": -3}
+
+
+def notify_late_meal(
+    session: Session,
+    device: str,
+    date: str,
+    meal: str,
+    usual_minute: int,
+) -> None:
+    """Emit a 'late_meal' notification for the given meal slot (idempotent)."""
+    hh, mm = divmod(usual_minute, 60)
+    _upsert_notification(
+        session,
+        device=device,
+        date=date,
+        segment_id=_MEAL_SLOT_ID.get(meal),
+        notif_type="late_meal",
+        title=f"Late {meal}?",
+        body=f"No meal detected yet — you usually have {meal} around {hh:02d}:{mm:02d}.",
+        extra={"meal": meal, "usual_minute": usual_minute},
     )
 
 

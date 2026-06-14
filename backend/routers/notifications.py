@@ -12,14 +12,14 @@ import logging
 from typing import Annotated, List, Optional
 
 from fastapi import Depends, APIRouter, Query
-from sqlalchemy import select, update, func
+from sqlalchemy import delete as sa_delete, select, update, func
 from sqlalchemy.orm import Session
 
 from auth.auth_models import auth_dependency
 from auth.types import AccessLevel
 from auth import _require_owner
 from database import get_session
-from database.models import Notification
+from database.models import Notification, PushSubscription
 from core.dependencies import CamelCaseModel
 
 router = APIRouter()
@@ -59,6 +59,20 @@ class NotificationOut(CamelCaseModel):
 
 class MarkReadRequest(CamelCaseModel):
     ids: List[str]
+
+
+class PushKeys(CamelCaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionIn(CamelCaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+class PushUnsubscribeIn(CamelCaseModel):
+    endpoint: str
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +145,118 @@ def mark_all_read(
         update(Notification)
         .where(Notification.device == device, Notification.read == False)
         .values(read=True)
+    )
+    session.commit()
+    return {"ok": True}
+
+
+@router.post("/notifications/clear-all")
+def clear_all(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Delete every notification for the device."""
+    _require_owner(access_level)
+    result = session.execute(
+        sa_delete(Notification).where(Notification.device == device)
+    )
+    session.commit()
+    return {"deleted": result.rowcount}
+
+
+@router.post("/notifications/delete")
+def delete_notifications(
+    request: MarkReadRequest,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Delete a list of notification IDs for the device."""
+    _require_owner(access_level)
+    import uuid as _uuid
+    ids = [_uuid.UUID(i) for i in request.ids]
+    result = session.execute(
+        sa_delete(Notification).where(
+            Notification.id.in_(ids), Notification.device == device
+        )
+    )
+    session.commit()
+    return {"deleted": result.rowcount}
+
+
+# ---------------------------------------------------------------------------
+# Web Push subscriptions
+# ---------------------------------------------------------------------------
+@router.get("/push/vapid-public-key")
+def vapid_public_key():
+    """Public applicationServerKey for the browser to subscribe with."""
+    from services.push import VAPID_PUBLIC_KEY, push_enabled
+    return {"publicKey": VAPID_PUBLIC_KEY, "enabled": push_enabled()}
+
+
+@router.post("/push/subscribe")
+def push_subscribe(
+    sub: PushSubscriptionIn,
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Register (or refresh) a Web Push subscription for the device."""
+    _require_owner(access_level)
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = (
+        pg_insert(PushSubscription)
+        .values(
+            device=device,
+            endpoint=sub.endpoint,
+            p256dh=sub.keys.p256dh,
+            auth=sub.keys.auth,
+        )
+        .on_conflict_do_update(
+            index_elements=["endpoint"],
+            set_={"device": device, "p256dh": sub.keys.p256dh, "auth": sub.keys.auth},
+        )
+    )
+    session.execute(stmt)
+    session.commit()
+    return {"ok": True}
+
+
+@router.post("/push/test")
+def push_test(
+    device: str,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Send a sample push to the device's browsers, to verify delivery."""
+    _require_owner(access_level)
+    from services.push import push_enabled, send_to_device
+
+    if not push_enabled():
+        return {"ok": False, "sent": 0, "reason": "push not configured on server"}
+
+    sent = send_to_device(
+        session,
+        device,
+        title="🔔 Test notification",
+        body="If you can see (and feel) this, phone alerts are working.",
+        tag="test",
+    )
+    return {"ok": sent > 0, "sent": sent}
+
+
+@router.post("/push/unsubscribe")
+def push_unsubscribe(
+    body: PushUnsubscribeIn,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Remove a Web Push subscription by endpoint."""
+    _require_owner(access_level)
+    session.execute(
+        sa_delete(PushSubscription).where(PushSubscription.endpoint == body.endpoint)
     )
     session.commit()
     return {"ok": True}

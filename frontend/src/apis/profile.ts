@@ -81,3 +81,44 @@ export const renameSensor = async (
         params: { device_id: deviceId, sensor_type: sensorType, nickname },
     });
 };
+
+// ── Meal times (per-device, drive late_meal notifications) ───────────────────
+
+export type MealKind = 'breakfast' | 'lunch' | 'dinner';
+
+export interface MealTime {
+    meal: MealKind;
+    usualMinute: number;   // minutes since local midnight (0-1439)
+    graceMinute: number;
+    enabled: boolean;
+    auto: boolean;         // auto-learned vs manual override
+}
+
+export interface MealTimeRequest {
+    meal: MealKind;
+    usualMinute: number;
+    graceMinute?: number;
+    enabled?: boolean;
+}
+
+export const getMealTimes = async (device: string): Promise<MealTime[]> => {
+    const response = await axios.get(`${BACKEND_URL}/profile/meal-times`, {
+        params: { device },
+    });
+    return response.data as MealTime[];
+};
+
+export const putMealTime = async (device: string, req: MealTimeRequest): Promise<void> => {
+    await axios.put(`${BACKEND_URL}/profile/meal-times`, req, { params: { device } });
+};
+
+export const deleteMealTime = async (device: string, meal: MealKind): Promise<void> => {
+    await axios.delete(`${BACKEND_URL}/profile/meal-times`, { params: { device, meal } });
+};
+
+export const relearnMealTimes = async (device: string): Promise<MealTime[]> => {
+    const response = await axios.post(`${BACKEND_URL}/profile/meal-times/relearn`, null, {
+        params: { device },
+    });
+    return response.data as MealTime[];
+};

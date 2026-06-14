@@ -68,6 +68,17 @@ celery.conf.update(
             "schedule": crontab(minute="*/5"),
             "options": {"expires": 240},
         },
+        # every 30 min — late-meal check per active device (device-local time)
+        "check-meal-times": {
+            "task": "tasks.check_meal_times_all_devices",
+            "schedule": crontab(minute="*/30"),
+            "options": {"expires": 1500},
+        },
+        # 04:00 UTC — refresh auto-learned usual meal times from last 30 days
+        "relearn-meal-times": {
+            "task": "tasks.relearn_meal_times_all_devices",
+            "schedule": crontab(hour=4, minute=0),
+        },
     },
     timezone="UTC",
 )

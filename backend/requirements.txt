@@ -35,3 +35,4 @@ parsedatetime
 dateparser
 holidays
 pytimeparse
+pywebpush>=2.3.0

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import create_engine, delete, insert, or_, select, update
+from sqlalchemy import create_engine, delete, func, insert, or_, select, update
 from sqlalchemy.orm import Session
 from auth.ortho import get_matrix
 from auth.types import Person
@@ -312,6 +312,86 @@ def resync_day_task(self, device: str, date: str):
         for t in DEFAULT_TARGETS
     ]
     _day_summary_bg(device, date, target_dicts)
+
+@celery.task(name="tasks.check_meal_times_all_devices")
+def check_meal_times_all_devices():
+    """
+    Hourly beat task: for each active device, learn usual meal times if missing,
+    then emit late_meal notifications for any meal whose usual time + grace has
+    passed today without a meal being detected.
+
+    Uses each device's most recent image timezone to compute 'now' locally, so
+    the check fires at the right wall-clock time regardless of server tz.
+    """
+    from zoneinfo import ZoneInfo
+    from services.meals import learn_meal_times, check_late_meals
+    from database.models import MealProfile
+
+    with Session(engine) as session:
+        # Devices seen in the last 2 days (UTC-ish; just needs to be recent).
+        recent_cutoff = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+        devices = session.execute(
+            select(Image.device)
+            .where(Image.date >= recent_cutoff, Image.deleted == False)
+            .distinct()
+        ).scalars().all()
+
+        for device in devices:
+            if not device:
+                continue
+            # Latest known timezone for this device.
+            tz_name = session.execute(
+                select(Image.timezone)
+                .where(Image.device == device, Image.timezone.isnot(None))
+                .order_by(Image.timestamp.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if not tz_name:
+                continue
+            try:
+                now_local = datetime.now(ZoneInfo(tz_name))
+            except Exception:
+                logging.warning("Unknown timezone %r for device %s", tz_name, device)
+                continue
+
+            today = now_local.strftime("%Y-%m-%d")
+            now_minute = now_local.hour * 60 + now_local.minute
+
+            try:
+                has_profile = session.execute(
+                    select(func.count(MealProfile.id)).where(MealProfile.device == device)
+                ).scalar_one()
+                if has_profile == 0:
+                    learn_meal_times(session, device, today)
+                check_late_meals(session, device, today, now_minute)
+            except Exception as e:
+                logging.warning("Meal check failed for %s: %s", device, e)
+                session.rollback()
+    logging.info("Meal-time check complete for %d devices.", len(devices))
+
+
+@celery.task(name="tasks.relearn_meal_times_all_devices")
+def relearn_meal_times_all_devices():
+    """Nightly: refresh auto-learned meal times from the last 30 days."""
+    from services.meals import learn_meal_times
+
+    with Session(engine) as session:
+        recent_cutoff = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+        devices = session.execute(
+            select(Image.device)
+            .where(Image.date >= recent_cutoff, Image.deleted == False)
+            .distinct()
+        ).scalars().all()
+        for device in devices:
+            if not device:
+                continue
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            try:
+                learn_meal_times(session, device, today)
+            except Exception as e:
+                logging.warning("Meal relearn failed for %s: %s", device, e)
+                session.rollback()
+
 
 @celery.task(name="tasks.schedule_resync_day_task", bind=True)
 def schedule_resync_day_task(self):

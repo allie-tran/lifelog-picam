@@ -1,5 +1,12 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { getNotifications, getUnreadCount, markAllRead, markRead } from '@apis/notifications';
+import {
+    clearAll,
+    deleteNotifications,
+    getNotifications,
+    getUnreadCount,
+    markAllRead,
+    markRead,
+} from '@apis/notifications';
 import { Notification } from '@utils/types';
 
 interface NotificationState {
@@ -47,6 +54,21 @@ export const markAllNotificationsRead = createAsyncThunk(
     },
 );
 
+export const clearAllNotifications = createAsyncThunk(
+    'notifications/clearAll',
+    async (device: string) => {
+        await clearAll(device);
+    },
+);
+
+export const deleteNotification = createAsyncThunk(
+    'notifications/delete',
+    async ({ device, ids }: { device: string; ids: string[] }) => {
+        await deleteNotifications(device, ids);
+        return ids;
+    },
+);
+
 const notificationSlice = createSlice({
     name: 'notifications',
     initialState,
@@ -74,9 +96,21 @@ const notificationSlice = createSlice({
                 state.items = state.items.map((n) => (ids.has(n.id) ? { ...n, read: true } : n));
                 state.unreadCount = state.items.filter((n) => !n.read).length;
             })
+            .addCase(markNotificationsRead.rejected, (state, action) => {
+                state.error = action.error.message ?? 'Failed to mark as read';
+            })
             .addCase(markAllNotificationsRead.fulfilled, (state) => {
                 state.items = state.items.map((n) => ({ ...n, read: true }));
                 state.unreadCount = 0;
+            })
+            .addCase(clearAllNotifications.fulfilled, (state) => {
+                state.items = [];
+                state.unreadCount = 0;
+            })
+            .addCase(deleteNotification.fulfilled, (state, action: PayloadAction<string[]>) => {
+                const ids = new Set(action.payload);
+                state.items = state.items.filter((n) => !ids.has(n.id));
+                state.unreadCount = state.items.filter((n) => !n.read).length;
             });
     },
 });

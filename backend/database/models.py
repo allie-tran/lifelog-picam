@@ -682,6 +682,55 @@ class Notification(Base):
     extra: Mapped[Any] = mapped_column(JSONB, nullable=True)
 
 
+class PushSubscription(Base):
+    """
+    Browser Web Push subscriptions (one row per browser/device endpoint).
+    Used to deliver notifications to phones even when the tab is closed.
+    """
+    __tablename__ = "push_subscription"
+    __table_args__ = (
+        Index("ix_push_sub_device", "device"),
+        UniqueConstraint("endpoint", name="uq_push_sub_endpoint"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device: Mapped[str] = mapped_column(Text, nullable=False)
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    created: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class MealProfile(Base):
+    """
+    Per-device usual meal times, used to emit 'late_meal' notifications.
+
+    `usual_minute` is minutes since local midnight (0-1439). Rows are either
+    auto-learned from history (`auto=True`) or set manually by the user
+    (`auto=False`); the learner never overwrites a manual row.
+    """
+    __tablename__ = "meal_profile"
+    __table_args__ = (
+        UniqueConstraint("device", "meal", name="uq_meal_profile_device_meal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device: Mapped[str] = mapped_column(Text, nullable=False)
+    meal: Mapped[str] = mapped_column(Text, nullable=False)  # breakfast | lunch | dinner
+    usual_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    grace_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class BioDayStats(Base):
     """Per-day biometric aggregates, computed by the nightly Celery task."""
     __tablename__ = "bio_day_stats"
