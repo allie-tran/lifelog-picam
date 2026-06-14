@@ -14,6 +14,21 @@ from core.config import _FACE_SIMILARITY_THRESHOLD
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
 logger = logging.getLogger(__name__)
 
+# YOLO loads every path in a call onto the GPU at once; a whole day's worth of
+# images OOMs the card. Cap how many images go to the model per call (override
+# via env on smaller GPUs) and release the cache between chunks.
+DETECT_BATCH = int(os.getenv("YOLO_DETECT_BATCH", "16"))
+
+
+def _free_cuda() -> None:
+    """Release cached CUDA memory between batches so it doesn't accumulate."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
 class ModelWrapper:
     def __init__(self):
         self.detect_model = None
@@ -39,109 +54,117 @@ def extract_object_from_images(image_paths, whitelist: list[Person] | None = Non
         models_wrapper.load_models()
 
     assert models_wrapper.detect_model is not None, "Detection model failed to load"
-    results = models_wrapper.detect_model(image_paths, verbose=False, conf=0.5)
 
-    for i, r in enumerate(results):
-        objects = []
-        people = []
-        frame = r.orig_img
+    for start in range(0, len(image_paths), DETECT_BATCH):
+        chunk = image_paths[start:start + DETECT_BATCH]
+        results = models_wrapper.detect_model(chunk, verbose=False, conf=0.5)
 
-        boxes = r.boxes
-        for box in boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
+        for i, r in enumerate(results):
+            final_results.append(_detect_one(r, chunk[i], whitelist, models_wrapper))
 
-            conf = box.conf[0]  # Confidence score
-            cls = int(box.cls[0])
-            class_name = models_wrapper.detect_model.names[cls]  # Get class name from model
-            h, w, _ = frame.shape
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w, x2)
-            y2 = min(h, y2)
+        _free_cuda()
+    return final_results
 
-            if x2 > x1 and y2 > y1:
-                objects.append(
-                    ObjectDetection(
-                        label=class_name,
-                        confidence=float(conf),
-                        bbox=[x1, y1, x2, y2],
-                        rel_bbox=[x1 / w, y1 / h, x2 / w, y2 / h],
-                    )
+
+def _detect_one(r, image_path, whitelist, models_wrapper):
+    """Build the objects/people record for one YOLO Results object."""
+    objects = []
+    people = []
+    frame = r.orig_img
+
+    boxes = r.boxes
+    for box in boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        conf = box.conf[0]  # Confidence score
+        cls = int(box.cls[0])
+        class_name = models_wrapper.detect_model.names[cls]  # Get class name from model
+        h, w, _ = frame.shape
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
+
+        if x2 > x1 and y2 > y1:
+            objects.append(
+                ObjectDetection(
+                    label=class_name,
+                    confidence=float(conf),
+                    bbox=[x1, y1, x2, y2],
+                    rel_bbox=[x1 / w, y1 / h, x2 / w, y2 / h],
                 )
-                if class_name == "person":
-                    face_data = get_face_data_from_person_crop(frame[y1:y2, x1:x2], models_wrapper=models_wrapper)
-                    # Add face bounding boxes to people list
-                    for face in face_data:
-                        face_bbox = face.bbox
-                        # Adjust face bbox coordinates to original image
-                        adjusted_bbox = [
-                            face_bbox[0] + x1,
-                            face_bbox[1] + y1,
-                            face_bbox[2] + x1,
-                            face_bbox[3] + y1,
-                        ]
-                        adjusted_bbox = [max(0, adjusted_bbox[0]), max(0, adjusted_bbox[1]), min(w, adjusted_bbox[2]), min(h, adjusted_bbox[3])]
+            )
+            if class_name == "person":
+                face_data = get_face_data_from_person_crop(frame[y1:y2, x1:x2], models_wrapper=models_wrapper)
+                # Add face bounding boxes to people list
+                for face in face_data:
+                    face_bbox = face.bbox
+                    # Adjust face bbox coordinates to original image
+                    adjusted_bbox = [
+                        face_bbox[0] + x1,
+                        face_bbox[1] + y1,
+                        face_bbox[2] + x1,
+                        face_bbox[3] + y1,
+                    ]
+                    adjusted_bbox = [max(0, adjusted_bbox[0]), max(0, adjusted_bbox[1]), min(w, adjusted_bbox[2]), min(h, adjusted_bbox[3])]
 
-                        label = "redacted face"
-                        confidence = float(face.confidence)
-                        cluster_id = None
-                        face_embedding = np.array(face.embedding)
-                        face_embedding = face_embedding / np.linalg.norm(face_embedding)  # normalize the face embedding
+                    label = "redacted face"
+                    confidence = float(face.confidence)
+                    cluster_id = None
+                    face_embedding = np.array(face.embedding)
+                    face_embedding = face_embedding / np.linalg.norm(face_embedding)  # normalize the face embedding
 
-                        for whitelist_person in whitelist:
-                            matched = False
-                            embeddings = []
-                            for embedding in whitelist_person.embeddings:
-                                embedding = np.array(embedding)
-                                embeddings.append(embedding)
-                                embedding = embedding / np.linalg.norm(embedding)  # Normalize the embedding
-                                sim = np.dot(face_embedding, embedding)
-                                logger.debug(f"Comparing to whitelist person {whitelist_person.name}, cosine similarity: {sim:.4f}")
-                                if sim > _FACE_SIMILARITY_THRESHOLD:
-                                    confidence = sim
-                                    label = whitelist_person.name
-                                    cluster_id = whitelist_person.cluster_id
-                                    matched = True
-                                    break
-
-                            if not matched and embeddings:
-                                avg_embedding = np.mean(embeddings, axis=0)
-                                avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
-                                sim = np.dot(avg_embedding, face_embedding)
-                                logger.debug(f"Comparing to average embedding of whitelist ({len(embeddings)} entries), cosine similarity: {sim:.4f}")
-                                if sim > _FACE_SIMILARITY_THRESHOLD:
-                                    confidence = sim
-                                    label = whitelist_person.name
-                                    cluster_id = whitelist_person.cluster_id
-                                    matched = True
-
-                            if matched:
+                    for whitelist_person in whitelist:
+                        matched = False
+                        embeddings = []
+                        for embedding in whitelist_person.embeddings:
+                            embedding = np.array(embedding)
+                            embeddings.append(embedding)
+                            embedding = embedding / np.linalg.norm(embedding)  # Normalize the embedding
+                            sim = np.dot(face_embedding, embedding)
+                            logger.debug(f"Comparing to whitelist person {whitelist_person.name}, cosine similarity: {sim:.4f}")
+                            if sim > _FACE_SIMILARITY_THRESHOLD:
+                                confidence = sim
+                                label = whitelist_person.name
+                                cluster_id = whitelist_person.cluster_id
+                                matched = True
                                 break
 
+                        if not matched and embeddings:
+                            avg_embedding = np.mean(embeddings, axis=0)
+                            avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
+                            sim = np.dot(avg_embedding, face_embedding)
+                            logger.debug(f"Comparing to average embedding of whitelist ({len(embeddings)} entries), cosine similarity: {sim:.4f}")
+                            if sim > _FACE_SIMILARITY_THRESHOLD:
+                                confidence = sim
+                                label = whitelist_person.name
+                                cluster_id = whitelist_person.cluster_id
+                                matched = True
 
-                        people.append(
-                            ObjectDetection(
-                                label=label,
-                                confidence=confidence,
-                                bbox=adjusted_bbox,
-                                rel_bbox=[
-                                    adjusted_bbox[0] / w,
-                                    adjusted_bbox[1] / h,
-                                    adjusted_bbox[2] / w,
-                                    adjusted_bbox[3] / h,
-                                ],
-                                embedding=face.embedding,
-                                cluster_id=cluster_id,
-                            )
+                        if matched:
+                            break
+
+
+                    people.append(
+                        ObjectDetection(
+                            label=label,
+                            confidence=confidence,
+                            bbox=adjusted_bbox,
+                            rel_bbox=[
+                                adjusted_bbox[0] / w,
+                                adjusted_bbox[1] / h,
+                                adjusted_bbox[2] / w,
+                                adjusted_bbox[3] / h,
+                            ],
+                            embedding=face.embedding,
+                            cluster_id=cluster_id,
                         )
-        final_results.append(
-            {
-                "image_path": image_paths[i],
-                "objects": objects,
-                "people": people,
-            }
-        )
-    return final_results
+                    )
+    return {
+        "image_path": image_path,
+        "objects": objects,
+        "people": people,
+    }
 
 
 PERSON_CONF_THRESHOLD = 0.5
