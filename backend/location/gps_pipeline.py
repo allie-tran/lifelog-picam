@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 GAP_SECONDS = 5 * 60       # 5-minute gap → new track
-SPEED_THRESHOLD = 50       # m/s outlier cutoff
+SPEED_THRESHOLD = 50       # m/s — hard teleport cap (≈180 km/h)
+# Round-trip spike removal (catches moderate multipath glitches that stay under
+# the speed cap): a point is a spike when its in+out path detours far past the
+# straight chord between its neighbours, and it juts out by more than the noise
+# floor. Corner-safe — a 90° turn detours only ~0.6×chord, far below the ratio.
+SPIKE_OFFSET_M = 60        # metres — ignore pops below the GPS noise floor
+SPIKE_RATIO = 2.5          # (in+out − chord) must exceed RATIO×chord to drop
 
 # Stay-point detection (Li et al. 2008) — replaces per-track DBSCAN.
 # A stop = a run of consecutive points all within STAY_DIST of the run's anchor,
@@ -88,36 +94,72 @@ def haversine_distance(lat1, lon1, lat2, lon2, alt1, alt2):
 
 def filter_speed_outliers(df: pd.DataFrame, threshold_ms: float = SPEED_THRESHOLD) -> pd.DataFrame:
     """
-    Compute speed between consecutive points (per track) and drop points
-    that imply speed > threshold_ms metres/second.
+    Drop GPS outliers per track in two passes:
+
+    1. Teleport pass — walk the track keeping a running 'last good' anchor and
+       drop any point implying speed > threshold_ms from it.  Measuring against
+       the last *kept* point (not the previous row) stops a dropped outlier from
+       poisoning the next good point.  A look-ahead tie-break decides whether a
+       jump means the new point is bad or the anchor itself was a leading
+       outlier — so a bad first fix can't survive and drag the track with it.
+    2. Spike pass — drop any remaining interior point whose in+out detour far
+       exceeds the straight chord between its neighbours (catches moderate
+       multipath glitches that stay under the speed cap).
     """
     rows = []
     for _, grp in df.groupby("track_id"):
-        grp = grp.sort_values("timestamp").copy()
-        grp = grp.reset_index(drop=True)
+        grp = grp.sort_values("timestamp").reset_index(drop=True)
+        n = len(grp)
+        if n == 0:
+            continue
+        if n <= 2:                      # too short to cross-check — keep as-is
+            rows.append(grp)
+            continue
 
         lat = grp["latitude"].values
         lon = grp["longitude"].values
-        alt = grp["elevation"].values
+        alt = grp["elevation"].fillna(0.0).values
         ts  = grp["timestamp"].values
 
-        keep = [True]  # always keep the first point
-        for i in range(1, len(grp)):
-            dt = ts[i] - ts[i - 1]
-            if dt <= 0:
-                keep.append(False)
+        def _seconds(a: int, b: int) -> float:
+            return (ts[b] - ts[a]) / np.timedelta64(1, "s")
+
+        def _dist(a: int, b: int) -> float:
+            return haversine_distance(lat[a], lon[a], lat[b], lon[b], alt[a], alt[b])
+
+        def _speed(a: int, b: int) -> float:
+            dt = _seconds(a, b)
+            return np.inf if dt <= 0 else _dist(a, b) / dt
+
+        # ── Pass 1: teleport removal with last-good anchor + look-ahead ──
+        keep = np.ones(n, dtype=bool)
+        last = 0
+        for i in range(1, n):
+            if _speed(last, i) <= threshold_ms:
+                last = i
                 continue
-            if alt[i] is None or alt[i - 1] is None:
-                dist = haversine_distance(lat[i - 1], lon[i - 1], lat[i], lon[i], 0, 0)
+            # Jump from anchor. If the next sample agrees with i but not with the
+            # anchor, the anchor was the outlier; otherwise i is.
+            j = i + 1
+            if j < n and _speed(i, j) <= threshold_ms and _speed(last, j) > threshold_ms:
+                keep[last] = False
+                last = i
             else:
-                dist = haversine_distance(lat[i - 1], lon[i - 1], lat[i], lon[i], alt[i - 1], alt[i])
-            speed = dist / (dt / np.timedelta64(1, 's'))
-            keep.append(speed <= threshold_ms)
+                keep[i] = False
+
+        # ── Pass 2: round-trip spike removal over the survivors ──
+        idx = np.flatnonzero(keep).tolist()
+        for a, b, c in zip(idx, idx[1:], idx[2:]):
+            d_in, d_out, chord = _dist(a, b), _dist(b, c), _dist(a, c)
+            detour = d_in + d_out - chord
+            if min(d_in, d_out) > SPIKE_OFFSET_M and detour > SPIKE_RATIO * max(chord, SPIKE_OFFSET_M):
+                keep[b] = False
 
         rows.append(grp[keep])
 
-    result = pd.concat(rows, ignore_index=True)
-    return result
+    if not rows:
+        return df.iloc[0:0]
+    return pd.concat(rows, ignore_index=True)
 
 
 # ─── Step 4: Stay-point detection + stop/move labelling ───────────────────────

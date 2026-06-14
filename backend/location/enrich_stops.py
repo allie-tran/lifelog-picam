@@ -18,6 +18,8 @@ import numpy as np
 import requests
 from sklearn.cluster import DBSCAN
 
+from location.airports import nearest_airport
+
 logger = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "lifelog-picam/1.0"}
@@ -38,10 +40,10 @@ _CC = {
 }
 
 # In Nominatim's address dict, the value under these keys IS the place name
-# (e.g. address.amenity = "Starbucks", not "cafe")
+# (e.g. address.amenity = "Starbucks", not "cafe"; address.aeroway = "Dublin Airport")
 _POI_ADDR_KEYS = [
     "amenity", "shop", "tourism", "leisure", "office",
-    "historic", "healthcare", "public_transport",
+    "historic", "healthcare", "public_transport", "aeroway",
 ]
 
 # Sub-city fields checked in priority order for suburb/neighbourhood extraction
@@ -67,6 +69,10 @@ _overpass_cache: dict[tuple, str] = {}
 # Nominatim OSM classes that indicate a non-POI result — road, bench, boundary, etc.
 _NON_POI_CLASSES = {"highway", "boundary", "waterway", "natural", "place"}
 
+# Classes worth adopting as a stop's identity when the fine (zoom=18) result is
+# just a road/parking inside a big named venue — airport, campus, park, mall.
+_AREA_CLASSES = {"aeroway", "amenity", "leisure", "tourism", "historic", "landuse", "military"}
+
 # Tags searched by Overpass in priority order (first match wins)
 _OVERPASS_QUERY_TMPL = """[out:json][timeout:10];
 is_in({lat},{lon})->.a;
@@ -75,7 +81,9 @@ is_in({lat},{lon})->.a;
   way(pivot.a)[name][leisure~"sports_centre|stadium|park|golf_course|ice_rink|swimming_pool"];
   way(pivot.a)[name][tourism~"hotel|museum|attraction|gallery|theme_park|zoo"];
   way(pivot.a)[name][landuse~"education|commercial|retail|industrial|military|religious"];
+  way(pivot.a)[name][aeroway~"aerodrome|terminal"];
   relation(pivot.a)[name][amenity~"university|college|school|hospital"];
+  relation(pivot.a)[name][aeroway~"aerodrome|terminal"];
 );
 out 5;"""
 
@@ -160,6 +168,26 @@ def nominatim_reverse(lat: float, lon: float, zoom: int = 14, extratags: bool = 
 
     _nom_cache[cache_key] = raw
     return raw
+
+
+def _enclosing_area(lat: float, lon: float) -> dict:
+    """
+    Find the large named feature that *contains* this point by reverse-geocoding
+    at progressively coarser zoom.  Nominatim returns the smallest feature at a
+    given zoom, so stepping 16→14→12 climbs out of a taxiway/parking aisle onto
+    the enclosing aerodrome / campus / park polygon — carrying that polygon's own
+    name, OSM id and Wikidata tag.
+
+    Returns the raw Nominatim dict for the area, or {} if no named area is found.
+    Nominatim-only — does NOT depend on Overpass (which is frequently down).
+    """
+    for z in (16, 14):
+        raw = nominatim_reverse(lat, lon, zoom=z, extratags=True)
+        if not raw:
+            continue
+        if raw.get("name", "") and raw.get("class", "") in _AREA_CLASSES:
+            return raw
+    return {}
 
 
 def _parse_admin(raw: dict) -> dict:
@@ -329,13 +357,34 @@ def enrich_stop(lat: float, lon: float) -> dict:
                 name = v
                 break
 
-    # 3. Overpass fallback when Nominatim returned a non-POI element (highway,
-    #    boundary, bench, etc.) or gave no name at all.  This catches cases where
-    #    the GPS point is on a road that borders a named campus / building.
+    # 3. Fine (zoom=18) result is a road / boundary / nameless point inside a
+    #    larger venue.  Resolve that venue WITHOUT leaning on Overpass (down ~half
+    #    the time), in order of reliability:
+    #      a. Airport gazetteer — offline point-in-radius, no network.  Nominatim
+    #         never returns the aerodrome polygon (it gives an unnamed aeroway
+    #         node / taxiway / admin boundary), so this is the only reliable path
+    #         for the common "I'm in an airport" case.
+    #      b. Coarser Nominatim zoom — catches some campuses / parks.
+    #      c. Overpass `is_in` — best-effort last resort.
+    #    Adopting the venue's identity (name + a stable id) also makes every stop
+    #    fragment inside one big venue dedup to a single Location downstream,
+    #    instead of scattering one marker per gate/aisle.
+    airport: dict | None = None
     if not name or raw.get("class") in _NON_POI_CLASSES:
-        overpass_name = overpass_named_place(lat, lon)
-        if overpass_name:
-            name = overpass_name
+        airport = nearest_airport(lat, lon)
+        if airport:
+            name = airport["name"]
+        else:
+            area = _enclosing_area(lat, lon)
+            if area.get("name"):
+                raw = area
+                addr = raw.get("address", {})
+                extratags = raw.get("extratags", {}) or {}
+                name = raw["name"]
+            else:
+                overpass_name = overpass_named_place(lat, lon)
+                if overpass_name:
+                    name = overpass_name
 
     # 4. Last resort: street address
     if not name:
@@ -359,11 +408,20 @@ def enrich_stop(lat: float, lon: float) -> dict:
     categories = list(dict.fromkeys(osm_cats + instance_of))
     admin = _parse_admin(raw)
 
+    # A gazetteer airport overrides OSM provenance with a stable synthetic id
+    # (its ICAO/ident). Keying on this downstream collapses every stop fragment
+    # inside the airport into one Location instead of scattering road markers.
+    if airport:
+        osm_type, osm_id = "airport", airport["id"]
+        categories = list(dict.fromkeys(["airport"] + categories))
+    else:
+        osm_type, osm_id = raw.get("osm_type", ""), str(raw.get("osm_id", ""))
+
     return {
         "name": name,
         "wikidata_id": wikidata_id,
-        "osm_type": raw.get("osm_type", ""),
-        "osm_id": str(raw.get("osm_id", "")),
+        "osm_type": osm_type,
+        "osm_id": osm_id,
         "description": description,
         "categories": categories,
         "city": admin["city"],
