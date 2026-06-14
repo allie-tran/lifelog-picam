@@ -38,8 +38,14 @@ DocumentType = TypeVar("DocumentType", bound=Mapping[str, Any])
 # Helpers
 # ---------------------------------------------------------------------------
 def _orm_to_lifelog(row: Image) -> LifelogImage:
-    """Convert a SQLAlchemy Image row → LifelogImage Pydantic model."""
-    return LifelogImage.model_validate(row.__dict__)
+    """Convert a SQLAlchemy Image row → LifelogImage Pydantic model.
+    Derives the grid-thumbnail filename by convention (`*_grid.webp`) so grids
+    can load the small derivative instead of the full thumbnail."""
+    img = LifelogImage.model_validate(row.__dict__)
+    if img.thumbnail:
+        base, ext = os.path.splitext(img.thumbnail)
+        img.grid_thumbnail = f"{base}_grid{ext}"
+    return img
 
 def _orm_to_grid(row: Image) -> GridImage:
     """Convert a SQLAlchemy Image row → slim GridImage for browse responses.

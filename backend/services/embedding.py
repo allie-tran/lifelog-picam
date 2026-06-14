@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 import uuid
-from sqlalchemy import and_, case, extract, func, or_, select, text
+from sqlalchemy import Integer, and_, case, cast, extract, func, or_, select, text
 
 from schemas import (
     AppFeatures,
@@ -16,7 +16,6 @@ from core.config import DIR, THUMBNAIL_DIR
 from database.models import Image, ImageEmbedding, ImageGPS, ImagePerson, Location, PeopleCluster
 from integrations.visual import clip_model
 from services.utils import make_video_thumbnail
-from query_parse.extract_info import Query
 from database.types import _orm_to_lifelog
 from collections import Counter
 
@@ -194,11 +193,15 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
 
     # Execute the query
     stmt = stmt.limit(k)
-    session.execute(text(f"SET hnsw.ef_search = {max(k, 200)}"))
-    session.execute(text(f"SET hnsw.iterative_scan = strict_order"))
+    # HNSW tuning only matters when an embedding drives the ordering; skip the
+    # GUC round-trips for pure metadata-filter searches.
+    if text_emb is not None or image_emb is not None:
+        session.execute(text(f"SET hnsw.ef_search = {max(k, 200)}"))
+        session.execute(text(f"SET hnsw.iterative_scan = strict_order"))
     rows = session.execute(stmt).fetchall()
     print(f"Found {len(rows)} results for device {device_id} with sort_by {sort_by}")
 
+    image_ids = [row.Image.id for row in rows]
     records = [_orm_to_lifelog(row.Image) for row in rows]
 
     # group by segment id
@@ -210,18 +213,12 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
         else:
             segments[segment_key] = [record]
 
-    # Build summary data
-    image_paths = [r.image_path for r in records]
+    # Build summary data — filter by integer/UUID PK (faster than 1000-string IN)
     top_locations: list[dict] = []
     top_countries: list[dict] = []
     top_people: list[dict] = []
 
-    if image_paths:
-        display_name_expr = case(
-            (Location.name.in_(["---", "Unknown Place", ""]), Location.address),
-            else_=Location.name,
-        ).label("display_name")
-
+    if image_ids:
         location_rows = session.execute(
             select(
                 Location.id,
@@ -236,7 +233,7 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
                 func.min(Image.timestamp).label("first_seen"),
             )
             .join(Image, Image.location_id == Location.id)
-            .where(Image.image_path.in_(image_paths), Image.device == device_id)
+            .where(Image.id.in_(image_ids))
             .group_by(Location.id)
             .order_by(func.min(Image.timestamp).asc())
             .limit(10)
@@ -268,8 +265,7 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
             select(Location.country, func.count().label("cnt"))
             .join(Image, Image.location_id == Location.id)
             .where(
-                Image.image_path.in_(image_paths),
-                Image.device == device_id,
+                Image.id.in_(image_ids),
                 Location.country.isnot(None),
                 Location.country != "",
             )
@@ -283,17 +279,70 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
             select(PeopleCluster.cluster_label, func.count().label("cnt"))
             .join(ImagePerson, ImagePerson.cluster_id == PeopleCluster.id)
             .join(Image, Image.id == ImagePerson.image_id)
-            .where(Image.image_path.in_(image_paths), Image.device == device_id)
+            .where(Image.id.in_(image_ids))
             .group_by(PeopleCluster.cluster_label)
             .order_by(func.count().desc())
             .limit(5)
         ).fetchall()
         top_people = [{"name": row.cluster_label, "count": row.cnt} for row in people_rows]
 
+    # Heatmap density buckets — aggregated in SQL from the same pre-extracted
+    # columns the temporal filters use (Image.hour/month/date + dow from
+    # local_timestamp), so a clicked cell selects exactly what it displays.
+    # Done server-side because iterating ~1000 images with dayjs.tz() was the
+    # main frontend render freeze. Day-of-week is normalized to 0=Mon..6=Sun.
+    weekday_tod: list[list] = []
+    weekday_month: list[list] = []
+    calendar: list[list] = []
+    heatmap_years: list[int] = []
+    if image_ids:
+        tod_idx = case(
+            (and_(Image.hour >= 5, Image.hour < 11), 0),
+            (and_(Image.hour >= 11, Image.hour < 13), 1),
+            (and_(Image.hour >= 13, Image.hour < 17), 2),
+            (and_(Image.hour >= 17, Image.hour < 21), 3),
+            else_=4,
+        ).label("tod")
+        # PG EXTRACT returns double precision; % needs integer operands → cast first.
+        dow_mon = ((cast(extract("dow", Image.local_timestamp), Integer) + 6) % 7).label("dow")
+
+        # weekdayTod and weekdayMonth share the same id/local_timestamp filter, so
+        # aggregate once at the finest grain (year, dow, tod, month) and roll up
+        # into the two grids in Python — one query instead of two.
+        grain_rows = session.execute(
+            select(Image.year, dow_mon, tod_idx, Image.month, func.count().label("cnt"))
+            .where(Image.id.in_(image_ids), Image.local_timestamp.isnot(None))
+            .group_by(Image.year, dow_mon, tod_idx, Image.month)
+        ).fetchall()
+
+        wt_acc: dict[tuple, int] = {}
+        wm_acc: dict[tuple, int] = {}
+        for r in grain_rows:
+            wt_acc[(r.year, r.dow, r.tod)] = wt_acc.get((r.year, r.dow, r.tod), 0) + r.cnt
+            month0 = (r.month - 1) if r.month else 0
+            wm_acc[(r.year, r.dow, month0)] = wm_acc.get((r.year, r.dow, month0), 0) + r.cnt
+        weekday_tod = [[y, d, t, c] for (y, d, t), c in wt_acc.items()]
+        weekday_month = [[y, d, m, c] for (y, d, m), c in wm_acc.items()]
+
+        cal_rows = session.execute(
+            select(Image.date, func.count().label("cnt"))
+            .where(Image.id.in_(image_ids), Image.date.isnot(None))
+            .group_by(Image.date)
+        ).fetchall()
+        calendar = [[r.date, r.cnt] for r in cal_rows]
+
+        heatmap_years = sorted({r.year for r in grain_rows if r.year is not None})
+
     summary = {
         "topLocations": top_locations,
         "topCountries": top_countries,
         "topPeople": top_people,
+        "heatmap": {
+            "weekdayTod": weekday_tod,
+            "weekdayMonth": weekday_month,
+            "calendar": calendar,
+            "years": heatmap_years,
+        },
     }
     return list(segments.values()), summary
 

@@ -229,7 +229,7 @@ function MainPage() {
     );
 
     // Recent (unsegmented) — always shown at top for today
-    const { data: recentData, mutate: mutateRecent } = useSWR(
+    const { data: recentData, error: recentError, mutate: mutateRecent } = useSWR(
         date === today && device && isAuthorised
             ? ['unsegmented', device, date]
             : null,
@@ -263,14 +263,16 @@ function MainPage() {
     useEffect(() => {
         if (selectedSegmentId !== null) return;
         if (!navSegments?.length) return;
-        if (isToday && recentData === undefined) return;
+        // Wait for the recent fetch only while it's still in flight. If it
+        // errored, treat it as "no recent" and fall through to latest segment.
+        if (isToday && recentData === undefined && !recentError) return;
         if (hasRecent) {
             setSegment('unsegmented');
             return;
         }
         const newest = navSegments[navSegments.length - 1];
         if (newest?.segmentId != null) setSegment(newest.segmentId);
-    }, [navSegments, recentData]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [navSegments, recentData, recentError]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // "Recent" (unsegmented, newest-of-all) belongs with the most recent
     // location. Show it as a block on top only when that last segment is

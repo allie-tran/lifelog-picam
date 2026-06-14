@@ -167,11 +167,21 @@ export type LocationSummaryItem = {
     count: number;
 };
 export type CountItem = { name: string; count: number };
+// Precomputed heatmap densities (server-side, from SQL) so the frontend never
+// iterates the full result set with dayjs. dow is 0=Mon..6=Sun, tod 0..4
+// (morning/midday/afternoon/evening/night), month 0..11.
+export type HeatmapData = {
+    weekdayTod: [number, number, number, number][]; // [year, dow, tod, count]
+    weekdayMonth: [number, number, number, number][]; // [year, dow, month, count]
+    calendar: [string, number][]; // [YYYY-MM-DD, count]
+    years: number[];
+};
 export type SearchResult = {
     segments: ImageObject[][];
     topLocations: LocationSummaryItem[];
     topCountries: CountItem[];
     topPeople: CountItem[];
+    heatmap: HeatmapData;
 };
 
 export const searchImages = async (

@@ -191,6 +191,7 @@ class LifelogImage(CamelCaseModel):
         default=0, ge=0, lt=24 * 3600
     )
     thumbnail: str | None
+    grid_thumbnail: str | None = None  # small derivative for grids (see services.utils)
     is_video: bool
 
     deleted: bool = False

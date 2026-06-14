@@ -1,5 +1,5 @@
 import { Box, Typography } from '@mui/material';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { ROW_LABEL_W, CELL_H } from './constants';
 
 const GridView = ({
@@ -135,4 +135,4 @@ const GridView = ({
     );
 };
 
-export default GridView;
+export default memo(GridView);

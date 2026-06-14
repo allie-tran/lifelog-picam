@@ -14,14 +14,13 @@ import {
     monthOptions,
     timeOfDayOptions,
 } from 'types/filters';
-import { ImageObject } from 'utils/types';
+import { HeatmapData } from 'apis/browsing';
 import GridView from './GridView';
 import CalendarView from './CalendarView';
 import {
     TOD_DISPLAY,
     DAY_ABBR,
     MONTH_ABBR,
-    hourToTodKey,
     toggle,
     ViewMode,
 } from './constants';
@@ -40,13 +39,11 @@ export interface TimeHeatmapProps {
     customRanges: { start: string; end: string }[];
     weekCells: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[];
     monthCells: { dayOfWeek: DayOfWeek; month: Month }[];
-    resultImages: ImageObject[];
+    heatmap: HeatmapData;
     onTimeOfDaysChange: (v: TimeOfDay[]) => void;
     onDayOfWeeksChange: (v: DayOfWeek[]) => void;
     onMonthsChange: (v: Month[]) => void;
     onCustomRangesChange: (v: { start: string; end: string }[]) => void;
-    onWeekCellsChange: (v: { timeOfDay: TimeOfDay; dayOfWeek: DayOfWeek }[]) => void;
-    onMonthCellsChange: (v: { dayOfWeek: DayOfWeek; month: Month }[]) => void;
     // Atomic combined handlers for cell clicks (row+col in one URL update)
     onWeekdayCellClick: (tod: TimeOfDay, dow: DayOfWeek) => void;
     onMonthCellClick: (dow: DayOfWeek, month: Month) => void;
@@ -60,13 +57,11 @@ const TimeHeatmap = ({
     customRanges,
     weekCells,
     monthCells,
-    resultImages,
+    heatmap,
     onTimeOfDaysChange,
     onDayOfWeeksChange,
     onMonthsChange,
     onCustomRangesChange,
-    onWeekCellsChange,
-    onMonthCellsChange,
     onWeekdayCellClick,
     onMonthCellClick,
 }: TimeHeatmapProps) => {
@@ -74,34 +69,33 @@ const TimeHeatmap = ({
 
     // ── density grids ──────────────────────────────────────────────────────
 
+    // Densities are pre-aggregated server-side (see backend retrieve_image_with
+    // _filters). Building them here from precomputed buckets is a handful of
+    // tiny loops — no per-image dayjs, which was the render freeze.
+
     const weekdayDensity = useMemo(() => {
         const grid = Array.from({ length: 5 }, () => new Array(7).fill(0));
-        for (const img of resultImages) {
-            const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
-            if (currentYear !== null && ts.year() !== currentYear) continue;
-            const ri = TOD_DISPLAY.findIndex((t) => t.key === hourToTodKey(ts.hour()));
-            const ci = (ts.day() + 6) % 7;
-            if (ri >= 0) grid[ri][ci]++;
+        for (const [year, dow, tod, count] of heatmap.weekdayTod) {
+            if (currentYear !== null && year !== currentYear) continue;
+            grid[tod][dow] += count;
         }
         const max = Math.max(...grid.flatMap((r) => r), 1);
         return grid.map((r) => r.map((v) => v / max));
-    }, [resultImages, currentYear]);
+    }, [heatmap, currentYear]);
 
     const monthDensity = useMemo(() => {
         const grid = Array.from({ length: 7 }, () => new Array(12).fill(0));
-        for (const img of resultImages) {
-            const ts = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC');
-            if (currentYear !== null && ts.year() !== currentYear) continue;
-            const ri = (ts.day() + 6) % 7; // 0=Mon..6=Sun
-            grid[ri][ts.month()]++;
+        for (const [year, dow, month, count] of heatmap.weekdayMonth) {
+            if (currentYear !== null && year !== currentYear) continue;
+            grid[dow][month] += count;
         }
         const max = Math.max(...grid.flatMap((r) => r), 1);
         return grid.map((r) => r.map((v) => v / max));
-    }, [resultImages, currentYear]);
+    }, [heatmap, currentYear]);
 
     const calendarYear = currentYear ??
-        (resultImages.length > 0
-            ? Math.max(...resultImages.map((img) => dayjs.utc(img.timestamp).year()))
+        (heatmap.years.length > 0
+            ? Math.max(...heatmap.years)
             : new Date().getFullYear());
 
     const { calendarGrid, calendarDensity } = useMemo(() => {
@@ -121,9 +115,8 @@ const TimeHeatmap = ({
         }
 
         const counts: Record<string, number> = {};
-        for (const img of resultImages) {
-            const k = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC').format('YYYY-MM-DD');
-            counts[k] = (counts[k] || 0) + 1;
+        for (const [dateStr, count] of heatmap.calendar) {
+            counts[dateStr] = count;
         }
         // Normalize only against dates within the displayed year so other years
         // don't deflate the density scale.
@@ -134,7 +127,7 @@ const TimeHeatmap = ({
         );
 
         return { calendarGrid: grid, calendarDensity: density };
-    }, [calendarYear, resultImages]);
+    }, [calendarYear, heatmap]);
 
     // ── selected indices (row/col from checkboxes) ─────────────────────────
 
@@ -306,12 +299,10 @@ const TimeHeatmap = ({
             )}
 
             {view === 'calendar' && (() => {
-                const hasResultsInYear = resultImages.some(
-                    (img) => dayjs.utc(img.timestamp).tz(img.timezone || 'UTC').year() === calendarYear
-                );
+                const hasResultsInYear = heatmap.years.includes(calendarYear);
                 return (
                     <>
-                        {resultImages.length > 0 && !hasResultsInYear && (
+                        {heatmap.years.length > 0 && !hasResultsInYear && (
                             <Typography
                                 variant="caption"
                                 color="text.secondary"
@@ -328,6 +319,7 @@ const TimeHeatmap = ({
                             highlightedDowMonthPairs={calendarHighlightDowMonthPairs}
                             onDateClick={toggleDate}
                             onDragSelect={handleCalendarDragSelect}
+                            showDowLabels={currentYear !== null}
                         />
                     </>
                 );

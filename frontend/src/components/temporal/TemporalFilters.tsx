@@ -31,6 +31,7 @@ import {
     timeOfDayOptions,
 } from 'types/filters';
 import { ImageObject } from 'utils/types';
+import { HeatmapData } from 'apis/browsing';
 import { THUMBNAIL_HOST_URL } from 'constants/urls';
 import TimeHeatmap from 'components/temporal/TimeHeatmap';
 
@@ -52,14 +53,12 @@ const parseDate = (text: string) => {
     return d.isValid() ? d : null;
 };
 
+const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], calendar: [], years: [] };
+
 const TemporalFiltersHook = ({
-    resultImages = [],
-    onDeleteImage,
-    onZoomImage,
+    heatmap = EMPTY_HEATMAP,
 }: {
-    resultImages?: ImageObject[];
-    onDeleteImage?: (path: string) => void;
-    onZoomImage?: (path: string, isVideo: boolean) => void;
+    heatmap?: HeatmapData;
 } = {}) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
@@ -69,7 +68,7 @@ const TemporalFiltersHook = ({
     const [endText, setEndText] = useState('');
 
     const { timeOfDays, dayOfWeeks, seasons, months, years, customRanges, weekCells, monthCells } =
-        parseSearchParams(searchParams);
+        useMemo(() => parseSearchParams(searchParams), [searchParams]);
 
     const update = useCallback(
         (partial: Parameters<typeof applyQueryToParams>[0]) => {
@@ -119,6 +118,28 @@ const TemporalFiltersHook = ({
         setStartText('');
         setEndText('');
     }, [startText, endText, setSearchParams]);
+
+    // ── stable heatmap handlers ─────────────────────────────────────────────
+    // Referentially stable so React.memo on the heatmap leaf views can skip
+    // reconciling when the parent re-renders (e.g. on accordion open/close).
+
+    const onTimeOfDaysChange = useCallback((v: TimeOfDay[]) => update({ timeOfDays: v }), [update]);
+    const onDayOfWeeksChange = useCallback((v: DayOfWeek[]) => update({ dayOfWeeks: v }), [update]);
+    const onMonthsChange = useCallback((v: Month[]) => update({ months: v }), [update]);
+    const onCustomRangesChange = useCallback(
+        (v: { start: string; end: string }[]) => update({ customRanges: v }),
+        [update]
+    );
+    const onWeekdayCellClick = useCallback(
+        (tod: TimeOfDay, dow: DayOfWeek) =>
+            update({ timeOfDays: toggle(timeOfDays, tod), dayOfWeeks: toggle(dayOfWeeks, dow) }),
+        [update, timeOfDays, dayOfWeeks]
+    );
+    const onMonthCellClick = useCallback(
+        (dow: DayOfWeek, month: Month) =>
+            update({ dayOfWeeks: toggle(dayOfWeeks, dow), months: toggle(months, month) }),
+        [update, dayOfWeeks, months]
+    );
 
     // ── renders ───────────────────────────────────────────────────────────
 
@@ -277,25 +298,13 @@ const TemporalFiltersHook = ({
                 customRanges={customRanges}
                 weekCells={weekCells}
                 monthCells={monthCells}
-                resultImages={resultImages}
-                onTimeOfDaysChange={(v: TimeOfDay[]) => update({ timeOfDays: v })}
-                onDayOfWeeksChange={(v: DayOfWeek[]) => update({ dayOfWeeks: v })}
-                onMonthsChange={(v: Month[]) => update({ months: v })}
-                onCustomRangesChange={(v) => update({ customRanges: v })}
-                onWeekCellsChange={(v) => update({ weekCells: v })}
-                onMonthCellsChange={(v) => update({ monthCells: v })}
-                onWeekdayCellClick={(tod, dow) =>
-                    update({
-                        timeOfDays: toggle(timeOfDays, tod),
-                        dayOfWeeks: toggle(dayOfWeeks, dow),
-                    })
-                }
-                onMonthCellClick={(dow, month) =>
-                    update({
-                        dayOfWeeks: toggle(dayOfWeeks, dow),
-                        months: toggle(months, month),
-                    })
-                }
+                heatmap={heatmap}
+                onTimeOfDaysChange={onTimeOfDaysChange}
+                onDayOfWeeksChange={onDayOfWeeksChange}
+                onMonthsChange={onMonthsChange}
+                onCustomRangesChange={onCustomRangesChange}
+                onWeekdayCellClick={onWeekdayCellClick}
+                onMonthCellClick={onMonthCellClick}
             />
 
             {/* Calendar-selected dates and ranges */}

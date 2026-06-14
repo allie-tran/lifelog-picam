@@ -6,7 +6,7 @@ import {
     PlaceRounded,
     PublicRounded,
 } from '@mui/icons-material';
-import { Box, Chip, Stack, Typography } from '@mui/material';
+import { Box, Chip, Collapse, Skeleton, Stack, Typography } from '@mui/material';
 import { CountItem, LocationSummaryItem } from 'apis/browsing';
 import { getAllFaces } from '@apis/searchFilters';
 import React, { useState } from 'react';
@@ -35,6 +35,52 @@ const SummaryRow = ({
         <Box sx={{ flex: 1 }}>{children}</Box>
     </Stack>
 );
+
+// Caps a chip row to `max` items; the rest expand/collapse with a smooth height
+// transition so the summary doesn't dump a wall of chips or jump on toggle.
+const ExpandableRow = ({
+    nodes,
+    max,
+    spacing = 0.5,
+}: {
+    nodes: React.ReactNode[];
+    max: number;
+    spacing?: number;
+}) => {
+    const [open, setOpen] = useState(false);
+    const visible = nodes.slice(0, max);
+    const rest = nodes.slice(max);
+
+    return (
+        <Box>
+            <Stack direction="row" spacing={spacing} flexWrap="wrap" useFlexGap>
+                {visible}
+                {rest.length > 0 && (
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        label={open ? 'Show less' : `+${rest.length} more`}
+                        onClick={() => setOpen((o) => !o)}
+                        sx={{ fontSize: '11px', cursor: 'pointer' }}
+                    />
+                )}
+            </Stack>
+            <Collapse in={open} timeout={200} unmountOnExit>
+                <Stack
+                    direction="row"
+                    spacing={spacing}
+                    flexWrap="wrap"
+                    useFlexGap
+                    sx={{ mt: spacing }}
+                >
+                    {rest}
+                </Stack>
+            </Collapse>
+        </Box>
+    );
+};
+
+const MAX_CHIPS = 6;
 
 const LocationChip = ({
     location,
@@ -69,6 +115,46 @@ const LocationChip = ({
         />
     );
 };
+
+const ChipSkeleton = ({ width }: { width: number }) => (
+    <Skeleton variant="rounded" width={width} height={20} sx={{ borderRadius: '12px' }} />
+);
+
+// Mirrors ResultSummaryBar's row structure (same container + SummaryRows) so the
+// real bar swaps in without layout shift.
+export const ResultSummaryBarSkeleton = () => (
+    <Stack
+        spacing={0.75}
+        sx={{ p: 1, border: 1, borderColor: 'divider', borderRadius: 1, width: '100%' }}
+    >
+        <SummaryRow icon={<CalendarTodayRounded sx={{ fontSize: 15 }} />}>
+            <Skeleton variant="text" width={150} />
+        </SummaryRow>
+        <SummaryRow icon={<EventRounded sx={{ fontSize: 15 }} />}>
+            <Skeleton variant="text" width={200} />
+        </SummaryRow>
+        <SummaryRow icon={<LocalActivityRounded sx={{ fontSize: 15 }} />}>
+            <Stack direction="row" spacing={0.5}>
+                {[64, 80, 56].map((w, i) => <ChipSkeleton key={i} width={w} />)}
+            </Stack>
+        </SummaryRow>
+        <SummaryRow icon={<PlaceRounded sx={{ fontSize: 15 }} />}>
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                {[90, 70, 110, 80].map((w, i) => <ChipSkeleton key={i} width={w} />)}
+            </Stack>
+        </SummaryRow>
+        <SummaryRow icon={<PersonRounded sx={{ fontSize: 15 }} />}>
+            <Stack direction="row" spacing={1}>
+                {[0, 1, 2].map((i) => (
+                    <Stack key={i} alignItems="center" spacing={0.25}>
+                        <Skeleton variant="circular" width={36} height={36} />
+                        <Skeleton variant="text" width={40} />
+                    </Stack>
+                ))}
+            </Stack>
+        </SummaryRow>
+    </Stack>
+);
 
 export type ResultSummaryBarProps = {
     dateRange: string;
@@ -150,13 +236,9 @@ const ResultSummaryBar = ({
 
             {topLocations.length > 0 && (
                 <SummaryRow icon={<PlaceRounded sx={{ fontSize: 15 }} />}>
-                    <Stack
-                        direction="row"
-                        spacing={0.5}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        {topLocations.map((loc) => (
+                    <ExpandableRow
+                        max={MAX_CHIPS}
+                        nodes={topLocations.map((loc) => (
                             <LocationChip
                                 key={loc.id ?? loc.name}
                                 location={loc}
@@ -168,19 +250,15 @@ const ResultSummaryBar = ({
                                 onHighlight={onHighlightLocation}
                             />
                         ))}
-                    </Stack>
+                    />
                 </SummaryRow>
             )}
 
             {topCountries.length > 0 && (
                 <SummaryRow icon={<PublicRounded sx={{ fontSize: 15 }} />}>
-                    <Stack
-                        direction="row"
-                        spacing={0.5}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        {topCountries.map((c) => (
+                    <ExpandableRow
+                        max={MAX_CHIPS}
+                        nodes={topCountries.map((c) => (
                             <Chip
                                 key={c.name}
                                 size="small"
@@ -189,19 +267,16 @@ const ResultSummaryBar = ({
                                 sx={{ cursor: 'pointer', fontSize: '11px' }}
                             />
                         ))}
-                    </Stack>
+                    />
                 </SummaryRow>
             )}
 
             {topPeople.length > 0 && (
                 <SummaryRow icon={<PersonRounded sx={{ fontSize: 15 }} />}>
-                    <Stack
-                        direction="row"
+                    <ExpandableRow
+                        max={MAX_CHIPS}
                         spacing={1}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        {topPeople.map((person) => {
+                        nodes={topPeople.map((person) => {
                             const face = facesByName[person.name];
                             return (
                                 <Stack
@@ -271,7 +346,7 @@ const ResultSummaryBar = ({
                                 </Stack>
                             );
                         })}
-                    </Stack>
+                    />
                 </SummaryRow>
             )}
         </Stack>

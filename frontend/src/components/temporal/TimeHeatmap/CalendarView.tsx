@@ -11,6 +11,7 @@ const CalendarView = ({
     highlightedDowMonthPairs,
     onDateClick,
     onDragSelect,
+    showDowLabels = true,
 }: {
     calendarGrid: (string | null)[][];
     density: (number | null)[][];
@@ -19,6 +20,7 @@ const CalendarView = ({
     highlightedDowMonthPairs: Set<string>;
     onDateClick: (d: string) => void;
     onDragSelect: (dates: string[], mode: 'add' | 'remove') => void;
+    showDowLabels?: boolean;
 }) => {
     // Use refs for drag start/mode so the global mouseup handler never goes stale.
     const dragStartRef = React.useRef<string | null>(null);
@@ -81,7 +83,13 @@ const CalendarView = ({
     return (
         <Box sx={{ width: '100%', overflowX: 'auto', pb: 1, userSelect: 'none' }}>
             {/* Month labels */}
-            <Box sx={{ position: 'relative', height: 14, ml: `${CSIZ + CGAP + 6}px` }}>
+            <Box
+                sx={{
+                    position: 'relative',
+                    height: 14,
+                    ml: `${showDowLabels ? CSIZ + CGAP + 6 : 6}px`,
+                }}
+            >
                 {monthLabels.map(({ weekIdx, label }) => (
                     <Typography
                         key={weekIdx}
@@ -100,24 +108,27 @@ const CalendarView = ({
             </Box>
 
             <Box sx={{ display: 'flex', gap: `${CGAP}px`, alignItems: 'flex-start' }}>
-                {/* Day-of-week labels (M W F S) */}
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: `${CGAP}px` }}>
-                    {['M', '', 'W', '', 'F', '', 'S'].map((d, i) => (
-                        <Typography
-                            key={i}
-                            sx={{
-                                width: CSIZ,
-                                height: CSIZ,
-                                fontSize: '0.5rem',
-                                color: 'text.disabled',
-                                lineHeight: `${CSIZ}px`,
-                                textAlign: 'center',
-                            }}
-                        >
-                            {d}
-                        </Typography>
-                    ))}
-                </Box>
+                {/* Day-of-week labels (M W F S) — meaningless once days span many
+                    years continuously (All view), so hidden there. */}
+                {showDowLabels && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: `${CGAP}px` }}>
+                        {['M', '', 'W', '', 'F', '', 'S'].map((d, i) => (
+                            <Typography
+                                key={i}
+                                sx={{
+                                    width: CSIZ,
+                                    height: CSIZ,
+                                    fontSize: '0.5rem',
+                                    color: 'text.disabled',
+                                    lineHeight: `${CSIZ}px`,
+                                    textAlign: 'center',
+                                }}
+                            >
+                                {d}
+                            </Typography>
+                        ))}
+                    </Box>
+                )}
 
                 {/* Week columns */}
                 {calendarGrid.map((week, wi) => (
@@ -213,4 +224,4 @@ const CalendarView = ({
     );
 };
 
-export default CalendarView;
+export default React.memo(CalendarView);

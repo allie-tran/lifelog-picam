@@ -21,8 +21,8 @@ import {
     Divider,
     Drawer,
     IconButton,
-    LinearProgress,
     Pagination,
+    Skeleton,
     Stack,
     ToggleButton,
     ToggleButtonGroup,
@@ -32,15 +32,16 @@ import {
 } from '@mui/material';
 import {
     CountItem,
+    HeatmapData,
     LocationSummaryItem,
     deleteImages,
     searchImages,
 } from 'apis/browsing';
 import { submitImages } from 'apis/dres';
-import ResultSummaryBar from 'components/search/ResultSummaryBar';
+import ResultSummaryBar, { ResultSummaryBarSkeleton } from 'components/search/ResultSummaryBar';
 import { FaceFiltersHook } from 'components/faces/FaceFilters';
 import ImageWithDate from 'components/common/ImageWithDate';
-import LifelogEvent from 'components/browse/LifelogEvent';
+import LifelogEvent, { LifelogEventSkeleton } from 'components/browse/LifelogEvent';
 import { LocationFiltersHook } from 'components/spatial/LocationFilters';
 import { TemporalFiltersHook } from 'components/temporal/TemporalFilters';
 import dayjs from 'dayjs';
@@ -65,6 +66,8 @@ import SearchTextBox, { SearchTextBoxHandle } from './SearchTextBox';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], calendar: [], years: [] };
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();
@@ -165,6 +168,8 @@ const SearchPage = () => {
         topPeople: CountItem[];
     } | null>(null);
 
+    const [searchHeatmap, setSearchHeatmap] = React.useState<HeatmapData>(EMPTY_HEATMAP);
+
     const imageRefs = searchParams.getAll('imageRef');
     const blobQuery = searchParams.get('mode') === 'similar' ? (searchParams.get('query') || undefined) : undefined;
     const hasSearchInput = !!(
@@ -198,11 +203,12 @@ const SearchPage = () => {
             const options = (imageRefs.length || imageBlobs.length)
                 ? { imagePaths: imageRefs, imageBlobs }
                 : undefined;
-            const { segments, topLocations, topCountries, topPeople } =
+            const { segments, topLocations, topCountries, topPeople, heatmap } =
                 await searchImages(device, searchQuery, sortBy, options);
             dispatch(setLoading(false));
             setPage(1);
             setSearchSummaryData({ topLocations, topCountries, topPeople });
+            setSearchHeatmap(heatmap ?? EMPTY_HEATMAP);
             if (sortBy === 'relevance') {
                 setSortOrder('desc');
                 return segments.slice().reverse();
@@ -232,14 +238,7 @@ const SearchPage = () => {
 
     const [deleted, setDeleted] = useState<string[]>([]);
 
-    const images = useMemo(() => {
-        if (results.length !== 0) {
-            return results.reduce((acc, segment) => {
-                return [...acc, ...segment];
-            });
-        }
-        return [];
-    }, [results]);
+    const images = useMemo(() => results.flat(), [results]);
 
     const {
         renderFilterOptions,
@@ -247,22 +246,29 @@ const SearchPage = () => {
         renderClearButton,
         nothingIsSelected,
     } = TemporalFiltersHook({
-        resultImages: images,
-        onDeleteImage: (path) => setDeleted((prev) => [...prev, path]),
-        onZoomImage: (path, isVideo) =>
-            dispatch(setZoomedImage({ image: path, isVideo })),
+        heatmap: searchHeatmap,
     });
 
     const resultSummary = useMemo(() => {
         if (!images.length) return null;
-        const timestamps = images.map((img) => dayjs.utc(img.timestamp));
-        const earliest = timestamps.reduce((a, b) => (a.isBefore(b) ? a : b));
-        const latest = timestamps.reduce((a, b) => (a.isAfter(b) ? a : b));
+        // Single numeric pass to find extremes; dayjs only on the two endpoints
+        // (parsing 1000 dayjs objects per render was a needless cost).
+        let minImg = images[0];
+        let maxImg = images[0];
+        let minMs = Infinity;
+        let maxMs = -Infinity;
+        for (const img of images) {
+            const ms = Date.parse(img.timestamp);
+            if (ms < minMs) { minMs = ms; minImg = img; }
+            if (ms > maxMs) { maxMs = ms; maxImg = img; }
+        }
+        const earliest = dayjs.utc(minImg.timestamp);
+        const latest = dayjs.utc(maxImg.timestamp);
         const sameDay =
             earliest.format('YYYY-MM-DD') === latest.format('YYYY-MM-DD');
         const dateRange = sameDay
-            ? earliest.tz(images[0].timezone || 'UTC').format('D MMM YYYY')
-            : `${earliest.tz(images[0].timezone || 'UTC').format('D MMM YYYY')} – ${latest.tz(images[images.length - 1].timezone || 'UTC').format('D MMM YYYY')}`;
+            ? earliest.tz(minImg.timezone || 'UTC').format('D MMM YYYY')
+            : `${earliest.tz(minImg.timezone || 'UTC').format('D MMM YYYY')} – ${latest.tz(maxImg.timezone || 'UTC').format('D MMM YYYY')}`;
 
         const activityCounts: Record<string, number> = {};
         for (const img of images) {
@@ -361,13 +367,16 @@ const SearchPage = () => {
     const { evaluationId, sessionId, currentTask } = useAppSelector((s) => s.dres);
     const dresReady = !!(evaluationId && sessionId);
 
-    const deleteRow = (imagePaths: string[]) => {
-        dispatch(setLoading(true));
-        deleteImages(device, imagePaths).then(() => {
-            setDeleted((prev) => [...prev, ...imagePaths]);
-            dispatch(setLoading(false));
-        });
-    };
+    const deleteRow = useCallback(
+        (imagePaths: string[]) => {
+            dispatch(setLoading(true));
+            deleteImages(device, imagePaths).then(() => {
+                setDeleted((prev) => [...prev, ...imagePaths]);
+                dispatch(setLoading(false));
+            });
+        },
+        [device, dispatch]
+    );
 
     // DRES page-select submit flow
     const [isDresSelecting, setIsDresSelecting] = useState(false);
@@ -400,12 +409,108 @@ const SearchPage = () => {
         })();
     };
 
-    const currentPageResults =
-        results?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) || [];
+    const currentPageResults = useMemo(
+        () => results?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) || [],
+        [results, page]
+    );
 
-    const currentPageImages = (
-        images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || []
-    ).filter((img) => !deleted.includes(img.imagePath));
+    const currentPageImages = useMemo(
+        () =>
+            (images?.slice((page - 1) * PAGE_SIZE * 2, page * PAGE_SIZE * 2) || []).filter(
+                (img) => !deleted.includes(img.imagePath)
+            ),
+        [images, page, deleted]
+    );
+
+    // Memoize the heavy mapped lists so unrelated re-renders (e.g. opening or
+    // closing a filter accordion, which flips `filterShown`) reuse the same
+    // element refs and React bails out of reconciling the grid.
+    const resultEventItems = useMemo(
+        () =>
+            currentPageResults.map((segment, index) => (
+                <LifelogEvent
+                    key={index}
+                    segment={segment}
+                    onChange={() => mutate()}
+                    deleteRow={deleteRow}
+                    fullTime
+                />
+            )),
+        [currentPageResults, deleteRow, mutate]
+    );
+
+    const imageGridItems = useMemo(
+        () =>
+            currentPageImages?.map((image) => {
+                if (deleted.includes(image.imagePath)) return null;
+                const isDresSelected = dresSelectedImages.includes(image.imagePath);
+                return (
+                    <Box
+                        key={image.imagePath}
+                        sx={{
+                            borderRadius: '10px',
+                            outline: isDresSelected ? '3px solid #4caf50' : 'none',
+                        }}
+                    >
+                        <ImageWithDate
+                            fontSize={'10px'}
+                            height={'200px'}
+                            image={image}
+                            onClick={() => {
+                                if (isDresSelecting) {
+                                    setDresSelectedImages((prev) =>
+                                        isDresSelected
+                                            ? prev.filter((p) => p !== image.imagePath)
+                                            : [...prev, image.imagePath]
+                                    );
+                                } else {
+                                    dispatch(setZoomedImage({ image: image.imagePath, isVideo: image.isVideo }));
+                                }
+                            }}
+                            onDelete={() => setDeleted([...deleted, image.imagePath])}
+                            extra={
+                                <>
+                                    {isSelecting && (
+                                        <Checkbox
+                                            checked={selectedImages.includes(image.imagePath)}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setSelectedImages((prev) => [...prev, image.imagePath]);
+                                                } else {
+                                                    setSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                    {isDresSelecting && (
+                                        <Checkbox
+                                            checked={isDresSelected}
+                                            sx={{ color: 'success.main', '&.Mui-checked': { color: 'success.main' } }}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setDresSelectedImages((prev) => [...prev, image.imagePath]);
+                                                } else {
+                                                    setDresSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                </>
+                            }
+                        />
+                    </Box>
+                );
+            }),
+        [
+            currentPageImages,
+            deleted,
+            dresSelectedImages,
+            isDresSelecting,
+            isSelecting,
+            selectedImages,
+            dispatch,
+        ]
+    );
 
     return (
         <>
@@ -519,6 +624,7 @@ const SearchPage = () => {
                 <StyledAccordion
                     square
                     elevation={0}
+                    slotProps={{ transition: { unmountOnExit: false } }}
                     expanded={filterShown === 'temporal'}
                     onChange={() =>
                         setFilterShown((prev) =>
@@ -558,6 +664,7 @@ const SearchPage = () => {
                 <StyledAccordion
                     square
                     elevation={0}
+                    slotProps={{ transition: { unmountOnExit: false } }}
                     expanded={filterShown === 'location'}
                     onChange={() =>
                         setFilterShown((prev) =>
@@ -597,6 +704,7 @@ const SearchPage = () => {
                 <StyledAccordion
                     square
                     elevation={0}
+                    slotProps={{ transition: { unmountOnExit: false } }}
                     expanded={filterShown === 'faces'}
                     onChange={() =>
                         setFilterShown((prev) =>
@@ -684,7 +792,11 @@ const SearchPage = () => {
                             height: 'auto',
                         }}
                     >
-                        {resultSummary ? (
+                        {isLoading ? (
+                            <Stack direction="row" spacing={1}>
+                                <ResultSummaryBarSkeleton />
+                            </Stack>
+                        ) : resultSummary ? (
                             <Stack direction="row" spacing={1}>
                                 <ResultSummaryBar
                                     dateRange={resultSummary.dateRange}
@@ -828,7 +940,38 @@ const SearchPage = () => {
                 </Stack>
                 <Divider flexItem sx={{ marginBottom: 2 }} />
                 {isLoading ? (
-                    <LinearProgress sx={{ marginBottom: 2 }} />
+                    viewMode === 'events' ? (
+                        <Stack
+                            direction="row"
+                            spacing={2}
+                            sx={{ width: '100%' }}
+                            flexWrap="wrap"
+                            useFlexGap
+                        >
+                            {Array.from({ length: 4 }).map((_, i) => (
+                                <Box key={i} sx={{ flex: '1 1 340px', minWidth: 300 }}>
+                                    <LifelogEventSkeleton />
+                                </Box>
+                            ))}
+                        </Stack>
+                    ) : (
+                        <Stack
+                            spacing={1}
+                            sx={{ flexWrap: 'wrap' }}
+                            direction="row"
+                            useFlexGap
+                        >
+                            {Array.from({ length: PAGE_SIZE * 2 }).map((_, i) => (
+                                <Skeleton
+                                    key={i}
+                                    variant="rounded"
+                                    width={150}
+                                    height={200}
+                                    sx={{ borderRadius: '10px' }}
+                                />
+                            ))}
+                        </Stack>
+                    )
                 ) : viewMode === 'events' ? (
                     <>
                         <Stack
@@ -838,15 +981,7 @@ const SearchPage = () => {
                             flexWrap="wrap"
                             useFlexGap
                         >
-                            {currentPageResults.map((segment, index) => (
-                                <LifelogEvent
-                                    key={index}
-                                    segment={segment}
-                                    onChange={() => mutate()}
-                                    deleteRow={deleteRow}
-                                    fullTime
-                                />
-                            ))}
+                            {resultEventItems}
                         </Stack>
                         {page > 0 && (
                             <Pagination
@@ -951,66 +1086,7 @@ const SearchPage = () => {
                             direction="row"
                             useFlexGap
                         >
-                            {currentPageImages?.map((image) => {
-                                if (deleted.includes(image.imagePath)) return null;
-                                const isDresSelected = dresSelectedImages.includes(image.imagePath);
-                                return (
-                                    <Box
-                                        key={image.imagePath}
-                                        sx={{
-                                            borderRadius: '10px',
-                                            outline: isDresSelected ? '3px solid #4caf50' : 'none',
-                                        }}
-                                    >
-                                        <ImageWithDate
-                                            fontSize={'10px'}
-                                            height={'200px'}
-                                            image={image}
-                                            onClick={() => {
-                                                if (isDresSelecting) {
-                                                    setDresSelectedImages((prev) =>
-                                                        isDresSelected
-                                                            ? prev.filter((p) => p !== image.imagePath)
-                                                            : [...prev, image.imagePath]
-                                                    );
-                                                } else {
-                                                    dispatch(setZoomedImage({ image: image.imagePath, isVideo: image.isVideo }));
-                                                }
-                                            }}
-                                            onDelete={() => setDeleted([...deleted, image.imagePath])}
-                                            extra={
-                                                <>
-                                                    {isSelecting && (
-                                                        <Checkbox
-                                                            checked={selectedImages.includes(image.imagePath)}
-                                                            onChange={(e) => {
-                                                                if (e.target.checked) {
-                                                                    setSelectedImages((prev) => [...prev, image.imagePath]);
-                                                                } else {
-                                                                    setSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
-                                                                }
-                                                            }}
-                                                        />
-                                                    )}
-                                                    {isDresSelecting && (
-                                                        <Checkbox
-                                                            checked={isDresSelected}
-                                                            sx={{ color: 'success.main', '&.Mui-checked': { color: 'success.main' } }}
-                                                            onChange={(e) => {
-                                                                if (e.target.checked) {
-                                                                    setDresSelectedImages((prev) => [...prev, image.imagePath]);
-                                                                } else {
-                                                                    setDresSelectedImages((prev) => prev.filter((p) => p !== image.imagePath));
-                                                                }
-                                                            }}
-                                                        />
-                                                    )}
-                                                </>
-                                            }
-                                        />
-                                    </Box>
-                                );
-                            })}
+                            {imageGridItems}
                         </Stack>
                         {page > 0 && images.length > PAGE_SIZE * 2 && (
                             <Pagination
