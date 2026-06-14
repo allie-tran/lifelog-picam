@@ -338,6 +338,18 @@ def _poi_only_geo(poi: dict) -> dict:
     return geo
 
 
+def _airport_only_geo(airport: dict) -> dict:
+    """Build a geo dict from a gazetteer airport alone (Nominatim returned nothing)."""
+    geo = _EMPTY.copy()
+    geo.update({
+        "name": airport["name"],
+        "osm_type": "airport",
+        "osm_id": airport["id"],
+        "categories": ["airport"],
+    })
+    return geo
+
+
 def enrich_stop(lat: float, lon: float, poi: dict | None = None) -> dict:
     """
     Reverse-geocode a stop centroid.
@@ -356,8 +368,20 @@ def enrich_stop(lat: float, lon: float, poi: dict | None = None) -> dict:
     drifted onto the wrong storefront is corrected; the admin hierarchy still
     comes from Nominatim. Geocoding is otherwise unchanged.
     """
+    # Airport gazetteer FIRST — before any Nominatim/Overpass venue heuristic.
+    # Offline point-in-radius (no network) and the only reliable signal for the
+    # common "I'm in an airport" case: Nominatim never returns the aerodrome
+    # polygon, only an unnamed aeroway node / taxiway / admin boundary. Resolving
+    # it up front means an airport stop always wins instead of being skipped
+    # whenever Nominatim happens to return some node name. Adopting the airport's
+    # identity (name + stable id) also dedups every stop fragment inside it to a
+    # single Location downstream, instead of scattering one marker per gate.
+    airport = nearest_airport(lat, lon)
+
     raw = nominatim_reverse(lat, lon, zoom=18, extratags=True)
     if not raw:
+        if airport:
+            return _airport_only_geo(airport)
         if poi:
             return _poi_only_geo(poi)
         return _EMPTY.copy()
@@ -365,37 +389,33 @@ def enrich_stop(lat: float, lon: float, poi: dict | None = None) -> dict:
     addr = raw.get("address", {})
     extratags = raw.get("extratags", {}) or {}
 
-    # 1. OSM element's own name tag — most reliable for named POIs and buildings
-    name = raw.get("name", "")
+    if airport:
+        # Gazetteer airport wins outright — skip the Nominatim/Overpass venue
+        # resolution below; admin hierarchy still comes from `raw`.
+        name = airport["name"]
+    else:
+        # 1. OSM element's own name tag — most reliable for named POIs/buildings.
+        name = raw.get("name", "")
 
-    # 2. Address category keys (e.g. addr.amenity = "Starbucks").
-    #    Skip generic type strings that aren't proper names ("yes", "company", etc.)
-    _GENERIC = {"yes", "no", "company", "residential", "office", "building", "house"}
-    if not name:
-        for k in _POI_ADDR_KEYS:
-            v = addr.get(k, "")
-            if v and v.lower() not in _GENERIC:
-                name = v
-                break
+        # 2. Address category keys (e.g. addr.amenity = "Starbucks").
+        #    Skip generic type strings that aren't proper names ("yes", etc.)
+        _GENERIC = {"yes", "no", "company", "residential", "office", "building", "house"}
+        if not name:
+            for k in _POI_ADDR_KEYS:
+                v = addr.get(k, "")
+                if v and v.lower() not in _GENERIC:
+                    name = v
+                    break
 
-    # 3. Fine (zoom=18) result is a road / boundary / nameless point inside a
-    #    larger venue.  Resolve that venue WITHOUT leaning on Overpass (down ~half
-    #    the time), in order of reliability:
-    #      a. Airport gazetteer — offline point-in-radius, no network.  Nominatim
-    #         never returns the aerodrome polygon (it gives an unnamed aeroway
-    #         node / taxiway / admin boundary), so this is the only reliable path
-    #         for the common "I'm in an airport" case.
-    #      b. Coarser Nominatim zoom — catches some campuses / parks.
-    #      c. Overpass `is_in` — best-effort last resort.
-    #    Adopting the venue's identity (name + a stable id) also makes every stop
-    #    fragment inside one big venue dedup to a single Location downstream,
-    #    instead of scattering one marker per gate/aisle.
-    airport: dict | None = None
-    if not name or raw.get("class") in _NON_POI_CLASSES:
-        airport = nearest_airport(lat, lon)
-        if airport:
-            name = airport["name"]
-        else:
+        # 3. Fine (zoom=18) result is a road / boundary / nameless point inside a
+        #    larger venue (airport already ruled out above). Resolve that venue
+        #    without leaning on Overpass first, in order of reliability:
+        #      a. Coarser Nominatim zoom — catches some campuses / parks.
+        #      b. Overpass `is_in` — best-effort last resort.
+        #    Adopting the venue's identity (name + a stable id) also dedups every
+        #    stop fragment inside one big venue to a single Location downstream,
+        #    instead of scattering one marker per aisle.
+        if not name or raw.get("class") in _NON_POI_CLASSES:
             area = _enclosing_area(lat, lon)
             if area.get("name"):
                 raw = area
