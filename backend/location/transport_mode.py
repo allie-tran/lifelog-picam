@@ -5,9 +5,13 @@ Per-segment transport-mode classification + flight-aware GPS interpolation.
 
 GPS is the primary signal; visual only confirms it:
 
-  1. GPS kinematics — segment speed (robust p85) + distance + whether the
-     endpoints sit inside airport footprints.  Cheap, always available, and the
-     authority for the mode itself (stationary/walk/cycle/vehicle/flight).
+  1. GPS kinematics — segment speed (robust p85) + the *main trajectory*
+     (net displacement + path straightness) + whether the endpoints sit inside
+     airport footprints.  Cheap, always available, and the authority for the
+     mode itself (stationary/walk/cycle/vehicle/flight).  A fast p85 alone is
+     spike-prone, so the trajectory shape vetoes "vehicle" calls that don't
+     actually cover ground, and a post-pass smooths short single-segment blips
+     out of the mode timeline.
   2. CLIP visual — zero-shot first-person classification over the segment's
      images, using the prompts/labels and θ=0.75 confidence gate from VAISL
      (Tran et al., "Visual-Aware Identification of Semantic Locations in
@@ -17,7 +21,7 @@ GPS is the primary signal; visual only confirms it:
      the GPS mode.  Skipped gracefully when no embeddings are present.
 
 Public API:
-    classify_segment_gps(speed_p85, dist_m, is_flight)      -> str
+    classify_segment_gps(speed_p85, dist_m, is_flight, straightness, n_points) -> str
     is_flight_pair(lat1, lon1, lat2, lon2, dt_s)            -> bool
     great_circle_point(lat1, lon1, lat2, lon2, frac)        -> (lat, lon)
     fuse_mode(gps_mode, clip_mode)                          -> str
@@ -55,6 +59,23 @@ CYCLE_MAX = 7.0              # ≈25 km/h
 # sustained > ~430 km/h over a long hop is unambiguously airborne.
 FLIGHT_SPEED = 120.0         # m/s ≈ 432 km/h
 FLIGHT_MIN_DIST = 50_000.0   # m — guard against a single spurious fast sample
+
+# ─── Main-trajectory guard ────────────────────────────────────────────────────
+# A high p85 over a window that barely advances and wanders is almost always GPS
+# spike noise on a stationary/walking stretch, not a vehicle. Real vehicle travel
+# covers ground in a fairly direct line. Demote a "vehicle" p85 to walk when the
+# window's net displacement is small AND its path is very winding — but only when
+# the window holds enough GPS points for the shape to mean anything. classify is
+# called on short per-image windows (±LOCAL_MODE_HALF_WINDOW_S); with only 2–3
+# fixes "straightness" is random, so the veto would wrongly demote real vehicles.
+VEHICLE_MIN_SPAN = 300.0       # m — net displacement a real vehicle clears in the window
+STRAIGHTNESS_MIN = 0.5         # span / path-length below this = very winding (local wander)
+VEHICLE_VETO_MIN_POINTS = 4    # need ≥4 fixes (≥3 hops) before trusting the shape veto
+
+# A run of consecutive same-mode images shorter than this is too brief to trust
+# on its own. If the runs on both sides share one mode, the blip is absorbed into
+# them — kills window-scale flicker from p85 jitter within a move.
+MIN_MODE_DURATION_S = 60.0
 
 
 # ─── Geometry ─────────────────────────────────────────────────────────────────
@@ -121,8 +142,25 @@ def is_flight_pair(lat1, lon1, lat2, lon2, dt_s: float) -> bool:
 
 # ─── GPS-only mode ────────────────────────────────────────────────────────────
 
-def classify_segment_gps(speed_p85: float, dist_m: float, is_flight: bool) -> str:
-    """Coarse mode from kinematics alone."""
+def classify_segment_gps(
+    speed_p85: float,
+    dist_m: float,
+    is_flight: bool,
+    straightness: float,
+    n_points: int,
+) -> str:
+    """Coarse mode from kinematics + main-trajectory shape.
+
+    ``dist_m`` is the window's net start→end displacement; ``straightness`` is
+    that displacement divided by the cumulative path length (1.0 = dead straight,
+    →0 = wanders in place); ``n_points`` is how many GPS fixes the window holds.
+    Span and straightness describe the main trajectory and veto a "vehicle" speed
+    that the trajectory doesn't support (GPS spikes over a near-stationary or
+    winding walk) — but only once ``n_points`` is large enough for the shape to be
+    real (a sparse window can't tell straight from winding, so the veto is skipped).
+    All args are required: trajectory metrics are always available at the call site,
+    and an optional metric that silently no-ops the veto is a call-site trap.
+    """
     if is_flight:
         return FLIGHT
     if speed_p85 >= FLIGHT_SPEED and dist_m >= FLIGHT_MIN_DIST:
@@ -131,6 +169,16 @@ def classify_segment_gps(speed_p85: float, dist_m: float, is_flight: bool) -> st
         return WALK
     if speed_p85 < CYCLE_MAX:
         return CYCLE
+    # Vehicle band by speed — confirm against the main trajectory. A fast p85 over
+    # a move that neither advances far nor travels in a line is spike noise, not a
+    # vehicle: demote to walk. Skip the veto when the window is too sparse to trust
+    # its shape (else a 2–3 fix slice of a real vehicle move gets demoted).
+    if (
+        n_points >= VEHICLE_VETO_MIN_POINTS
+        and dist_m < VEHICLE_MIN_SPAN
+        and straightness < STRAIGHTNESS_MIN
+    ):
+        return WALK
     return VEHICLE
 
 
