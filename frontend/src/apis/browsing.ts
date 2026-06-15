@@ -175,6 +175,8 @@ export type CountItem = { name: string; count: number };
 export type HeatmapData = {
     weekdayTod: [number, number, number, number][]; // [year, dow, tod, count]
     weekdayMonth: [number, number, number, number][]; // [year, dow, month, count]
+    hourDow: [number, number, number, number][]; // [year, hour, dow, count]
+    hourMonth: [number, number, number, number][]; // [year, hour, month, count]
     calendar: [string, number][]; // [YYYY-MM-DD, count]
     years: number[];
 };

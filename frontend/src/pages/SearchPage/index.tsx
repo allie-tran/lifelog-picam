@@ -67,7 +67,7 @@ import SearchTextBox, { SearchTextBoxHandle } from './SearchTextBox';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], calendar: [], years: [] };
+const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], hourDow: [], hourMonth: [], calendar: [], years: [] };
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();

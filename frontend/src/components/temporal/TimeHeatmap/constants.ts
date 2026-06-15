@@ -1,6 +1,6 @@
 import { TimeOfDay } from 'types/filters';
 
-export type ViewMode = 'weekday' | 'month' | 'calendar';
+export type ViewMode = 'weekday' | 'month' | 'calendar' | 'hourDow' | 'hourMonth' | 'trend';
 
 // Display order: chronological from morning to night
 export const TOD_DISPLAY: { key: TimeOfDay; label: string; sub: string }[] = [
@@ -21,6 +21,20 @@ export const hourToTodKey = (h: number): TimeOfDay => {
     if (h >= 17 && h < 21) return 'evening';
     return 'night';
 };
+
+// Index into TOD_DISPLAY for the time-of-day bucket an hour falls in.
+export const hourToTodIndex = (h: number): number =>
+    TOD_DISPLAY.findIndex((d) => d.key === hourToTodKey(h));
+
+// 24 hour rows for the hour-based grid views. Labels shown sparsely (every 3rd)
+// to stay compact; sub carries the time-of-day band for context.
+export const HOUR_ROWS: { key: string; label: string; sub: string; tip: string }[] =
+    Array.from({ length: 24 }, (_, h) => ({
+        key: String(h),
+        label: h % 3 === 0 ? `${String(h).padStart(2, '0')}:00` : '',
+        sub: '',
+        tip: `${String(h).padStart(2, '0')}:00`,
+    }));
 
 export function toggle<T>(arr: T[], val: T): T[] {
     return arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val];

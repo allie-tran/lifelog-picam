@@ -293,6 +293,8 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
     # main frontend render freeze. Day-of-week is normalized to 0=Mon..6=Sun.
     weekday_tod: list[list] = []
     weekday_month: list[list] = []
+    hour_dow: list[list] = []
+    hour_month: list[list] = []
     calendar: list[list] = []
     heatmap_years: list[int] = []
     if image_ids:
@@ -306,23 +308,31 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
         # PG EXTRACT returns double precision; % needs integer operands → cast first.
         dow_mon = ((cast(extract("dow", Image.local_timestamp), Integer) + 6) % 7).label("dow")
 
-        # weekdayTod and weekdayMonth share the same id/local_timestamp filter, so
-        # aggregate once at the finest grain (year, dow, tod, month) and roll up
-        # into the two grids in Python — one query instead of two.
+        # All four grid views share the same id/local_timestamp filter, so
+        # aggregate once at the finest grain (year, dow, hour, month) and roll up
+        # in Python — one query instead of four. tod is functionally determined
+        # by hour, so grouping by both keeps the existing tod roll-ups exact.
         grain_rows = session.execute(
-            select(Image.year, dow_mon, tod_idx, Image.month, func.count().label("cnt"))
+            select(Image.year, dow_mon, tod_idx, Image.hour, Image.month, func.count().label("cnt"))
             .where(Image.id.in_(image_ids), Image.local_timestamp.isnot(None))
-            .group_by(Image.year, dow_mon, tod_idx, Image.month)
+            .group_by(Image.year, dow_mon, tod_idx, Image.hour, Image.month)
         ).fetchall()
 
         wt_acc: dict[tuple, int] = {}
         wm_acc: dict[tuple, int] = {}
+        hd_acc: dict[tuple, int] = {}
+        hm_acc: dict[tuple, int] = {}
         for r in grain_rows:
             wt_acc[(r.year, r.dow, r.tod)] = wt_acc.get((r.year, r.dow, r.tod), 0) + r.cnt
             month0 = (r.month - 1) if r.month else 0
             wm_acc[(r.year, r.dow, month0)] = wm_acc.get((r.year, r.dow, month0), 0) + r.cnt
+            hour = r.hour if r.hour is not None else 0
+            hd_acc[(r.year, hour, r.dow)] = hd_acc.get((r.year, hour, r.dow), 0) + r.cnt
+            hm_acc[(r.year, hour, month0)] = hm_acc.get((r.year, hour, month0), 0) + r.cnt
         weekday_tod = [[y, d, t, c] for (y, d, t), c in wt_acc.items()]
         weekday_month = [[y, d, m, c] for (y, d, m), c in wm_acc.items()]
+        hour_dow = [[y, h, d, c] for (y, h, d), c in hd_acc.items()]
+        hour_month = [[y, h, m, c] for (y, h, m), c in hm_acc.items()]
 
         cal_rows = session.execute(
             select(Image.date, func.count().label("cnt"))
@@ -340,6 +350,8 @@ def retrieve_image_with_filters(session, device_id: str, query: SearchQuery, sor
         "heatmap": {
             "weekdayTod": weekday_tod,
             "weekdayMonth": weekday_month,
+            "hourDow": hour_dow,
+            "hourMonth": hour_month,
             "calendar": calendar,
             "years": heatmap_years,
         },

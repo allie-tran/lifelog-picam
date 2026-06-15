@@ -53,7 +53,7 @@ const parseDate = (text: string) => {
     return d.isValid() ? d : null;
 };
 
-const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], calendar: [], years: [] };
+const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], hourDow: [], hourMonth: [], calendar: [], years: [] };
 
 const TemporalFiltersHook = ({
     heatmap = EMPTY_HEATMAP,
@@ -126,6 +126,7 @@ const TemporalFiltersHook = ({
     const onTimeOfDaysChange = useCallback((v: TimeOfDay[]) => update({ timeOfDays: v }), [update]);
     const onDayOfWeeksChange = useCallback((v: DayOfWeek[]) => update({ dayOfWeeks: v }), [update]);
     const onMonthsChange = useCallback((v: Month[]) => update({ months: v }), [update]);
+    const onYearsChange = useCallback((v: number[]) => update({ years: v }), [update]);
     const onCustomRangesChange = useCallback(
         (v: { start: string; end: string }[]) => update({ customRanges: v }),
         [update]
@@ -294,6 +295,7 @@ const TemporalFiltersHook = ({
                 timeOfDays={timeOfDays}
                 dayOfWeeks={dayOfWeeks}
                 months={months}
+                years={years}
                 currentYear={currentYear}
                 customRanges={customRanges}
                 weekCells={weekCells}
@@ -302,6 +304,7 @@ const TemporalFiltersHook = ({
                 onTimeOfDaysChange={onTimeOfDaysChange}
                 onDayOfWeeksChange={onDayOfWeeksChange}
                 onMonthsChange={onMonthsChange}
+                onYearsChange={onYearsChange}
                 onCustomRangesChange={onCustomRangesChange}
                 onWeekdayCellClick={onWeekdayCellClick}
                 onMonthCellClick={onMonthCellClick}
