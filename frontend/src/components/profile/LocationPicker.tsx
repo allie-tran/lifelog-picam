@@ -5,6 +5,7 @@ import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import 'leaflet/dist/leaflet.css';
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import { useEffect } from 'react';
+import { MAP_TILE_URL } from 'constants/urls';
 
 const DefaultIcon = L.icon({
     iconUrl: icon,
@@ -13,9 +14,6 @@ const DefaultIcon = L.icon({
     iconAnchor: [12, 41],
 });
 L.Marker.prototype.options.icon = DefaultIcon;
-
-const TILE_URL =
-    'https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH';
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -52,7 +50,7 @@ export default function LocationPicker({
     return (
         <Box sx={{ height, width: '100%', border: '1px solid #ccc', borderRadius: 1, overflow: 'hidden' }}>
             <MapContainer center={center} zoom={value ? 14 : 4} scrollWheelZoom style={{ height: '100%', width: '100%' }}>
-                <TileLayer url={TILE_URL} />
+                <TileLayer url={MAP_TILE_URL} />
                 <ClickToPlace onPick={onChange} />
                 <Recenter value={value} />
                 {value && (

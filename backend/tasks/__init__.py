@@ -170,10 +170,14 @@ def describe_segment_task(
             except Exception as _ne:
                 logging.warning("maybe_notify_segment failed for %s/%s seg %s: %s", device, date, segment_id, _ne)
 
-        # Bust browse + day-nav cache (no DB connection needed)
+        # Bust every browse/day-nav cache for this day (no DB connection needed).
+        # Keys vary in shape: browse:day:<dev>:<date>, browse:segment:<dev>:<date>:*,
+        # browse:<dev>:<date>:<hour>, day-nav:v2:<dev>:<date>, segs_complete:<dev>:<date>.
+        # The glob `*` spans ':' so one pattern per family covers all variants.
         from integrations.sessions.redis import redis_client as _rc
-        _rc.delete_pattern(f"browse:{device}:{date}:*")
-        _rc.delete_value(f"day-nav:{device}:{date}")
+        _rc.delete_pattern(f"browse:*{device}:{date}*")
+        _rc.delete_pattern(f"day-nav:*{device}:{date}")
+        _rc.delete_value(f"segs_complete:{device}:{date}")
 
         # Mark day summary dirty in MongoDB
         mongo_client["picam"]["day_summaries"].update_one(

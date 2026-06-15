@@ -13,6 +13,7 @@ import {
 } from 'react-leaflet-select-area';
 import MarkerClusterGroup from 'react-leaflet-markercluster';
 import { LocationSummaryItem } from 'apis/browsing';
+import { MAP_TILE_URL } from 'constants/urls';
 
 let DefaultIcon = L.icon({
     iconUrl: icon,
@@ -210,7 +211,7 @@ export function MapSearch({
                 scrollWheelZoom
                 style={{ height: '100%', width: '100%' }}
             >
-                <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH" />
+                <TileLayer url={MAP_TILE_URL} />
                 <FitBounds bounds={visualBounds} />
                 {!visualBounds && resultMapped.length > 0 && (
                     <FitToResults locations={resultMapped} />

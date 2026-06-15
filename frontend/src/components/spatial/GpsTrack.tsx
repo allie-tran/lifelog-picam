@@ -14,6 +14,7 @@ import {
     useMap,
 } from 'react-leaflet';
 import { useAppSelector } from 'reducers/hooks';
+import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from 'constants/urls';
 
 // ── Marker icons ────────────────────────────────────────────────────────────────
 
@@ -252,8 +253,8 @@ export function GpsTrackMap({
                 style={{ height: '100%', width: '100%' }}
             >
                 <TileLayer
-                    attribution="&copy; OpenStreetMap contributors"
-                    url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH"
+                    attribution={MAP_TILE_ATTRIBUTION}
+                    url={MAP_TILE_URL}
                 />
                 <FitBounds
                     positions={

@@ -5,6 +5,7 @@ import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-
 import { LocationSummaryItem } from 'apis/browsing';
 import { Box, Button, Stack, Typography } from '@mui/material';
 import { PlaceRounded } from '@mui/icons-material';
+import { MAP_TILE_URL } from 'constants/urls';
 
 type LocWithCoords = LocationSummaryItem & { latitude: number; longitude: number };
 
@@ -134,7 +135,7 @@ export const ResultMap = ({
                 scrollWheelZoom
                 style={{ height: '100%', width: '100%' }}
             >
-                <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH" />
+                <TileLayer url={MAP_TILE_URL} />
                 <FitBounds locations={mapped} />
 
                 {/* Dashed route polyline connecting all locations in sequence */}

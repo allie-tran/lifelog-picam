@@ -6,7 +6,7 @@ from typing import List, Optional
 import numpy as np
 from sqlalchemy import and_, select, update
 from core.config import SEGMENT_THRESHOLD
-from database.models import Image, ImageEmbedding
+from database.models import Image, ImageEmbedding, ImageGPS
 from database.types import DaySummaryRecord
 from integrations.sessions.redis import RedisClient
 from tqdm.auto import tqdm
@@ -63,8 +63,9 @@ def choose_num_thumbnails(
 
 def get_records_for_paths(session, device_id: str, image_paths: List[str]):
     records = session.execute(
-        select(Image.image_path, Image.timestamp, Image.location_id, ImageEmbedding.embedding)
+        select(Image.image_path, Image.timestamp, Image.location_id, ImageEmbedding.embedding, ImageGPS.mode)
         .join(ImageEmbedding, ImageEmbedding.image_id == Image.id, isouter=True)
+        .join(ImageGPS, ImageGPS.image_id == Image.id, isouter=True)
         .where(
             Image.image_path.in_(image_paths),
             Image.device == device_id,
@@ -76,25 +77,29 @@ def get_records_for_paths(session, device_id: str, image_paths: List[str]):
     # Split into segments based on time gaps and location changes
     path_to_time = {record.image_path: record.timestamp for record in records}
     path_to_location = {record.image_path: record.location_id for record in records}
+    path_to_transport_mode = {record.image_path: record.mode for record in records}
     path_to_embedding = defaultdict(lambda: np.ones(768, dtype=np.float32) * -1)  # default embedding for missing records
     path_to_embedding.update( {record.image_path: record.embedding for record in records if record.embedding is not None} )
 
     paths = [record.image_path for record in records]
     embeddings = np.array([path_to_embedding[path] for path in paths])
 
-    return paths, embeddings, path_to_time, path_to_location
+    return paths, embeddings, path_to_time, path_to_location, path_to_transport_mode
 
-def get_boundaries(image_paths: List[str], path_to_time: dict, path_to_location: dict) -> set:
+def get_boundaries(image_paths: List[str], path_to_time: dict, path_to_location: dict, path_to_transport_mode: dict) -> set:
     time_threshold = timedelta(minutes=5)
     boundaries = set()
 
     for i in range(1, len(image_paths)):
         img1, img2 = image_paths[i - 1], image_paths[i]
         loc1, loc2 = path_to_location[img1], path_to_location[img2]
-        # Only split on location change when both sides have a known location.
-        # A None→value or value→None transition (GPS lock/loss) should not create
-        # a hard boundary — fall through to the time-gap check instead.
+        mode1, mode2 = path_to_transport_mode[img1], path_to_transport_mode[img2]
         if loc1 != loc2:
+            boundaries.add(image_paths[i])
+        # Only split on mode change when both sides have a known mode — a
+        # None→value transition (a single missing GPS fix) shouldn't force a
+        # boundary; fall through to the time-gap check instead.
+        elif mode1 and mode2 and mode1 != mode2:
             boundaries.add(image_paths[i])
         else:
             t1, t2 = path_to_time[img1], path_to_time[img2]
@@ -109,11 +114,11 @@ def segment_images(
     image_paths,
     reverse=False,
 ) -> list[list[str]]:
-    image_paths, features, path_to_time, path_to_location = get_records_for_paths(session, device_id, image_paths)
+    image_paths, features, path_to_time, path_to_location, path_to_transport_mode = get_records_for_paths(session, device_id, image_paths)
     if len(features) == 0:
         return []
 
-    boundaries = get_boundaries(image_paths, path_to_time, path_to_location)
+    boundaries = get_boundaries(image_paths, path_to_time, path_to_location, path_to_transport_mode)
 
     # Sort the features and image paths based on the image_pahts
     sorted_indices = np.argsort(image_paths)

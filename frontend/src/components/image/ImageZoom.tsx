@@ -36,7 +36,7 @@ import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { clearZoomedImage } from 'reducers/zoomedImage';
 import useSWR from 'swr';
 import { deleteImage, getImage } from 'apis/browsing';
-import { IMAGE_HOST_URL, THUMBNAIL_HOST_URL } from 'constants/urls';
+import { IMAGE_HOST_URL, THUMBNAIL_HOST_URL, MAP_TILE_URL } from 'constants/urls';
 import Annotator from 'components/common/Annotator';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 
@@ -435,7 +435,7 @@ export const ImageVisualizer: React.FC<ImageVisualizerProps> = ({ data }) => {
                                             scrollWheelZoom={false}
                                             attributionControl={false}
                                         >
-                                            <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH"/>
+                                            <TileLayer url={MAP_TILE_URL}/>
                                             <Marker position={[data.gps!.latitude, data.gps!.longitude]} />
                                         </MapContainer>
                                     </Box>

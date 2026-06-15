@@ -12,7 +12,7 @@ import DirectionsWalkIcon from '@mui/icons-material/DirectionsWalk';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { getCurrentStatus } from 'apis/process';
-import { THUMBNAIL_HOST_URL } from 'constants/urls';
+import { THUMBNAIL_HOST_URL, MAP_TILE_URL } from 'constants/urls';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import useSWR from 'swr';
@@ -147,7 +147,7 @@ export default function CurrentStatus({ device }: { device: string }) {
                                 scrollWheelZoom={false}
                                 attributionControl={false}
                             >
-                                <TileLayer url="https://api.maptiler.com/maps/dataviz-v4/{z}/{x}/{y}.png?key=bcAmE6kzFa3YgI6GTxUH" />
+                                <TileLayer url={MAP_TILE_URL} />
                                 <CustomMarker
                                     position={[
                                         data.currentLat,

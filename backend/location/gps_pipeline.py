@@ -45,13 +45,6 @@ STAY_TIME = 60 * 5         # seconds — min dwell to count as a stop
 # restores the signal while p85 still recovers the fast windows of real vehicles.
 MIN_SPEED_DT = 45.0        # seconds — min baseline per speed sample
 
-# Half-width of the window used to classify a *single image's* transport mode
-# from local GPS motion (clamped to its segment). A move segment can contain real
-# mode changes (walk → bus → walk); a per-image window captures them instead of
-# flattening the whole move to one mode. ±60 s spans a few fixes — enough for a
-# stable chord speed, short enough to resolve within-move changes.
-LOCAL_MODE_HALF_WINDOW_S = 60.0
-
 # Cross-track merge: glue nearby stop centroids into one place_id (haversine radians)
 MERGE_EPS = 0.15 / 6371    # ~150 m
 
@@ -84,8 +77,7 @@ def assign_tracks_by_gap(df: pd.DataFrame, gap_seconds: int = GAP_SECONDS) -> pd
     try:
         dt = df["timestamp"].diff().dt.total_seconds().fillna(0)
     except Exception as e:
-        print("Error calculating time differences:", e)
-        print("Timestamps:", df["timestamp"])
+        logger.error("Error calculating time differences: %s", e)
         raise e
     df["track_id"] = (dt > gap_seconds).cumsum()
     return df
@@ -281,8 +273,10 @@ def assign_stop_and_place_ids(df: pd.DataFrame) -> pd.DataFrame:
             + centroids["cluster"].astype(int).astype(str)
         )
     except ValueError:
-        print(centroids["track_id"])
-        print(centroids["cluster"])
+        logging.warning(
+            "ValueError encountered while creating stop_id. "
+            "Ensure that track_id and cluster columns contain valid numeric values."
+        )
 
     df = df.merge(
         centroids[["track_id", "cluster", "stop_id"]],
@@ -575,7 +569,7 @@ def assign_gps_to_images(session, date, device, points, point_timestamps):
                     }
                 )
             else:
-                print(
+                logger.warning(
                     f"Warning: No GPS data to interpolate for image {image.image_path} at {img_ts}"
                 )
 
@@ -619,6 +613,7 @@ def _apply_timezone_to_images(session, tz_by_image_id: dict) -> int:
             continue
         local = utc.replace(tzinfo=timezone.utc).astimezone(tz)
         updates.append({
+
             "id": image_id,
             "timezone": tz_name,
             "local_timestamp": local,
@@ -697,7 +692,9 @@ def enrich_and_index_segments(
                 session, device, float(lat), float(lon),
                 seg.get("start_ts"), seg.get("end_ts"),
             )
-            stop_geos[i] = enrich_stop(float(lat), float(lon), poi=poi)
+            stop = enrich_stop(float(lat), float(lon), poi=poi)
+            stop_geos[i] = stop
+            logger.info("Stop segment %d enriched to %s", i, stop.get("name"))
 
     for i, seg in enumerate(segments):
         lat = seg.get("centroid_lat")
@@ -875,61 +872,6 @@ def _window_kinematics(
     return p85, span, straightness, n
 
 
-def _mode_runs(ordered: list[dict], img_mode: dict) -> list[tuple[str, int, int]]:
-    """Collapse the time-ordered images into maximal runs of one mode.
-
-    Returns a snapshot list of ``(mode, start_idx, end_idx_exclusive)`` — a list,
-    not a lazy generator, so callers can safely mutate ``img_mode`` while iterating
-    it. Shared by the blip-smoother and the CLIP vehicle-run splitter, which both
-    operate on consecutive-same-mode runs.
-    """
-    runs: list[tuple[str, int, int]] = []
-    k, n = 0, len(ordered)
-    while k < n:
-        m = img_mode[ordered[k]["image_id"]]
-        j = k + 1
-        while j < n and img_mode[ordered[j]["image_id"]] == m:
-            j += 1
-        runs.append((m, k, j))
-        k = j
-    return runs
-
-
-def _smooth_image_modes(ordered: list[dict], img_mode: dict) -> None:
-    """Absorb short same-mode runs of consecutive images into agreeing neighbours,
-    in place on ``img_mode``.
-
-    ``ordered`` is the time-sorted list of image rows that have a mode. A maximal
-    run of one mode shorter than ``tmode.MIN_MODE_DURATION_S`` whose previous and
-    next runs share one identical other mode takes that mode — killing window-scale
-    flicker (e.g. a lone fast fix mid-walk). Run modes come from the pre-mutation
-    snapshot so a streak of blips can't cascade. Stationary and flight runs are
-    never rewritten and never absorb a blip (they're meaningful anchors).
-    """
-    runs = _mode_runs(ordered, img_mode)
-    if len(runs) < 3:
-        return
-
-    anchored = (tmode.STATIONARY, tmode.FLIGHT)
-    for ri in range(1, len(runs) - 1):
-        m, k0, k1 = runs[ri]
-        dur = (
-            pd.Timestamp(ordered[k1 - 1]["timestamp"])
-            - pd.Timestamp(ordered[k0]["timestamp"])
-        ).total_seconds()
-        if dur >= tmode.MIN_MODE_DURATION_S:
-            continue
-        prev_m = runs[ri - 1][0]
-        if (
-            prev_m == runs[ri + 1][0]
-            and m != prev_m
-            and m not in anchored
-            and prev_m not in anchored
-        ):
-            for idx in range(k0, k1):
-                img_mode[ordered[idx]["image_id"]] = prev_m
-
-
 def compute_segment_modes(
     session: Session,
     segments: list[dict],
@@ -940,18 +882,13 @@ def compute_segment_modes(
 ) -> None:
     """
     Set d["mode"] on each pending image row that doesn't already have a stored
-    mode. Mode is computed *per image* from a short, segment-clamped GPS window —
-    not once per segment — so a mode change within one move (walk → bus → walk)
-    is preserved instead of flattened. The per-image timeline is then blip-smoothed
-    and consecutive vehicle runs are split into car/public_transport by CLIP.
-
-    GPS kinematics decide the mode (stationary/walk/cycle/vehicle/flight);
-    CLIP image features only confirm the vehicle sub-type (car vs
-    public_transport) via tmode.fuse_mode and never override the GPS mode.
+    mode. One mode is computed per segment from its whole-trajectory GPS
+    kinematics (stationary/walk/cycle/vehicle/flight) and applied to every image
+    in that segment.
 
     Images whose ImageGPS row already has a non-null mode are left untouched:
-    they're skipped here (no GPS/CLIP recompute) and the upsert preserves the
-    stored value via COALESCE. Only first-time/unset images get classified.
+    they're skipped here (no recompute) and the upsert preserves the stored value
+    via COALESCE. Only first-time/unset images get classified.
     """
     # Image ids that already carry a stored mode — skip them entirely.
     already_moded: set = set(
@@ -963,24 +900,8 @@ def compute_segment_modes(
     )
     pending = [d for d in image_rows if d["image_id"] not in already_moded]
     if not pending:
+        logger.info("No pending images to classify for device=%s date=%s", device, date)
         return
-
-    # Fetch CLIP features for just the pending images, keyed by image_id —
-    # already-moded images never get reclassified, so loading their embeddings
-    # is wasted work on every rerun.
-    pending_ids = [d["image_id"] for d in pending]
-    feat_by_id: dict = {}
-    try:
-        # ImageEmbedding is the populated CLIP/search embedding (clip_embedding
-        # table is empty/vestigial); both are Vector(768) in clip_model space.
-        from database.models import ImageEmbedding
-        rows = session.execute(
-            select(ImageEmbedding.image_id, ImageEmbedding.embedding)
-            .where(ImageEmbedding.image_id.in_(pending_ids))
-        )
-        feat_by_id = {r.image_id: np.asarray(r.embedding, dtype=np.float32) for r in rows}
-    except Exception as exc:
-        logger.warning("Could not load CLIP embeddings for mode refinement: %s", exc)
 
     # Map each pending image row to the segment it falls in. Prefer strict
     # [start, end] containment (the same span that set its location_id); only
@@ -1004,15 +925,11 @@ def compute_segment_modes(
         if match is not None:
             img_seg[d["image_id"]] = match
 
-    # ── Per-image GPS mode from a local, segment-clamped window ──────────────
-    # A single move segment can hold real mode changes (walk → bus → walk), so
-    # classify each image from a short window of GPS points centred on it rather
-    # than collapsing the whole move to one mode. The window is clamped to the
-    # segment so a neighbouring stop's zero speed can't bleed in. Flight is an
-    # endpoint/airport property (no local speed signal), so it stays segment-wide.
-    # Pre-extract the day's GPS track as sorted numpy columns ONCE, so each image's
-    # window is a binary-search slice (np.searchsorted in _window_kinematics) rather
-    # than a full-DataFrame mask + sort per image.
+    # ── One GPS mode per segment (whole-segment kinematics) ──────────────────
+    # Stops are stationary; moves are classified from the segment's whole
+    # trajectory. Pre-extract the day's GPS track as sorted numpy columns ONCE so
+    # each segment's kinematics is a binary-search slice (np.searchsorted in
+    # _window_kinematics).
     track = df.sort_values("timestamp")
     g_ts = track["timestamp"].to_numpy()
     g_lat = track["latitude"].to_numpy()
@@ -1022,67 +939,33 @@ def compute_segment_modes(
         if "elevation" in track else np.zeros(len(track))
     )
 
-    half_w = pd.Timedelta(seconds=LOCAL_MODE_HALF_WINDOW_S)
-    seg_is_flight: dict = {}
-    img_mode: dict = {}  # image_id -> coarse GPS mode (before smoothing / CLIP)
-    ts_by_id: dict = {}  # one pd.Timestamp per image, reused for the ordering sort
-    for d in pending:
-        si = img_seg.get(d["image_id"])
-        if si is None:
-            continue
-        ts = pd.Timestamp(d["timestamp"])
-        ts_by_id[d["image_id"]] = ts
+    seg_mode: dict = {}  # segment index -> mode (computed once per segment)
+    for si in set(img_seg.values()):
         seg = segments[si]
         if seg.get("is_stop"):
-            img_mode[d["image_id"]] = tmode.STATIONARY
+            seg_mode[si] = tmode.STATIONARY
             continue
-        if si not in seg_is_flight:
-            seg_is_flight[si] = tmode.is_flight_pair(
-                seg["start_lat"], seg["start_lon"],
-                seg["end_lat"], seg["end_lon"],
-                (seg["end_ts"] - seg["start_ts"]).total_seconds(),
-            )
-        if seg_is_flight[si]:
-            img_mode[d["image_id"]] = tmode.FLIGHT
-            continue
-        lo = max(seg["start_ts"], ts - half_w)
-        hi = min(seg["end_ts"], ts + half_w)
-        p85, span, straightness, n_pts = _window_kinematics(g_ts, g_lat, g_lon, g_alt, lo, hi)
-        img_mode[d["image_id"]] = tmode.classify_segment_gps(p85, span, False, straightness, n_pts)
-
-    # ── Smooth the per-image mode timeline ───────────────────────────────────
-    # Absorb sub-minute blips (window-scale p85 jitter) into agreeing neighbours
-    # so adjacent images don't flicker. Stops/flights are immovable anchors.
-    ordered = sorted(
-        (d for d in pending if d["image_id"] in img_mode),
-        key=lambda d: ts_by_id[d["image_id"]],
-    )
-    _smooth_image_modes(ordered, img_mode)
-
-    # ── CLIP confirm: split each vehicle run into car / public_transport ──────
-    # GPS can't resolve the vehicle sub-type. Pool CLIP features over each maximal
-    # run of consecutive vehicle images and let it refine the whole run at once;
-    # every other GPS mode stands.
-    for mode, i0, i1 in _mode_runs(ordered, img_mode):
-        if mode != tmode.VEHICLE:
-            continue
-        run_ids = [ordered[k]["image_id"] for k in range(i0, i1)]
-        feats = [feat_by_id[iid] for iid in run_ids if iid in feat_by_id]
-        refined = tmode.fuse_mode(
-            tmode.VEHICLE,
-            tmode.clip_mode_for_features(np.stack(feats)) if feats else None,
+        flight = tmode.is_flight_pair(
+            seg["start_lat"], seg["start_lon"],
+            seg["end_lat"], seg["end_lon"],
+            (seg["end_ts"] - seg["start_ts"]).total_seconds(),
         )
-        if refined != tmode.VEHICLE:
-            for iid in run_ids:
-                img_mode[iid] = refined
+        p85, span, straightness, n_pts = _window_kinematics(
+            g_ts, g_lat, g_lon, g_alt, seg["start_ts"], seg["end_ts"]
+        )
+        seg_mode[si] = tmode.classify_segment_gps(p85, span, flight, straightness, n_pts)
+        logger.info(
+            "Segment %d: GPS mode %s (p85 %.1f, span %.1f m, straightness %.3f, n %d)",
+            si, seg_mode[si], p85, span, straightness, n_pts,
+        )
 
-    # Rows with no segment match never enter img_mode → insert NULL → no stored
-    # value to preserve, so they reclassify next run (don't pin them to "unknown",
+    # Propagate each segment's mode to its images. Rows with no segment match get
+    # no mode → insert NULL → reclassify next run (don't pin them to "unknown",
     # which the COALESCE upsert would make permanent).
     for d in pending:
-        mode = img_mode.get(d["image_id"])
-        if mode is not None:
-            d["mode"] = mode
+        si = img_seg.get(d["image_id"])
+        if si is not None:
+            d["mode"] = seg_mode[si]
 
 
 # ─── Persistence ──────────────────────────────────────────────────────────────
@@ -1111,8 +994,7 @@ def _upsert_image_gps(session, rows: list[dict]) -> None:
 
 def run_pipeline(session: Session, device: str, date: str, modes_only: bool = False):
     """
-    ``modes_only=True`` recomputes/refreshes only the per-segment transport mode
-    (steps up to the ImageGPS mode upsert) and skips the slow tail — geocoding
+    ``modes_only=True`` recomputes/refreshes only the per-segment transport mode (steps up to the ImageGPS mode upsert) and skips the slow tail — geocoding
     (enrich_and_index_segments) and segment annotation (load_all_segments). Used
     to backfill modes after the GPS-authoritative fusion change without
     re-hitting Nominatim/Overpass/LLM. Clear ImageGPS.mode first, else the
@@ -1159,12 +1041,13 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
 
     # 7b. Classify transport mode per segment (GPS kinematics + CLIP visual),
     # tagging each image row with its segment's mode.
+    logger.debug(f"Computing transport modes for {len(segments)} segments and {len(data)} images")
     compute_segment_modes(session, segments, df, device, date, data)
 
     rows = []
     for d in data:
         if str(d["timezone"]) in ("None", "nan", ""):
-            d["timezone"] = find_timezone(d["latitude"], d["longitude"])
+            d["timezone"] = find_timezone(d["longitude"], d["latitude"])
 
         rows.append(
             {
@@ -1195,7 +1078,7 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
     for d in data:
         tz = d["timezone"]
         if str(tz) in ("None", "nan", ""):
-            tz = find_timezone(d["latitude"], d["longitude"])
+            tz = find_timezone(d["longitude"], d["latitude"])
         tz_by_image_id[d["image_id"]] = str(tz)
     _apply_timezone_to_images(session, tz_by_image_id)
 
