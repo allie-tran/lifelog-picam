@@ -46,3 +46,14 @@ class RedisClient:
 
 
 redis_client = RedisClient()
+
+
+def bust_day_caches(device: str, date: str) -> None:
+    """Delete every browse/day-nav cache for a device+date, across all key shapes:
+    browse:day:<dev>:<date>, browse:segment:<dev>:<date>:*, browse:<dev>:<date>:<hour>,
+    day-nav:v2:<dev>:<date>, segs_complete:<dev>:<date>. The glob `*` spans ':' so one
+    pattern per family covers every variant (and future cache-key version bumps).
+    """
+    redis_client.delete_pattern(f"browse:*{device}:{date}*")
+    redis_client.delete_pattern(f"day-nav:*{device}:{date}")
+    redis_client.delete_value(f"segs_complete:{device}:{date}")

@@ -55,6 +55,11 @@ def resync_day(
     """Re-segment from first gap, skip LLM for already-annotated segments."""
     _require_owner(access_level)
     from tasks import resync_day_task
+    # Bust caches synchronously here too: the task busts them when it finishes, but
+    # doing it now means a stale day-nav/browse cache can't be served while the
+    # worker is still running (or lagging behind a code change).
+    from integrations.sessions.redis import bust_day_caches
+    bust_day_caches(device, date)
     resync_day_task.delay(device, date)
     return {"message": f"Resync queued for {device}/{date}"}
 

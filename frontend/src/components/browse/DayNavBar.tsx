@@ -1,5 +1,6 @@
 import { Box, Tooltip, Typography } from '@mui/material';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
+import { colorForPlace } from 'utils/placeColors';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { NavSegment } from 'apis/browsing';
@@ -30,6 +31,7 @@ const MODE_ICON: Record<string, string> = {
     train: '🚆',
     walk: '🚶',
     cycle: '🚴',
+    stationary: '🚶',
 };
 
 // User location label kind → emoji.
@@ -50,10 +52,10 @@ function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
     const modeIcon = run.mode ? MODE_ICON[run.mode] ?? '' : '';
     const labelIcon = run.labelKind ? LABEL_ICON[run.labelKind] ?? '' : '';
     const headerText = run.isMove
-        ? `${modeIcon} In transit`.trim()
+        ? `${modeIcon}`.trim()
         : `${labelIcon} ${run.name ?? '—'}`.trim();
     const tipBits = [
-        run.isMove ? `${modeIcon} In transit` : `📍 ${run.name ?? 'Unknown'}`,
+        run.isMove ? `${modeIcon} ${run.mode}` : `📍 ${run.name ?? 'Unknown'}`,
         `${dayjs(run.startMs).format('HH:mm')}–${dayjs(run.endMs).format('HH:mm')}`,
         fmtDuration(run.totalSeconds),
     ];
@@ -76,8 +78,9 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
     const runs: LocationRun[] = [];
     for (const seg of segments) {
         const loc = seg.locationName ?? null;
+        const mode = seg.mode ?? null;
         const last = runs[runs.length - 1];
-        if (last && last.name === loc) {
+        if (last && last.name === loc && last.mode === mode) {
             last.endMs = dayjs(seg.endTime).valueOf();
             last.totalSeconds += seg.duration;
             last.segments.push(seg);
@@ -89,7 +92,7 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
                 totalSeconds: seg.duration,
                 segments: [seg],
                 isMove: false,
-                mode: null,
+                mode: mode,
                 labelKind: null,
             });
         }
@@ -111,14 +114,6 @@ const MOVE_BG = '#9575cd20';
 
 const segColor = (seg: NavSegment) =>
     THEME_COLORS[seg.activityGroup] || CATEGORIES[seg.activity] || '#e0e0e0';
-
-// Match map pill color scale (count estimated from duration at 10s/image)
-function stopColour(totalSeconds: number): string {
-    const count = totalSeconds / 10;
-    if (count >= 100) return '#ef9a9a';   // red  — matches map large
-    if (count >= 40)  return '#ffcc80';   // amber — matches map medium
-    return '#90caf9';                      // blue  — matches map small
-}
 
 export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegmentId = null, onSelectSegment, hasRecent = false }: DayNavBarProps) {
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
@@ -142,7 +137,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                     const w = run.segments.reduce((sum, seg) =>
                         sum + widthPct(dayjs(seg.startTime).valueOf(), dayjs(seg.endTime).valueOf()), 0);
                     const isActive = activeRunIdx === ri;
-                    const bg = run.isMove ? MOVE_BG : stopColour(run.totalSeconds);
+                    const bg = run.isMove ? MOVE_BG : colorForPlace(run.name);
 
                     // Relative widths of segments within this run (normalize to fill the cell)
                     const runTotalMs = run.segments.reduce((sum, seg) =>

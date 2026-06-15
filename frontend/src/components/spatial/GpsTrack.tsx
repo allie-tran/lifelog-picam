@@ -15,23 +15,11 @@ import {
 } from 'react-leaflet';
 import { useAppSelector } from 'reducers/hooks';
 import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from 'constants/urls';
+import { colorForPlace } from '@utils/placeColors';
 
 // ── Marker icons ────────────────────────────────────────────────────────────────
-
-const PIN_COLORS = {
-    small: { bg: 'rgba(59, 130, 246, 0.85)', hex: '#3b82f6' },
-    medium: { bg: 'rgba(245, 158, 11, 0.85)', hex: '#f59e0b' },
-    large: { bg: 'rgba(239, 68, 68, 0.85)', hex: '#ef4444' },
-};
-const colorForCount = (n: number) =>
-    n >= 100
-        ? PIN_COLORS.large
-        : n >= 40
-          ? PIN_COLORS.medium
-          : PIN_COLORS.small;
-
 const createLocIcon = (name: string, count: number, active: boolean) => {
-    const bg = colorForCount(count).bg;
+    const bg = colorForPlace(name);
     const label = name.length > 20 ? name.slice(0, 19) + '…' : name;
     const opacity = active ? 1 : 0.35;
     return L.divIcon({

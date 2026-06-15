@@ -14,6 +14,7 @@ import {
 import MarkerClusterGroup from 'react-leaflet-markercluster';
 import { LocationSummaryItem } from 'apis/browsing';
 import { MAP_TILE_URL } from 'constants/urls';
+import { colorForPlace } from 'utils/placeColors';
 
 let DefaultIcon = L.icon({
     iconUrl: icon,
@@ -84,16 +85,8 @@ const DensityLayer = ({ locations }: { locations: LocWithCoords[] }) => {
 
 // ── Result location pill markers ──────────────────────────────────────────────
 
-const LOC_COLORS = {
-    small:  'rgba(59, 130, 246, 0.85)',
-    medium: 'rgba(245, 158, 11, 0.85)',
-    large:  'rgba(239, 68, 68, 0.85)',
-};
-const colorForCount = (n: number) =>
-    n >= 100 ? LOC_COLORS.large : n >= 20 ? LOC_COLORS.medium : LOC_COLORS.small;
-
 const createLocIcon = (name: string, count: number, highlighted = false) => {
-    const bg = colorForCount(count);
+    const bg = colorForPlace(name);
     const label = name.length > 20 ? name.slice(0, 19) + '…' : name;
     const glow = highlighted
         ? `box-shadow:0 0 0 3px white,0 0 0 5px ${bg},0 0 12px 4px ${bg};`
@@ -229,7 +222,7 @@ export function MapSearch({
                         >
                             <Box sx={{ minWidth: 130 }}>
                                 <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
-                                    <PlaceRounded sx={{ fontSize: 13, color: colorForCount(loc.count) }} />
+                                    <PlaceRounded sx={{ fontSize: 13, color: colorForPlace(loc.name) }} />
                                     <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
                                 </Stack>
                                 {loc.address && (
@@ -272,7 +265,7 @@ export function MapSearch({
                                     <Popup>
                                         <Box sx={{ minWidth: 140 }}>
                                             <Stack direction="row" alignItems="center" spacing={0.5} mb={0.5}>
-                                                <PlaceRounded sx={{ fontSize: 14, color: colorForCount(loc.count) }} />
+                                                <PlaceRounded sx={{ fontSize: 14, color: colorForPlace(loc.name) }} />
                                                 <Typography fontWeight="bold" variant="body2">{loc.name}</Typography>
                                             </Stack>
                                             {loc.address && (
