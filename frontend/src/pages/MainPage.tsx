@@ -20,7 +20,7 @@ import dayjs from 'dayjs';
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
-import { setLoading } from 'reducers/feedback';
+import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR from 'swr';
 import { AccessLevel } from 'types/auth';
@@ -352,10 +352,46 @@ function MainPage() {
     }, [hasMoreSegments, isValidating, segmentsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const deleteRow = async (imagePaths: string[]) => {
-        dispatch(setLoading(true));
-        await deleteImages(device, imagePaths);
-        await Promise.all([mutate(), mutateRecent?.()]);
-        dispatch(setLoading(false));
+        const toRemove = new Set(imagePaths);
+        // Optimistically drop the images from the cached segments so they vanish
+        // from the UI immediately; SWR rolls back if the request fails.
+        const removeFromData = (d: typeof data): NonNullable<typeof data> =>
+            d
+                ? {
+                      ...d,
+                      segments: d.segments
+                          .map((s) => ({
+                              ...s,
+                              images: s.images.filter(
+                                  (img) => !toRemove.has(img.imagePath)
+                              ),
+                          }))
+                          .filter((s) => s.images.length > 0),
+                  }
+                : { segments: [], gps: [] };
+        try {
+            await mutate(
+                async () => {
+                    await deleteImages(device, imagePaths);
+                    return undefined; // fall through to revalidation below
+                },
+                {
+                    optimisticData: removeFromData,
+                    rollbackOnError: true,
+                    revalidate: true,
+                    populateCache: false,
+                }
+            );
+            await mutateRecent?.();
+        } catch (e) {
+            // Rolled back to the previous cache; surface the failure.
+            dispatch(
+                showNotification({
+                    message: 'Delete failed — restored images',
+                    type: 'error',
+                })
+            );
+        }
     };
 
     const [resyncing, setResyncing] = React.useState(false);
@@ -489,7 +525,7 @@ function MainPage() {
                                         )
                                 )}
                                 <DeleteRange
-                                    onDelete={() => mutate()}
+                                    onDelete={deleteRow}
                                     date={date || dayjs().format('YYYY-MM-DD')}
                                 />
                             </Box>

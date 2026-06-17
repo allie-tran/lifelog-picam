@@ -181,6 +181,7 @@ export function GpsTrackMap({
         // regardless of selection. With no active filter everything is focused.
         for (const s of dayStops) {
             if (!s.stop) continue;
+            if (s.latitude == null || s.longitude == null) continue;
             const key = `${s.latitude.toFixed(4)}_${s.longitude.toFixed(4)}`;
             if (!map.has(key)) {
                 map.set(key, { lat: s.latitude, lon: s.longitude, name: s.name, count: s.count, active: !hasActiveFilter });

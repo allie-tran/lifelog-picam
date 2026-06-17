@@ -14,7 +14,7 @@ from database.types import ImageRecord
 from core.dependencies import CamelCaseModel
 from auth import _require_owner
 from pipelines.delete import remove_physical_images
-from integrations.sessions.redis import redis_client
+from integrations.sessions.redis import bust_day_caches
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -64,9 +64,8 @@ def delete_image(
         res.rowcount, request.image_path, device,  # type: ignore
     )
     session.commit()
-    for date, hour in affected:
-        if date and hour is not None:
-            redis_client.delete_value(f"browse:{device}:{date}:{hour}")
+    for date in {d for d, _ in affected if d}:
+        bust_day_caches(device, date)
 
 
 @router.delete("/delete-images", summary="Soft-delete multiple images")
@@ -95,9 +94,8 @@ def delete_images(
         len(paths), len(request.image_paths), device,  # type: ignore
     )
     session.commit()
-    for date, hour in affected:
-        if date and hour is not None:
-            redis_client.delete_value(f"browse:{device}:{date}:{hour}")
+    for date in {d for d, _ in affected if d}:
+        bust_day_caches(device, date)
 
 
 @router.get("/get-deleted-images", summary="List soft-deleted images")
@@ -145,6 +143,12 @@ def restore_image(
     session: Session = Depends(get_session),
 ):
     _require_owner(access_level)
+    affected = session.execute(
+        select(ImageModel.date)
+        .where(ImageModel.image_path == request.image_path)
+        .where(ImageModel.device == device)
+        .distinct()
+    ).fetchall()
     session.execute(
         update(ImageModel)
         .where(ImageModel.image_path == request.image_path)
@@ -152,6 +156,9 @@ def restore_image(
         .values(deleted=False, deleted_time=None)
     )
     session.commit()
+    for (date,) in affected:
+        if date:
+            bust_day_caches(device, date)
 
 
 @router.delete("/force-delete-image", summary="Permanently delete a single image")

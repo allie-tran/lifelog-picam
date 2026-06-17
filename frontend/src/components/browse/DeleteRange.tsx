@@ -1,4 +1,4 @@
-import { deleteImages, getImagesByRange } from 'apis/browsing';
+import { getImagesByRange } from 'apis/browsing';
 import { Button, Stack, Typography } from '@mui/material';
 import { TimePicker } from '@mui/x-date-pickers';
 import { ImageObject } from '@utils/types';
@@ -13,7 +13,7 @@ const DeleteRange = ({
     onDelete,
     date,
 }: {
-    onDelete: () => void;
+    onDelete: (imagePaths: string[]) => void;
     date: string;
 }) => {
     const [searchParams] = useSearchParams();
@@ -46,11 +46,10 @@ const DeleteRange = ({
     };
 
     const handleDelete = async () => {
-        deleteImages(
-            device,
-            images.map((img) => img.imagePath)
-        );
-        onDelete();
+        // Delegate to the parent's optimistic delete (hides immediately, hits the
+        // API, rolls back on failure) instead of firing the request here.
+        onDelete(images.map((img) => img.imagePath));
+        setImages([]);
         setOpen(false);
     };
 

@@ -11,12 +11,15 @@ import {
     Button,
     Chip,
     CircularProgress,
+    Divider,
     FormControl,
+    FormControlLabel,
     InputAdornment,
     InputLabel,
     MenuItem,
     Select,
     Stack,
+    Switch,
     TextField,
     Tooltip,
     Typography,
@@ -31,6 +34,7 @@ import {
 } from 'apis/dres';
 import { useEffect, useState } from 'react';
 import { dresLogin, dresLogout, setCurrentTask, setEvaluation, clearSubmittedImages } from 'reducers/dres';
+import { setVbsLogEnabled } from 'reducers/vbsLog';
 import { showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 
@@ -40,6 +44,7 @@ const DRESSettings = () => {
     const dispatch = useAppDispatch();
     const cachedSessionId = localStorage.getItem('dresSessionId');
     const { sessionId, evaluationId, currentTask, submittedImages } = useAppSelector((s) => s.dres);
+    const vbsLog = useAppSelector((s) => s.vbsLog);
 
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -152,6 +157,21 @@ const DRESSettings = () => {
 
     return (
         <Stack spacing={2} sx={{ p: 0, minWidth: 300, pr: 1 }}>
+            <Box>
+                <FormControlLabel
+                    control={
+                        <Switch
+                            checked={vbsLog.enabled}
+                            onChange={(e) => dispatch(setVbsLogEnabled(e.target.checked))}
+                        />
+                    }
+                    label="Log interactions"
+                />
+                <Typography variant="caption" color="text.secondary" display="block">
+                    Records queries, browsing & submissions for analysis (client identified by IP).
+                </Typography>
+            </Box>
+            <Divider />
             {!isLoggedIn ? (
                 <>
                     <TextField

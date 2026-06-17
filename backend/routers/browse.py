@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.sql import func, select
 
-from schemas.general import GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
+from schemas.general import Coordinate, GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
 from auth import _require_owner, _require_any_access
 from auth.auth_models import auth_dependency, get_user
 from auth.types import AccessLevel
@@ -514,8 +514,8 @@ async def get_images_by_segment(
 
 class DayStop(CamelCaseModel):
     name: str
-    latitude: float
-    longitude: float
+    latitude: Coordinate
+    longitude: Coordinate
     count: int
     stop: bool
 
@@ -628,8 +628,8 @@ def get_context_images(
     return results
 
 class GPSData(CamelCaseModel):
-    latitude: float
-    longitude: float
+    latitude: Coordinate
+    longitude: Coordinate
 
 class ObjectData(CamelCaseModel):
     label: str

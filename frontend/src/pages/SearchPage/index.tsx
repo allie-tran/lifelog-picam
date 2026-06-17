@@ -38,6 +38,7 @@ import {
     searchImages,
 } from 'apis/browsing';
 import { submitImages } from 'apis/dres';
+import { logEvent } from 'utils/vbsLog';
 import ResultSummaryBar, { ResultSummaryBarSkeleton } from 'components/search/ResultSummaryBar';
 import { FaceFiltersHook } from 'components/faces/FaceFilters';
 import ImageWithDate from 'components/common/ImageWithDate';
@@ -52,6 +53,7 @@ import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { store } from 'reducers/store';
 import { clearHistory, pushToHistory, removeFromHistory } from 'reducers/search';
 import { addSubmittedImages } from 'reducers/dres';
 import { applyQueryToParams, parseSearchParams } from '@utils/searchParams';
@@ -200,13 +202,34 @@ const SearchPage = () => {
                     // expired or invalid — skip
                 }
             }
-            const options = (imageRefs.length || imageBlobs.length)
-                ? { imagePaths: imageRefs, imageBlobs }
+            const { vbsLog, dres } = store.getState();
+            const log = vbsLog.enabled
+                ? { evaluationId: dres.evaluationId, taskName: dres.currentTask?.name ?? null }
+                : undefined;
+            const options = (imageRefs.length || imageBlobs.length || log)
+                ? { imagePaths: imageRefs, imageBlobs, log }
                 : undefined;
             const { segments, topLocations, topCountries, topPeople, heatmap } =
                 await searchImages(device, searchQuery, sortBy, options);
+            // VBS log: text query (CLIP joint embedding), image examples, and any
+            // active filters. No-ops unless the logging toggle is on.
+            if (searchQuery.text?.trim()) {
+                logEvent('text', 'jointEmbedding', searchQuery.text.trim());
+            }
+            if (imageRefs.length || imageBlobs.length) {
+                logEvent('image', 'globalFeatures', imageRefs.join(';') || `${imageBlobs.length} image(s)`);
+            }
+            const FILTER_FIELDS: [keyof SearchQuery, string][] = [
+                ['countries', 'country'], ['locationIds', 'location'], ['peopleIds', 'people'],
+                ['years', 'year'], ['months', 'month'], ['dayOfWeeks', 'dow'], ['timeOfDays', 'tod'],
+            ];
+            const filters = FILTER_FIELDS
+                .filter(([k]) => (searchQuery[k] as unknown[] | undefined)?.length)
+                .map(([k, label]) => `${label}=${(searchQuery[k] as unknown[]).join(',')}`);
+            if (filters.length) logEvent('filter', 'metadata', filters.join(' '));
             dispatch(setLoading(false));
             setPage(1);
+            setDeleted([]); // fresh results — drop stale hidden paths from prior search
             setSearchSummaryData({ topLocations, topCountries, topPeople });
             setSearchHeatmap(heatmap ?? EMPTY_HEATMAP);
             if (sortBy === 'relevance') {
@@ -369,10 +392,17 @@ const SearchPage = () => {
 
     const deleteRow = useCallback(
         (imagePaths: string[]) => {
-            dispatch(setLoading(true));
-            deleteImages(device, imagePaths).then(() => {
-                setDeleted((prev) => [...prev, ...imagePaths]);
-                dispatch(setLoading(false));
+            // Hide immediately; roll back if the request fails.
+            setDeleted((prev) => [...prev, ...imagePaths]);
+            deleteImages(device, imagePaths).catch(() => {
+                const restore = new Set(imagePaths);
+                setDeleted((prev) => prev.filter((p) => !restore.has(p)));
+                dispatch(
+                    showNotification({
+                        message: 'Delete failed — restored images',
+                        type: 'error',
+                    })
+                );
             });
         },
         [device, dispatch]
@@ -995,6 +1025,7 @@ const SearchPage = () => {
                                 }}
                                 onChange={(_, page) => {
                                     setPage(page);
+                                    logEvent('browsing', 'rankedList', `page ${page}`);
                                     const element =
                                         document.getElementById('app');
                                     element?.scrollIntoView({
@@ -1102,6 +1133,7 @@ const SearchPage = () => {
                                 }}
                                 onChange={(_, page) => {
                                     setPage(page);
+                                    logEvent('browsing', 'rankedList', `page ${page}`);
                                     const element =
                                         document.getElementById('app');
                                     element?.scrollIntoView({

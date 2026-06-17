@@ -1,5 +1,6 @@
 import { DRES_URL } from 'constants/urls'
 import axios from 'apis/defaultAxios'
+import { logSubmission } from 'utils/vbsLog'
 
 export type Evaluation = {
     id: string
@@ -83,7 +84,9 @@ export const submitImage = async ({
     const res = await axios.post(url, {
         answerSets: [{ answers: [{ mediaItemName: toMediaItemName(image) }] }],
     })
-    return mapDresResponse(res.data)
+    const result = mapDresResponse(res.data)
+    logSubmission('image', image, result.verdict)
+    return result
 }
 
 export const submitImages = async ({
@@ -98,7 +101,9 @@ export const submitImages = async ({
     const answers = images.map((img) => ({answers: [{ mediaItemName: toMediaItemName(img) }] }))
     const url = `${DRES_URL}/submit/${evaluationId}?session=${sessionId}`
     const res = await axios.post(url, { answerSets: answers })
-    return mapDresResponse(res.data)
+    const result = mapDresResponse(res.data)
+    logSubmission('image', images.join(';'), result.verdict)
+    return result
 }
 
 export const submitText = async ({
@@ -116,7 +121,9 @@ export const submitText = async ({
     }, {
         headers: { 'Content-Type': 'application/json' },
     })
-    return mapDresResponse(res.data)
+    const result = mapDresResponse(res.data)
+    logSubmission('text', text, result.verdict)
+    return result
 }
 
 export const getActiveEvaluations = async () => {

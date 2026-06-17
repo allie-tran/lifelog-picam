@@ -12,6 +12,8 @@ interface Point {
 }
 
 const Annotator = ({ image }: { image: ImageObject }) => {
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
     // Specify the HTMLCanvasElement type for the ref
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [points, setPoints] = useState<Point[]>([]);
@@ -138,8 +140,8 @@ const Annotator = ({ image }: { image: ImageObject }) => {
             <h2>Area Selection Tool</h2>
             <canvas
                 ref={canvasRef}
-                width={600}
-                height={400}
+                width={windowWidth * 0.8}
+                height={windowHeight * 0.6}
                 onClick={handleCanvasClick}
                 style={{
                     border: '1px solid #ccc',

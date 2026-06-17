@@ -806,6 +806,80 @@ class BioDayStats(Base):
     computed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class VBSLog(Base):
+    """VBS interaction log — one row per (inter-)action. Frontend-gated; rows
+    are only written when the logging toggle is on. Used for post-hoc analysis
+    (query→find time, per-task action funnel, modality mix, clock shift)."""
+    __tablename__ = "vbs_log"
+    __table_args__ = (
+        Index("ix_vbs_log_evaluation", "evaluation_id"),
+        Index("ix_vbs_log_event_ts", "event_ts"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # received = server clock (ms); event_ts = client clock (ms). Both kept for
+    # clock-shift/latency analysis.
+    received: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    client_ip: Mapped[str | None] = mapped_column(String(64))  # identifies the user/instance
+    evaluation_id: Mapped[str | None] = mapped_column(String(100))
+    task_name: Mapped[str | None] = mapped_column(String(255))
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    type: Mapped[str | None] = mapped_column(String(50))
+    value: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DresSubmission(Base):
+    """Server-side record of a DRES answer submission + its verdict. Lets
+    query→find time be computed in SQL by joining the first CORRECT submission
+    per task against the first vbs_log event for that task."""
+    __tablename__ = "dres_submission"
+    __table_args__ = (
+        Index("ix_dres_submission_evaluation", "evaluation_id"),
+        Index("ix_dres_submission_ts", "submitted_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submitted_at: Mapped[int] = mapped_column(BigInteger, nullable=False)  # client clock, ms
+    client_ip: Mapped[str | None] = mapped_column(String(64))
+    evaluation_id: Mapped[str | None] = mapped_column(String(100))
+    task_name: Mapped[str | None] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(20), nullable=False)  # image | text
+    content: Mapped[str | None] = mapped_column(Text)
+    verdict: Mapped[str | None] = mapped_column(String(20))  # CORRECT | INCORRECT | ...
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class VBSResult(Base):
+    """Ranked result list logged per query, so the target's rank over time can
+    be reconstructed *after* DRES releases targets (days later). `results` is the
+    displayed order (segments flattened), capped at 1000. Rank of a target =
+    array position in `results`."""
+    __tablename__ = "vbs_result"
+    __table_args__ = (
+        Index("ix_vbs_result_evaluation", "evaluation_id"),
+        Index("ix_vbs_result_query_ts", "query_ts"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)  # server clock, ms
+    client_ip: Mapped[str | None] = mapped_column(String(64))
+    evaluation_id: Mapped[str | None] = mapped_column(String(100))
+    task_name: Mapped[str | None] = mapped_column(String(255))
+    query_text: Mapped[str | None] = mapped_column(Text)
+    sort_by: Mapped[str | None] = mapped_column(String(20))
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)  # total before cap
+    results: Mapped[Any] = mapped_column(JSONB, nullable=False)  # ordered image paths, <=1000
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 # Updated mapping pointing directly to the SQLalchemy Entities
 db_type_mapping = {
     "PPG": PPGData,

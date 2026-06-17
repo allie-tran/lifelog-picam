@@ -13,6 +13,7 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { deleteImage, deleteImages, getContextImages } from 'apis/browsing';
 import { submitImage } from 'apis/dres';
+import { logEvent } from 'utils/vbsLog';
 import { ImageObject, ResultSegment } from '@utils/types';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { addSubmittedImages } from 'reducers/dres';
@@ -87,6 +88,7 @@ const ImageWithDate = ({
 
     const getContext = async () => {
         try {
+            logEvent('browsing', 'temporalContext', image.imagePath);
             const res = await getContextImages(device, image.imagePath);
             setContext(res);
             setDeletedIndexes([]);

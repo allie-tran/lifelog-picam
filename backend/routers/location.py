@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from typing import  Annotated, List, Optional
 
 from tasks import update_location_task
-from schemas.general import GPSInfo
+from schemas.general import Coordinate, GPSInfo
 from auth import _require_owner, _require_any_access
 from auth.auth_models import auth_dependency, get_user
 from auth.devices import verify_device_and_user
@@ -242,8 +242,8 @@ class LabeledLocationOut(CamelCaseModel):
     label: str
     label_kind: str
     name: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: Coordinate = None
+    longitude: Coordinate = None
     address: Optional[str] = None
 
 
@@ -252,8 +252,8 @@ class LabelRequest(CamelCaseModel):
     label: str
     label_kind: str = "other"           # home / work / other
     name: Optional[str] = None          # required for a manual pin
-    latitude: Optional[float] = None    # required for a manual pin
-    longitude: Optional[float] = None
+    latitude: Coordinate = None    # required for a manual pin
+    longitude: Coordinate = None
 
 
 def _bust_location_caches() -> None:
@@ -376,8 +376,8 @@ class StopOption(CamelCaseModel):
     location_id: str
     name: str
     address: Optional[str] = None
-    latitude: float
-    longitude: float
+    latitude: Coordinate
+    longitude: Coordinate
     count: int
     label: Optional[str] = None
     label_kind: Optional[str] = None

@@ -1,9 +1,10 @@
 import os
 import re
+import time
 from typing import Annotated, List, Optional
 import numpy as np
 from PIL import UnidentifiedImageError
-from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import Depends, APIRouter, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
@@ -13,10 +14,10 @@ from auth.types import AccessLevel
 from auth.ortho import apply_transformation, get_matrix
 from core.config import DIR
 from database import get_session
-from database.models import Image as ImageModel, Location
+from database.models import Image as ImageModel, Location, VBSResult
 from auth import _require_owner
 from services.embedding import get_similar_images, retrieve_image_with_filters, search_model, search_table, relationship
-from core.dependencies import CamelCaseModel
+from core.dependencies import CamelCaseModel, client_ip
 from services.utils import make_video_thumbnail
 from query_parse.time import (
     time_tagger,
@@ -172,10 +173,14 @@ def health_check():
 @router.post("/search-images")
 async def search(
     device: str,
+    http_request: Request,
     query: str = Form(...),
     image_paths: List[str] = Form(default=[]),
     files: List[UploadFile] = File(default=[]),
     sort_by: str = "relevance",
+    log: bool = False,
+    evaluation_id: Optional[str] = None,
+    task_name: Optional[str] = None,
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
@@ -230,6 +235,24 @@ async def search(
         k=1000,
         image_emb=image_emb,
     )
+
+    # VBS result log (gated by ?log=1). Store the displayed order — segments
+    # flattened — capped at 1000, so a target's rank can be backfilled later when
+    # DRES releases targets. No extra round-trip: results are already in hand.
+    if log:
+        paths = [img.image_path for seg in segments for img in seg]
+        session.add(VBSResult(
+            query_ts=int(time.time() * 1000),
+            client_ip=client_ip(http_request),
+            evaluation_id=evaluation_id,
+            task_name=task_name,
+            query_text=request.text,
+            sort_by=sort_by,
+            result_count=len(paths),
+            results=paths[:1000],
+        ))
+        session.commit()
+
     return {"segments": segments, **summary}
 
 

@@ -67,7 +67,7 @@ const LifelogEvent = ({
         dispatch(addSubmittedImages(paths));
         (async () => {
             try {
-                const r = await submitImages({ images: segment.map((img) => img.imagePath), evaluationId: evaluationId!, sessionId: sessionId! });
+                const r = await submitImages({ images: paths, evaluationId: evaluationId!, sessionId: sessionId! });
                 dispatch(showNotification({ message: `DRES: ${r.verdict} — submitted ${segment.length} images`, type: r.severity }));
             } catch (err: any) {
                 const reason = err.response.data?.description || parseErrorResponse(err) || 'Unknown error';

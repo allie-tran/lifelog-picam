@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useAppDispatch } from 'reducers/hooks';
 import { setZoomedImage } from 'reducers/zoomedImage';
+import { logEvent } from 'utils/vbsLog';
 import useSWR from 'swr';
 
 const toTimestamp = (imagePath: string): string => {
@@ -32,7 +33,11 @@ const SimilarImages = () => {
 
     const { data, isLoading } = useSWR(
         ['similar-images', searchParams.get('image')],
-        () => similarImages(device, searchParams.get('image') || ''),
+        () => {
+            const img = searchParams.get('image') || '';
+            logEvent('image', 'localFeatures', img);
+            return similarImages(device, img);
+        },
         {
             revalidateOnFocus: false,
         }

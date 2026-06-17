@@ -43,6 +43,7 @@ from routers.delete import router as delete_router
 from routers.notifications import router as notifications_router
 from routers.profile import router as profile_router
 from routers.status import router as status_router
+from routers.vbslog import router as vbslog_router
 
 
 load_dotenv()
@@ -99,6 +100,7 @@ app.include_router(delete_router, prefix="/delete", tags=["delete"])
 app.include_router(notifications_router, prefix="/notify", tags=["notifications"])
 app.include_router(profile_router, prefix="/profile", tags=["profile"])
 app.include_router(status_router, prefix="/status", tags=["status"])
+app.include_router(vbslog_router, prefix="/log", tags=["vbs-log"])
 # Day summary / targets / segment-activity — kept at root paths (no prefix).
 app.include_router(day_summary_router, tags=["day-summary"])
 

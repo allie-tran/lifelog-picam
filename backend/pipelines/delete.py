@@ -3,6 +3,7 @@ import os
 from sqlalchemy import delete, select, update, insert
 from core.config import DIR, THUMBNAIL_DIR, BACKUP_DIR
 from database.models import Image
+from integrations.sessions.redis import bust_day_caches
 from datetime import datetime, timezone
 
 
@@ -13,6 +14,16 @@ def temp_backup(path):
 
 def remove_physical_images(session, device_id: str, image_paths: list[str]):
     """Removes multiple images for a device, including physical files, MongoDB records, thumbnails, and ZVec embeddings."""
+    # Collect affected dates before the rows disappear, to bust caches after.
+    dates = [
+        d for (d,) in session.execute(
+            select(Image.date)
+            .where(Image.device == device_id, Image.image_path.in_(image_paths))
+            .distinct()
+        ).all()
+        if d
+    ]
+
     # Physical files
     for image_path in image_paths:
         full_path = os.path.join(DIR, device_id, image_path)
@@ -33,6 +44,9 @@ def remove_physical_images(session, device_id: str, image_paths: list[str]):
     count = session.execute(stmt).rowcount
     print(f"Deleted {count} records from MongoDB for device {device_id}.")
     session.commit()
+
+    for date in dates:
+        bust_day_caches(device_id, date)
 
 
 def mark_error( session, device_id: str, date: str, image_path: str, timestamp: datetime

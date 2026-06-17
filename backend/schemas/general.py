@@ -18,11 +18,23 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from fastapi import FastAPI
-from pydantic import BaseModel, Field, GetPydanticSchema, InstanceOf, computed_field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, GetPydanticSchema, InstanceOf, computed_field, field_validator
 from sqlalchemy import UUID
 from typing_extensions import TypeAlias
 
 from core.dependencies import CamelCaseModel
+
+
+def _nan_to_none(value: Any) -> Optional[float]:
+    """Coerce NaN/inf floats (e.g. from numpy/GPS sources) to None."""
+    if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+        return None
+    return value
+
+
+# Reusable latitude/longitude field type: parses NaN/inf -> None.
+Coordinate: TypeAlias = Annotated[Optional[float], BeforeValidator(_nan_to_none)]
+
 
 DType = TypeVar("DType", bound=np.generic)
 
@@ -129,17 +141,10 @@ class ProcessedInfo(BaseModel):
 
 
 class GPSInfo(BaseModel):
-    latitude: float
-    longitude: float
+    latitude: Coordinate
+    longitude: Coordinate
     elevation: Optional[float] = None
     timestamp: Optional[float] = None  # ms epoch (UTC)
-
-    @field_validator("latitude", "longitude", mode="before")
-    @classmethod
-    def parse_nan_to_none(cls, value: Any) -> Optional[float]:
-        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
-            return None
-        return value
 
 
 class LocationInfo(CamelCaseModel):
@@ -155,8 +160,8 @@ class LocationInfo(CamelCaseModel):
     # geocoder output
     address: Optional[str] = None
     timezone: str
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: Coordinate = None
+    longitude: Coordinate = None
     # enrichment
     wikidata_id: Optional[str] = None
     description: Optional[str] = None
@@ -174,12 +179,6 @@ class LocationInfo(CamelCaseModel):
         except (ValueError, TypeError):
             return None
 
-    @field_validator("latitude", "longitude", mode="before")
-    @classmethod
-    def parse_nan_to_none(cls, value: Any) -> Optional[float]:
-        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
-            return None
-        return value
 
 class LifelogImage(CamelCaseModel):
     device: str
@@ -250,8 +249,8 @@ class SummarySegment(CamelCaseModel):
     hr_zone: Optional[str] = None
     location_name: Optional[str] = None
     location_stop: Optional[bool] = None
-    location_latitude: Optional[float] = None
-    location_longitude: Optional[float] = None
+    location_latitude: Coordinate = None
+    location_longitude: Coordinate = None
 
 
 class ActionType(str, Enum):

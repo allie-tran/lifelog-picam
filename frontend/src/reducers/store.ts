@@ -6,6 +6,7 @@ import mapSlice from './map';
 import searchSlice from './search';
 import dresSlice from './dres';
 import notificationsSlice from './notifications';
+import vbsLogSlice from './vbsLog';
 
 export const store = configureStore({
     reducer: {
@@ -16,6 +17,7 @@ export const store = configureStore({
         map: mapSlice,
         dres: dresSlice,
         notifications: notificationsSlice,
+        vbsLog: vbsLogSlice,
     },
 });
 
