@@ -1,5 +1,6 @@
 """Background task functions and helpers for day-summary processing."""
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -63,6 +64,34 @@ def _get_last_n_summaries(
     return [row.activity_description for row in reversed(rows)]
 
 
+def _segments_signature(segments) -> str:
+    """Stable hash of the segment fields that drive location-visit grouping
+    (id, place, time span). Equal signature ⇒ identical visits, so the expensive
+    LLM/web-search rebuild can be skipped and the stored visits reused."""
+    parts = [
+        f"{s.segment_id}|{s.location_name}|{s.start_time.isoformat()}|{s.end_time.isoformat()}"
+        for s in sorted(segments, key=lambda x: (x.start_time, x.segment_id or 0))
+    ]
+    return hashlib.sha1("\n".join(parts).encode()).hexdigest()
+
+
+def _resolve_location_visits(session, device: str, date: str, segments, existing):
+    """Build location visits, or reuse the stored ones when the segment signature
+    is unchanged since they were built (segments haven't *actually* changed — e.g.
+    a late GPS upload that reclustered nothing, or a text-only refresh). Returns
+    ``(visits, signature)``."""
+    sig = _segments_signature(segments)
+    if (
+        existing is not None
+        and getattr(existing, "location_visits_sig", None) == sig
+        and getattr(existing, "location_visits", None)
+    ):
+        logger.info("location visits unchanged for %s/%s — reusing (sig %s)", device, date, sig[:8])
+        return list(existing.location_visits), sig
+    from services.location_visits import build_location_visits
+    return build_location_visits(session, device, date, segments), sig
+
+
 def _day_summary_bg(device: str, date: str, target_dicts: list) -> None:
     """Background: full day-summary rebuild (segmentation → timeline → LLM → CLIP)."""
     from sqlalchemy.orm import Session as _Session
@@ -91,6 +120,21 @@ def _day_summary_bg(device: str, date: str, target_dicts: list) -> None:
             if date == _today and last_img_ts is not None:
                 _ts = last_img_ts.replace(tzinfo=timezone.utc) if last_img_ts.tzinfo is None else last_img_ts
                 _is_live = (datetime.now(timezone.utc) - _ts).total_seconds() / 60 < _LIVE_THRESHOLD_MINUTES
+
+            # Prior record (if any) — used to reuse location visits when the
+            # segments are unchanged, so we don't re-run the LLM/web-search.
+            _prev = DaySummaryRecord.find_one(filter={"date": date, "device": device})
+            _existing = DaySummary.model_validate(_prev.__dict__) if _prev else None
+
+            # Location-visit descriptions: one specific summary per place visited.
+            # Built for every day incl. the live one (no live gate); the signature
+            # reuse below keeps repeated builds cheap when nothing changed.
+            try:
+                summary.location_visits, summary.location_visits_sig = _resolve_location_visits(
+                    session, device, date, segments, _existing
+                )
+            except Exception as _lve:
+                logger.warning("_day_summary_bg: location visits failed for %s/%s: %s", device, date, _lve)
 
             summary = summarize_day_by_text(session, summary)
             summary.text_summary_stale = False
@@ -180,6 +224,15 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
             if not existing or not existing.segments:
                 return
             summary = DaySummary.model_validate(existing.__dict__)
+            if summary.segments:
+                try:
+                    # Reuse stored visits when segments are unchanged; the live gate
+                    # no longer suppresses them, so the current day gets visits too.
+                    summary.location_visits, summary.location_visits_sig = _resolve_location_visits(
+                        session, device, date, summary.segments, summary
+                    )
+                except Exception as _lve:
+                    logger.warning("_text_summary_bg: location visits failed for %s/%s: %s", device, date, _lve)
             summary = summarize_day_by_text(session, summary)
             summary.text_summary_stale = False
             summary.text_summary_generated_at = datetime.now(timezone.utc)
@@ -213,6 +266,8 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
                 {"date": date, "device": device},
                 data={"$set": {
                     "summary_text": summary.summary_text,
+                    "location_visits": [v.model_dump() for v in summary.location_visits],
+                    "location_visits_sig": summary.location_visits_sig,
                     "text_summary_stale": False,
                     "text_summary_generated_at": summary.text_summary_generated_at,
                     "unique_highlight": summary.unique_highlight,

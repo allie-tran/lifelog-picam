@@ -1,4 +1,5 @@
 import {
+    CalendarMonthRounded,
     DeleteRounded,
     EditRounded,
     ImageSearchRounded,
@@ -95,6 +96,21 @@ const ImageWithDate = ({
         } catch (err) {
             console.error('Failed to fetch context images:', err);
         }
+    };
+
+    // Jump from a context segment to the full day view (MainPage), scrolled to
+    // that segment. Date is resolved in the image's own timezone.
+    const goToDay = (segment: ResultSegment) => {
+        const img = segment.images[0];
+        if (!img) return;
+        const day = dayjs.utc(img.timestamp).tz(img.timezone || 'UTC').format('YYYY-MM-DD');
+        const segId = segment.segmentId ?? img.segmentId;
+        const params = new URLSearchParams();
+        if (device) params.set('device', device);
+        params.set('date', day);
+        if (segId != null) params.set('segment', String(segId));
+        setContext([]);
+        navigate(`/?${params.toString()}`);
     };
 
     const handleDRESSubmit = async () => {
@@ -309,22 +325,34 @@ const ImageWithDate = ({
                         return null;
                     }
                     return (
-                        <LifelogEvent
-                            key={index}
-                            segment={segment.images}
-                            onChange={() => {}}
-                            deleteRow={() => {
-                                deleteImages(
-                                    device,
-                                    segment.images.map((img) => img.imagePath)
-                                ).then(() => {
-                                    setDeletedIndexes((prev) => [
-                                        ...prev,
-                                        index,
-                                    ]);
-                                });
-                            }}
-                        />
+                        <Box key={index}>
+                            <Stack direction="row" justifyContent="flex-end" sx={{ mb: -1 }}>
+                                <Button
+                                    size="small"
+                                    color="secondary"
+                                    startIcon={<CalendarMonthRounded />}
+                                    sx={{ textTransform: 'none' }}
+                                    onClick={() => goToDay(segment)}
+                                >
+                                    Open day view
+                                </Button>
+                            </Stack>
+                            <LifelogEvent
+                                segment={segment.images}
+                                onChange={() => {}}
+                                deleteRow={() => {
+                                    deleteImages(
+                                        device,
+                                        segment.images.map((img) => img.imagePath)
+                                    ).then(() => {
+                                        setDeletedIndexes((prev) => [
+                                            ...prev,
+                                            index,
+                                        ]);
+                                    });
+                                }}
+                            />
+                        </Box>
                     );
                 })}
             </ModalWithCloseButton>

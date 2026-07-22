@@ -381,6 +381,7 @@ def _build_segment_entry(
         start_time=start_time,
         end_time=end_time,
         duration=duration,
+        timezone=images_sorted[0].timezone,
         location_name=loc_name,
         location_stop=loc_stop,
         location_latitude=loc_lat,
@@ -530,6 +531,28 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
     Includes activity descriptions AND location context.
     """
     try:
+        # Prefer location-visit descriptions when available: coarser and more
+        # specific (one line per place) than raw per-segment activity lines.
+        if day_summary.location_visits:
+            visit_lines = []
+            for v in sorted(day_summary.location_visits, key=lambda x: x.start_time):
+                if not (v.description or "").strip():
+                    continue
+                line = f'{v.start_time.strftime("%H:%M")}–{v.end_time.strftime("%H:%M")}: {v.description.strip()}'
+                if v.location_name:
+                    line += f' @ {v.location_name}'
+                visit_lines.append(line)
+            if visit_lines:
+                day_summary_text = llm.generate_from_text(
+                    "Summarize the day as a short itinerary of the places visited, based on "
+                    "the place-by-place notes below. Write ONE or TWO short sentences that "
+                    "name the main locations in order and what happened there. Be concise "
+                    "(max ~40 words), first person, as an external observer.\n"
+                    + "\n".join(visit_lines)
+                )
+                day_summary.summary_text = str(day_summary_text).strip()
+                return day_summary
+
         raw_rows = session.execute(
             select(Image).where(
                 Image.device == day_summary.device,

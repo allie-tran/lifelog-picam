@@ -30,6 +30,7 @@ import {
     ActivitySummary,
     BinaryMetricsCard,
     BurstMetricsCard,
+    LocationVisitsCard,
     OverviewSummary,
     PeriodCard,
     ReprocessButton,
@@ -190,11 +191,19 @@ const DaySummaryComponent = () => {
                         totalImages={daySummary.totalImages}
                         startTime={daySummary.segments[0]?.startTime}
                         endTime={daySummary.segments[daySummary.segments.length - 1]?.endTime}
+                        timezone={daySummary.segments[0]?.timezone}
                     />
                 </Grid>
                 <Grid size={8}>
                     <SummaryText summaryText={daySummary.summaryText} />
                 </Grid>
+
+                {/* Place-by-place narrative */}
+                {(daySummary.locationVisits?.length ?? 0) > 0 && (
+                    <Grid size={12}>
+                        <LocationVisitsCard visits={daySummary.locationVisits} />
+                    </Grid>
+                )}
 
                 {/* 2. Binary & Bursts (State & Frequency) */}
                 <Grid size={4}>

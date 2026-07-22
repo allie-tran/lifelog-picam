@@ -251,6 +251,34 @@ class SummarySegment(CamelCaseModel):
     location_stop: Optional[bool] = None
     location_latitude: Coordinate = None
     location_longitude: Coordinate = None
+    # IANA zone of the capture (start_time/end_time are naive UTC — the frontend
+    # converts UTC→this zone for display, so it shows local wall-clock, not UTC).
+    timezone: Optional[str] = None
+
+
+class LocationVisit(CamelCaseModel):
+    """
+    A visit = a maximal run of consecutive segments that share the same
+    location (a single stop / place). One natural-language description is
+    generated per visit — coarser than per-segment, so the day reads as a
+    sequence of places rather than 10-minute slices.
+    """
+    visit_index: int = 0
+    location_name: Optional[str] = None
+    location_stop: Optional[bool] = None
+    location_latitude: Coordinate = None
+    location_longitude: Coordinate = None
+    start_time: datetime
+    end_time: datetime
+    duration: int = 0  # seconds
+    timezone: Optional[str] = None  # IANA zone for UTC→local display (see SummarySegment)
+    segment_ids: List[int] = Field(default_factory=list)
+    segment_indices: List[int] = Field(default_factory=list)
+    activity_groups: List[str] = Field(default_factory=list)
+    description: str = ""
+    # Non-empty when online current-events grounding was used for a notable venue.
+    event_context: Optional[str] = None
+    representative_image: LifelogImage | None = None
 
 
 class ActionType(str, Enum):
@@ -271,6 +299,11 @@ class DaySummary(CamelCaseModel):
     last_image_time: Optional[datetime] = None
 
     segments: List[SummarySegment] = []
+    location_visits: List[LocationVisit] = []
+    # Signature of the segments the location_visits were built from. Lets a
+    # rebuild reuse existing visits (skip the LLM/web-search) when segments are
+    # unchanged, so a late GPS upload / text refresh no longer wipes them.
+    location_visits_sig: Optional[str] = None
     summary_text: str = ""
     updated: bool = False
     device: str = ""

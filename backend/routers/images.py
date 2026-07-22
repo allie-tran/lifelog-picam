@@ -77,9 +77,9 @@ async def upload_image(
     file: UploadFile,
     device: Annotated[str, Form(...)],
     tz: Annotated[Optional[str], Form(...)],
-    rotation: Annotated[Optional[int], Form(...)],
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    rotation: Annotated[Optional[int], Form(...)] = None,
 ):
     user = verify_device_and_user(session, device, "camera")
     username = str(user.device_id)

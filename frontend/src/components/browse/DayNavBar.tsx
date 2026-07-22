@@ -2,8 +2,25 @@ import { Box, Tooltip, Typography } from '@mui/material';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import { colorForPlace } from 'utils/placeColors';
 import dayjs from 'dayjs';
-import { useState } from 'react';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+import { Fragment, useState } from 'react';
 import { NavSegment } from 'apis/browsing';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+// Segment times arrive as naive UTC. Parse them as UTC so epoch math is correct
+// regardless of the browser zone, and format for display in the *capture* zone
+// (the segment's own timezone) so the bar reads local wall-clock, not UTC.
+const uMs = (t: string) => dayjs.utc(t).valueOf();
+const hm = (ms: number, tz?: string | null) =>
+    (tz ? dayjs(ms).tz(tz) : dayjs.utc(ms)).format('HH:mm');
+
+// Gaps between consecutive location runs longer than this are recording breaks:
+// runs otherwise pack edge-to-edge and the gap vanishes. Collapse to a labeled
+// marker so a break is visible without a long gap squishing the activity bars.
+const BREAK_THRESHOLD_MS = 15 * 60 * 1000;
 
 export type SegmentSelection = number | number[] | 'unsegmented';
 
@@ -20,6 +37,24 @@ function fmtDuration(totalSeconds: number): string {
     const m = Math.floor((totalSeconds % 3600) / 60);
     if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
     return `${m}m`;
+}
+
+// Clock-aligned 3-hour ticks (…, 09:00, 12:00, …) inside one run's time span,
+// positioned as a percentage. Time is linear within a run, so pct is exact.
+const TICK_STEP_H = 3;
+function runTicks(startMs: number, endMs: number, tz?: string | null): { pct: number; label: string }[] {
+    const spanMs = endMs - startMs;
+    if (spanMs <= 0) return [];
+    const ticks: { pct: number; label: string }[] = [];
+    // Clock-align in the capture zone so ticks land on local 09:00/12:00/…
+    let t = (tz ? dayjs(startMs).tz(tz) : dayjs.utc(startMs)).startOf('hour');
+    while (t.valueOf() <= startMs || t.hour() % TICK_STEP_H !== 0) t = t.add(1, 'hour');
+    while (t.valueOf() < endMs) {
+        const pct = ((t.valueOf() - startMs) / spanMs) * 100;
+        if (pct > 2 && pct < 98) ticks.push({ pct, label: t.format('HH:mm') });
+        t = t.add(TICK_STEP_H, 'hour');
+    }
+    return ticks;
 }
 
 // Transport-mode → emoji (from ImageGPS.mode). 'stationary'/null → no icon.
@@ -56,7 +91,7 @@ function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
         : `${labelIcon} ${run.name ?? '—'}`.trim();
     const tipBits = [
         run.isMove ? `${modeIcon} ${run.mode}` : `📍 ${run.name ?? 'Unknown'}`,
-        `${dayjs(run.startMs).format('HH:mm')}–${dayjs(run.endMs).format('HH:mm')}`,
+        `${hm(run.startMs, run.tz)}–${hm(run.endMs, run.tz)}`,
         fmtDuration(run.totalSeconds),
     ];
     if (run.mode && !run.isMove) tipBits.push(`${modeIcon} ${run.mode}`.trim());
@@ -72,6 +107,7 @@ type LocationRun = {
     isMove: boolean;
     mode: string | null;
     labelKind: string | null;
+    tz: string | null;
 };
 
 function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
@@ -80,20 +116,24 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
         const loc = seg.locationName ?? null;
         const mode = seg.mode ?? null;
         const last = runs[runs.length - 1];
-        if (last && last.name === loc && last.mode === mode) {
-            last.endMs = dayjs(seg.endTime).valueOf();
+        // A recording break splits a run even at the same location (e.g. home →
+        // camera off over lunch → home) so the gap gets its own break marker.
+        const gapMs = last ? uMs(seg.startTime) - last.endMs : 0;
+        if (last && last.name === loc && gapMs < BREAK_THRESHOLD_MS) {
+            last.endMs = uMs(seg.endTime);
             last.totalSeconds += seg.duration;
             last.segments.push(seg);
         } else {
             runs.push({
                 name: loc,
-                startMs: dayjs(seg.startTime).valueOf(),
-                endMs: dayjs(seg.endTime).valueOf(),
+                startMs: uMs(seg.startTime),
+                endMs: uMs(seg.endTime),
                 totalSeconds: seg.duration,
                 segments: [seg],
                 isMove: false,
                 mode: mode,
                 labelKind: null,
+                tz: seg.timezone ?? null,
             });
         }
     }
@@ -121,8 +161,8 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const segments: NavSegment[] = navSegments ?? [];
     if (!segments.length) return null;
 
-    const totalStart = dayjs(segments[0].startTime).valueOf();
-    const totalEnd = dayjs(segments[segments.length - 1].endTime).valueOf();
+    const totalStart = uMs(segments[0].startTime);
+    const totalEnd = uMs(segments[segments.length - 1].endTime);
     const totalSpan = totalEnd - totalStart || 1;
 
     const widthPct = (startMs: number, endMs: number) =>
@@ -135,17 +175,48 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
             <Box sx={{ display: 'flex', width: '100%', overflow: 'hidden' }}>
                 {locationRuns.map((run, ri) => {
                     const w = run.segments.reduce((sum, seg) =>
-                        sum + widthPct(dayjs(seg.startTime).valueOf(), dayjs(seg.endTime).valueOf()), 0);
+                        sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
                     const isActive = activeRunIdx === ri;
                     const bg = run.isMove ? MOVE_BG : colorForPlace(run.name);
 
                     // Relative widths of segments within this run (normalize to fill the cell)
                     const runTotalMs = run.segments.reduce((sum, seg) =>
-                        sum + (dayjs(seg.endTime).valueOf() - dayjs(seg.startTime).valueOf()), 0) || 1;
+                        sum + (uMs(seg.endTime) - uMs(seg.startTime)), 0) || 1;
                     const header = runHeader(run);
+                    const gapMs = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
+                    const showBreak = ri > 0 && gapMs >= BREAK_THRESHOLD_MS;
                     return (
+                        <Fragment key={ri}>
+                        {showBreak && (
+                            <Tooltip
+                                title={`No recording · ${hm(locationRuns[ri - 1].endMs, locationRuns[ri - 1].tz)}–${hm(run.startMs, run.tz)} · ${fmtDuration(gapMs / 1000)}`}
+                                followCursor
+                            >
+                                <Box
+                                    sx={{
+                                        flex: '0 0 auto',
+                                        width: 46,
+                                        alignSelf: 'stretch',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        mx: '2px',
+                                        borderLeft: '1px dashed',
+                                        borderRight: '1px dashed',
+                                        borderColor: 'divider',
+                                    }}
+                                >
+                                    <Typography
+                                        variant="caption"
+                                        color="text.disabled"
+                                        sx={{ fontSize: 9, whiteSpace: 'nowrap' }}
+                                    >
+                                        ┈ {fmtDuration(gapMs / 1000)} ┈
+                                    </Typography>
+                                </Box>
+                            </Tooltip>
+                        )}
                         <Box
-                            key={ri}
                             sx={{
                                 flexBasis: 16,
                                 flexGrow: w,
@@ -201,7 +272,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                             {/* Activity cells — one per segment */}
                             <Box sx={{ display: 'flex', height: 36, border: '1px solid #fff', borderRadius: '4px', overflow: 'hidden' }}>
                                 {run.segments.map((seg, si) => {
-                                    const segMs = dayjs(seg.endTime).valueOf() - dayjs(seg.startTime).valueOf();
+                                    const segMs = uMs(seg.endTime) - uMs(seg.startTime);
                                     const segRelW = (segMs / runTotalMs) * 100;
                                     const isLastSeg = si === run.segments.length - 1;
                                     const background = segColor(seg);
@@ -211,7 +282,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                         : selectedSegmentId === seg.segmentId;
                                     const isViewing =
                                         viewingSegmentId != null && seg.segmentId === viewingSegmentId;
-                                    const range = `${dayjs(seg.startTime).format('HH:mm')}–${dayjs(seg.endTime).format('HH:mm')}`;
+                                    const range = `${hm(uMs(seg.startTime), run.tz)}–${hm(uMs(seg.endTime), run.tz)}`;
                                     const title = `${seg.activity} · ${range}`;
                                     return (
                                         <Tooltip key={seg.segmentId ?? si} title={title} followCursor>
@@ -243,6 +314,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                 })}
                             </Box>
                         </Box>
+                        </Fragment>
                     );
                 })}
 
@@ -284,37 +356,55 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                 )}
             </Box>
 
-            {/* Time labels */}
-            {(() => {
-                const spanH = (totalEnd - totalStart) / 3_600_000;
-                const stepH = spanH < 6 ? 0.5 : spanH < 12 ? 1 : 2;
-                const first = dayjs(totalStart).startOf('hour').add(stepH, 'hour');
-                const ticks: { pct: number; label: string }[] = [];
-                let t = first;
-                while (t.valueOf() < totalEnd) {
-                    const pct = (t.valueOf() - totalStart) / totalSpan * 100;
-                    if (pct > 1 && pct < 99) ticks.push({ pct, label: t.format('HH:mm') });
-                    t = t.add(stepH, 'hour');
-                }
-                return (
-                    <Box sx={{ position: 'relative', height: 16, mt: '3px', userSelect: 'none' }}>
-                        <Typography variant="caption" color="text.secondary"
-                            sx={{ position: 'absolute', left: 0, transform: 'none' }}>
-                            {dayjs(segments[0].startTime).format('HH:mm')}
-                        </Typography>
-                        {ticks.map((tick, i) => (
-                            <Typography key={i} variant="caption" color="text.secondary"
-                                sx={{ position: 'absolute', left: `${tick.pct}%`, transform: 'translateX(-50%)' }}>
-                                {tick.label}
-                            </Typography>
-                        ))}
-                        <Typography variant="caption" color="text.secondary"
-                            sx={{ position: 'absolute', right: 0 }}>
-                            {dayjs(segments[segments.length - 1].endTime).format('HH:mm')}
-                        </Typography>
-                    </Box>
-                );
-            })()}
+            {/* Time labels — a tick every 3h within each run, plus the resume time
+                at the start of a run that follows a recording break. Mirrors the bar
+                layout (incl. break spacers) so ticks sit under their location. */}
+            <Box sx={{ display: 'flex', width: '100%', mt: '3px', userSelect: 'none' }}>
+                {locationRuns.map((run, ri) => {
+                    const w = run.segments.reduce((sum, seg) =>
+                        sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
+                    const gapBefore = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
+                    const showBreak = ri > 0 && gapBefore >= BREAK_THRESHOLD_MS;
+                    const gapAfter = ri < locationRuns.length - 1 ? locationRuns[ri + 1].startMs - run.endMs : 0;
+                    const showStop = gapAfter >= BREAK_THRESHOLD_MS;
+                    const ticks = runTicks(run.startMs, run.endMs, run.tz);
+                    return (
+                        <Fragment key={ri}>
+                            {showBreak && <Box sx={{ flex: '0 0 auto', width: 46, mx: '2px' }} />}
+                            <Box
+                                sx={{
+                                    flexBasis: 16,
+                                    flexGrow: w,
+                                    flexShrink: 0,
+                                    minWidth: 0,
+                                    position: 'relative',
+                                    height: 16,
+                                }}
+                            >
+                                {showBreak && (
+                                    <Typography variant="caption" color="text.secondary" noWrap
+                                        sx={{ position: 'absolute', left: 0, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                        {hm(run.startMs, run.tz)}
+                                    </Typography>
+                                )}
+                                {ticks.map((tick) => (
+                                    <Typography key={tick.label} variant="caption" color="text.secondary" noWrap
+                                        sx={{ position: 'absolute', left: `${tick.pct}%`, transform: 'translateX(-50%)', fontVariantNumeric: 'tabular-nums' }}>
+                                        {tick.label}
+                                    </Typography>
+                                ))}
+                                {showStop && (
+                                    <Typography variant="caption" color="text.secondary" noWrap
+                                        sx={{ position: 'absolute', right: 0, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                        {hm(run.endMs, run.tz)}
+                                    </Typography>
+                                )}
+                            </Box>
+                        </Fragment>
+                    );
+                })}
+                {hasRecent && <Box sx={{ flex: '0 0 auto', width: 70, ml: '4px' }} />}
+            </Box>
 
         </Box>
     );

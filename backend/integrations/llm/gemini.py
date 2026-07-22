@@ -5,7 +5,13 @@ from typing import Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
 from google import genai  # type: ignore
-from google.genai.types import Content, GenerateContentConfig, Part  # type: ignore
+from google.genai.types import (  # type: ignore
+    Content,
+    GenerateContentConfig,
+    GoogleSearch,
+    Part,
+    Tool,
+)
 from partialjson.json_parser import JSONParser
 from pydantic import BaseModel
 from pyrate_limiter import Duration, Limiter, Rate
@@ -43,14 +49,22 @@ class LLM:
         self.client = genai.Client(api_key=GEMINI_API)
         self.model_name = MODEL_NAME
 
-    def generate(self, contents: Content, parse_json=False):
+    def generate(self, contents: Content, parse_json=False, use_search: bool = False):
         """
-        Generate completions from a list of messages
+        Generate completions from a list of messages.
+
+        When ``use_search`` is True, the Google Search grounding tool is
+        enabled so the model can look up real-world facts (e.g. current
+        events happening near a location on a given date). JSON parsing is
+        not compatible with grounded responses, so callers should read text.
         """
+        config = GenerateContentConfig(system_instruction=self.system_instruction)
+        if use_search:
+            config.tools = [Tool(google_search=GoogleSearch())]
         request = self.client.models.generate_content(
             model=self.model_name,
             contents=contents,
-            config=GenerateContentConfig(system_instruction=self.system_instruction),
+            config=config,
         )
         response = request.text
         if DEBUG:
@@ -75,17 +89,19 @@ class LLM:
             except json.JSONDecodeError:
                 pass
 
-    def generate_from_text(self, text: str, parse_json=False) -> Optional[Dict | str]:
+    def generate_from_text(
+        self, text: str, parse_json=False, use_search: bool = False
+    ) -> Optional[Dict | str]:
         """
         Generate completions from text
         Then parse the JSON object from the completion
         If the completion is not a JSON object, return the text
         """
         contents = Content(role="user", parts=[Part.from_text(text=text)])
-        return self.generate(contents, parse_json)
+        return self.generate(contents, parse_json, use_search=use_search)
 
     def generate_from_mixed_media(
-        self, data: Sequence[MixedContent], parse_json=False
+        self, data: Sequence[MixedContent], parse_json=False, use_search: bool = False
     ) -> Optional[Dict | str]:
         parts: List[Part] = []
         for part in data:
@@ -93,7 +109,9 @@ class LLM:
                 parts.append(Part.from_text(text=part.content))
             elif part.type == "image_url":
                 parts.append(Part.from_bytes(data=part.content, mime_type="image/jpeg"))
-        return self.generate(Content(role="user", parts=parts), parse_json=parse_json)
+        return self.generate(
+            Content(role="user", parts=parts), parse_json=parse_json, use_search=use_search
+        )
 
 
 def get_visual_content(image_paths: List[str] | List[bytes]) -> List[MixedContent]:

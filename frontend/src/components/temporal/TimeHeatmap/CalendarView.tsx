@@ -39,6 +39,27 @@ const CalendarView = ({
 
     const isDragging = dragPreviewSet.size > 0;
 
+    // Responsive cell size: grow squares so the grid fills the container width.
+    // Falls back to CSIZ (and overflow-scrolls) when too many weeks to fit.
+    const containerRef = React.useRef<HTMLDivElement>(null);
+    const numWeeks = calendarGrid.length;
+    const [cellSize, setCellSize] = React.useState(CSIZ);
+    React.useLayoutEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const measure = () => {
+            const labelW = showDowLabels ? CSIZ + CGAP : 0;
+            const avail = el.clientWidth - labelW - 2;
+            if (avail <= 0 || numWeeks === 0) return;
+            const size = Math.floor((avail - (numWeeks - 1) * CGAP) / numWeeks);
+            setCellSize(Math.min(40, Math.max(CSIZ, size)));
+        };
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [numWeeks, showDowLabels]);
+
     const allDates = useMemo(
         () => calendarGrid.flat().filter(Boolean) as string[],
         [calendarGrid]
@@ -81,7 +102,7 @@ const CalendarView = ({
     }, [calendarGrid]);
 
     return (
-        <Box sx={{ width: '100%', overflowX: 'auto', pb: 1, userSelect: 'none' }}>
+        <Box ref={containerRef} sx={{ width: '100%', overflowX: 'auto', pb: 1, userSelect: 'none' }}>
             {/* Month labels */}
             <Box
                 sx={{
@@ -95,7 +116,7 @@ const CalendarView = ({
                         key={weekIdx}
                         sx={{
                             position: 'absolute',
-                            left: weekIdx * (CSIZ + CGAP),
+                            left: weekIdx * (cellSize + CGAP),
                             fontSize: '0.58rem',
                             color: 'text.secondary',
                             lineHeight: 1,
@@ -117,10 +138,10 @@ const CalendarView = ({
                                 key={i}
                                 sx={{
                                     width: CSIZ,
-                                    height: CSIZ,
+                                    height: cellSize,
                                     fontSize: '0.5rem',
                                     color: 'text.disabled',
-                                    lineHeight: `${CSIZ}px`,
+                                    lineHeight: `${cellSize}px`,
                                     textAlign: 'center',
                                 }}
                             >
@@ -135,7 +156,7 @@ const CalendarView = ({
                     <Box key={wi} sx={{ display: 'flex', flexDirection: 'column', gap: `${CGAP}px` }}>
                         {week.map((dateStr, di) => {
                             if (!dateStr) {
-                                return <Box key={di} sx={{ width: CSIZ, height: CSIZ }} />;
+                                return <Box key={di} sx={{ width: cellSize, height: cellSize }} />;
                             }
                             const d = density[wi]?.[di] ?? 0;
                             const sel = selectedDates.has(dateStr);
@@ -192,8 +213,8 @@ const CalendarView = ({
                                     setDragPreviewSet(preview);
                                 },
                                 sx: {
-                                    width: CSIZ,
-                                    height: CSIZ,
+                                    width: cellSize,
+                                    height: cellSize,
                                     bgcolor: bg,
                                     borderRadius: '2px',
                                     border,
@@ -212,6 +233,9 @@ const CalendarView = ({
                                     title={dayjs(dateStr).format('ddd D MMM YYYY')}
                                     placement="top"
                                     arrow
+                                    disableInteractive
+                                    enterDelay={400}
+                                    slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
                                 >
                                     <Box {...boxProps} />
                                 </Tooltip>

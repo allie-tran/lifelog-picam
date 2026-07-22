@@ -275,7 +275,7 @@ async def get_day_nav(
     """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
     _require_owner(access_level)
 
-    cache_key = f"day-nav:v2:{device}:{date}"
+    cache_key = f"day-nav:v3:{device}:{date}"
     cached = redis_client.get_json(cache_key)
     if cached is not None:
         return cached
@@ -289,6 +289,7 @@ async def get_day_nav(
             func.max(Image.timestamp).label("end_time"),
             func.min(Image.activity).label("activity"),
             func.min(Image.activity_group).label("activity_group"),
+            func.min(Image.timezone).label("timezone"),
         )
         .where(
             Image.device == device,
@@ -317,6 +318,7 @@ async def get_day_nav(
             "segmentId": row.segment_id,
             "startTime": start_ts.isoformat() if start_ts else None,
             "endTime": end_ts.isoformat() if end_ts else None,
+            "timezone": row.timezone,
             "duration": duration,
             "activity": row.activity or "",
             "activityGroup": row.activity_group or "",

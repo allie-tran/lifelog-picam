@@ -98,11 +98,30 @@ type SummarySegment = {
     activityGroup: string;
     startTime: string;
     endTime: string;
+    timezone?: string | null;
     duration: number;
     locationName?: string | null;
     locationStop?: boolean | null;
     locationLatitude?: number | null;
     locationLongitude?: number | null;
+};
+
+type LocationVisit = {
+    visitIndex: number;
+    locationName?: string | null;
+    locationStop?: boolean | null;
+    locationLatitude?: number | null;
+    locationLongitude?: number | null;
+    startTime: string;
+    endTime: string;
+    timezone?: string | null;
+    duration: number;
+    segmentIds: number[];
+    segmentIndices: number[];
+    activityGroups: string[];
+    description: string;
+    eventContext?: string | null;
+    representativeImage?: ImageObject | null;
 };
 
 // Define the enum to match your backend ActionType
@@ -121,6 +140,7 @@ export interface CustomGoal {
 type DaySummary = {
     date: string;
     segments: SummarySegment[];
+    locationVisits?: LocationVisit[];
     summaryText: string;
     updated: boolean;
     device: string;
@@ -148,7 +168,7 @@ interface Point {
     y: number;
 }
 
-export type { ImageObject, SummarySegment, DaySummary, Point };
+export type { ImageObject, SummarySegment, LocationVisit, DaySummary, Point };
 
 export type SensorStatus = {
     deviceId: string;

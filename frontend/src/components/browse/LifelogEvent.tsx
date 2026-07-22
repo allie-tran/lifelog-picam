@@ -17,6 +17,8 @@ import { submitImages } from 'apis/dres';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import { CONFIDENCE_COLOURS, THEME_COLORS } from 'constants/activityColors';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import React from 'react';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
@@ -28,6 +30,9 @@ import ImageWithDate from 'components/common/ImageWithDate';
 import { useOnInView } from 'react-intersection-observer';
 import { setHighlightedTrack } from 'reducers/map';
 import { parseErrorResponse } from '@utils/misc';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const LifelogEvent = ({
     segment,
@@ -54,7 +59,8 @@ const LifelogEvent = ({
     const firstImage = segment[0];
     // Time-range label must read earliest–latest regardless of how the images
     // are ordered (today is shown newest-first), so derive the bounds.
-    const times = segment.map((img) => dayjs(img.timestamp));
+    // Naive-UTC timestamps → display in each image's capture zone, not browser/UTC.
+    const times = segment.map((img) => dayjs.utc(img.timestamp).tz(img.timezone || 'UTC'));
     const startTime = times.reduce((a, b) => (a.isBefore(b) ? a : b), times[0]);
     const endTime = times.reduce((a, b) => (a.isAfter(b) ? a : b), times[0]);
     const date = startTime.format('YYYY-MM-DD');
@@ -106,11 +112,45 @@ const LifelogEvent = ({
                 }}
             >
                 <Divider />
-                <Stack direction="row" spacing={1} alignItems="flex-start">
+                <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+                    {/* LEFT — time + activity */}
+                    <Stack spacing={0.5} sx={{ flexShrink: 0 }}>
+                        <Typography variant="subtitle2" color="textSecondary">
+                            {startTime.format('HH:mm:ss')} -{' '}
+                            {endTime.format('HH:mm:ss')}{' '}
+                            {fullTime && <strong>{startTime.format('ll')}</strong>}
+                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                            <Typography variant="subtitle1" fontWeight="bold" sx={{ textTransform: 'capitalize' }}>
+                                {firstImage.activity || 'No Activity Detected'}
+                            </Typography>
+                            {firstImage.activityGroup && (
+                                <Chip
+                                    label={firstImage.activityGroup}
+                                    size="small"
+                                    sx={{
+                                        backgroundColor: groupColor,
+                                        color: 'rgba(0,0,0,0.7)',
+                                        height: 18,
+                                        fontSize: '0.65rem',
+                                    }}
+                                />
+                            )}
+                            {firstImage.activityConfidence && (
+                                <Typography
+                                    variant="caption"
+                                    color={`${confidenceColor}.main` || 'text.secondary'}
+                                >
+                                    {firstImage.activityConfidence}
+                                </Typography>
+                            )}
+                        </Stack>
+                    </Stack>
+                    {/* RIGHT — location */}
                     {location ? (
                         location.stop === false ? (
                             // ── Move segment ──────────────────────────────
-                            <Stack direction="row" spacing={1} alignItems="center">
+                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end" sx={{ textAlign: 'right' }}>
                                 <DirectionsWalkIcon fontSize="small" color="action" />
                                 <Stack>
                                     <Typography variant="subtitle2" fontWeight="medium">
@@ -125,9 +165,9 @@ const LifelogEvent = ({
                             </Stack>
                         ) : (
                             // ── Stop segment ──────────────────────────────
-                            <Stack direction="row" spacing={1} alignItems="flex-start">
+                            <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="flex-end">
                                 <LocationOnIcon fontSize="small" color="primary" sx={{ mt: 0.3 }} />
-                                <Stack spacing={0.5}>
+                                <Stack spacing={0.5} alignItems="flex-end" sx={{ textAlign: 'right' }}>
                                     <Stack direction="row" spacing={1} alignItems="center">
                                         <Typography variant="subtitle2" fontWeight="medium">
                                             {location.name || location.suburb || location.city || 'Unknown place'}
@@ -173,54 +213,6 @@ const LifelogEvent = ({
                             No location data
                         </Typography>
                     )}
-                </Stack>
-                <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                >
-                    <Stack
-                        direction="row"
-                        spacing={1}
-                        flexShrink={0}
-                        alignItems="center"
-                    >
-                        <Typography variant="subtitle1" fontWeight="bold" sx={{ textTransform: 'capitalize' }}>
-                            {firstImage.activity || 'No Activity Detected'}
-                        </Typography>
-                        {firstImage.activityGroup && (
-                            <Chip
-                                label={firstImage.activityGroup}
-                                size="small"
-                                sx={{
-                                    backgroundColor: groupColor,
-                                    color: 'rgba(0,0,0,0.7)',
-                                    height: 18,
-                                    fontSize: '0.65rem',
-                                }}
-                            />
-                        )}
-                        {firstImage.activityConfidence && (
-                            <Typography
-                                variant="caption"
-                                color={`${confidenceColor}.main` || 'text.secondary'}
-                            >
-                                {firstImage.activityConfidence}
-                            </Typography>
-                        )}
-                    </Stack>
-                    <Typography
-                        variant="subtitle2"
-                        color="textSecondary"
-                        textAlign="right"
-                        sx={{ flexShrink: 0, minWidth: 300 }}
-                    >
-                        {startTime.format('HH:mm:ss')} -{' '}
-                        {endTime.format('HH:mm:ss')}{' '}
-                        {fullTime && (
-                            <strong>{startTime.format('ll')}</strong>
-                        )}
-                    </Typography>
                 </Stack>
                 <Typography>{firstImage.activityDescription}</Typography>
                 <Stack direction="row" spacing={2} alignItems="center">

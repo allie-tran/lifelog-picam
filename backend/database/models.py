@@ -419,6 +419,23 @@ class RawGPS(Base):
     elevation: Mapped[float | None] = mapped_column(Float)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     timezone: Mapped[str | None] = mapped_column(Text)
+    # Fix-quality signal from android.location.Location (all optional — older
+    # uploads / non-Android sources omit them):
+    #   accuracy         = horizontal accuracy radius (m, 68% conf). Inverse-
+    #                      variance weight 1/accuracy² for stop centroids; also
+    #                      gates low-quality fixes before stay detection.
+    #   vertical_accuracy= vertical accuracy radius (m, API 26+).
+    #   speed            = ground speed (m/s) when hasSpeed().
+    #   speed_accuracy   = speed accuracy (m/s, API 26+).
+    #   bearing          = direction of travel (deg).
+    #   provider         = fix source, e.g. "fused"/"gps"/"network".
+    # No HDOP/fix_quality/satellite count — the fused API doesn't expose them.
+    accuracy: Mapped[float | None] = mapped_column(Float)
+    vertical_accuracy: Mapped[float | None] = mapped_column(Float)
+    speed: Mapped[float | None] = mapped_column(Float)
+    speed_accuracy: Mapped[float | None] = mapped_column(Float)
+    bearing: Mapped[float | None] = mapped_column(Float)
+    provider: Mapped[str | None] = mapped_column(Text)
 
 
 class ImageGPS(Base):

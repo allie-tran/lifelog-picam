@@ -1,7 +1,9 @@
 import {
     AccessTimeRounded,
+    ArrowBackRounded,
     ArrowDropDownRounded,
     AutoAwesomeRounded,
+    ClearAllRounded,
     CloseRounded,
     DeleteRounded,
     GridViewRounded,
@@ -49,7 +51,7 @@ import dayjs from 'dayjs';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
@@ -73,6 +75,7 @@ const EMPTY_HEATMAP: HeatmapData = { weekdayTod: [], weekdayMonth: [], hourDow: 
 
 const SearchPage = () => {
     const dispatch = useAppDispatch();
+    const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
     const searchQuery = useMemo(() => parseSearchParams(searchParams), [searchParams]);
@@ -135,6 +138,22 @@ const SearchPage = () => {
     const onFilterDetected = useCallback((type: 'temporal') => {
         setFilterShown(type);
     }, []);
+
+    // Reset everything (text, filters, image refs, drag blobs) — keep only device.
+    const handleClearAll = useCallback(() => {
+        textQueryRef.current = '';
+        searchTextBoxRef.current?.setText('');
+        lastParsedRef.current = {};
+        setDragBlobUrls((prev) => { prev.forEach((u) => URL.revokeObjectURL(u)); return []; });
+        setSearchParams(() => {
+            const p = new URLSearchParams();
+            if (device) p.set('device', device);
+            return p;
+        });
+    }, [device, setSearchParams]);
+
+    // Quick back to the previous search/result state (prior URL params).
+    const handleBack = useCallback(() => navigate(-1), [navigate]);
 
     const prevDeviceRef = useRef<string | null>(null);
     useEffect(() => {
@@ -560,14 +579,20 @@ const SearchPage = () => {
                     },
                 }}
             >
-                <Typography
-                    variant="h6"
-                    color="primary"
-                    fontWeight="bold"
-                    gutterBottom
-                >
-                    Search
-                </Typography>
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Tooltip title="Back to previous results">
+                        <IconButton size="small" onClick={handleBack} sx={{ p: 0.25 }}>
+                            <ArrowBackRounded fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Typography
+                        variant="h6"
+                        color="primary"
+                        fontWeight="bold"
+                    >
+                        Search
+                    </Typography>
+                </Stack>
                 <Typography variant="caption">
                     Type in a prompt in natural language
                 </Typography>
@@ -780,6 +805,15 @@ const SearchPage = () => {
                     {filterShown === 'temporal' && renderClearButton()}
                     {filterShown === 'location' && LocationClearButton()}
                     {filterShown === 'faces' && FaceClearButton()}
+                    <Button
+                        variant="outlined"
+                        color="inherit"
+                        startIcon={<ClearAllRounded />}
+                        sx={{ textTransform: 'none' }}
+                        onClick={handleClearAll}
+                    >
+                        Clear All
+                    </Button>
                     <Button
                         variant="contained"
                         color="secondary"

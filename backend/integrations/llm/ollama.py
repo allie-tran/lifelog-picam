@@ -110,16 +110,19 @@ class LLM:
                 pass
         return None
 
-    def generate_from_text(self, text: str, parse_json=False) -> Optional[Dict | str]:
+    def generate_from_text(
+        self, text: str, parse_json=False, use_search: bool = False
+    ) -> Optional[Dict | str]:
         """
-        Generate completions from text
+        Generate completions from text. ``use_search`` is accepted for interface
+        parity only — Ollama has no web grounding.
         """
         # Create a single user message for the /api/chat endpoint
         messages = [{"role": "user", "content": text}]
         return self.generate(messages, parse_json)
 
     def generate_from_mixed_media(
-        self, data: Sequence[MixedContent], parse_json=False
+        self, data: Sequence[MixedContent], parse_json=False, use_search: bool = False
     ) -> Optional[Dict | str]:
         """
         Generate completions from mixed media (text and images) using Ollama's /api/chat endpoint.

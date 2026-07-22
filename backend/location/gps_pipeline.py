@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 # ─── Config ───────────────────────────────────────────────────────────────────
 GAP_SECONDS = 5 * 60       # 5-minute gap → new track
 SPEED_THRESHOLD = 50       # m/s — hard teleport cap (≈180 km/h)
+# Quality gate — drop fixes whose reported horizontal accuracy radius is worse
+# than this before any track/stay processing, so junk never reaches stay
+# detection or the speed/spike filters. Only applied to fixes that *report* an
+# accuracy (Android fused); legacy rows with NULL accuracy are always kept.
+ACCURACY_MAX_M = 50        # metres — reject fixes looser than this
 # Round-trip spike removal (catches moderate multipath glitches that stay under
 # the speed cap): a point is a spike when its in+out path detours far past the
 # straight chord between its neighbours, and it juts out by more than the noise
@@ -37,6 +42,16 @@ SPIKE_RATIO = 2.5          # (in+out − chord) must exceed RATIO×chord to drop
 # giant cluster the way DBSCAN's transitive linking did.
 STAY_DIST = 50             # metres — max distance from anchor to remain in a stop
 STAY_TIME = 60 * 5         # seconds — min dwell to count as a stop
+
+# Brief-excursion tolerance for stay detection. GPS drift/spikes can throw a few
+# fixes beyond STAY_DIST even while the wearer never leaves the place, which
+# otherwise splits one stop into stop→walk→stop. A run of out-of-radius points is
+# absorbed into the stay (treated as drift) as long as the track returns within
+# STAY_DIST of the *same anchor* within EXCURSION_GRACE seconds. Because the
+# reference stays the fixed anchor, a genuine walk away never returns in time and
+# the stop still closes — the bounded ~2*STAY_DIST diameter is preserved (no
+# DBSCAN-style chaining).
+EXCURSION_GRACE = 120      # seconds — max brief departure that still counts as a stop
 
 # Transport-mode speed sampling — minimum time baseline for a speed sample.
 # Point-to-point speed at walk pace is dominated by GPS jitter (±5–10 m per fix
@@ -65,6 +80,26 @@ def load_all_points(session: Session, device: str, date: str) -> pd.DataFrame:
     df["formatted_time"] = df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
     df.reset_index(drop=True, inplace=True)
     return df
+
+# ─── Step 1b: Quality gate — drop low-accuracy fixes ─────────────────────────
+
+def filter_low_accuracy(df: pd.DataFrame, max_accuracy_m: float = ACCURACY_MAX_M) -> pd.DataFrame:
+    """Drop fixes whose reported horizontal accuracy radius exceeds
+    ``max_accuracy_m``. Null-safe: rows with a missing/NaN accuracy (legacy data,
+    non-Android sources) are kept — we only cull a fix that *reports* it is loose.
+    No-op when the column is absent entirely.
+    """
+    if "accuracy" not in df.columns:
+        return df
+    acc = df["accuracy"].astype("float64").to_numpy()
+    # Keep NaN (unknown accuracy) and anything within the radius.
+    keep = np.isnan(acc) | (acc <= max_accuracy_m)
+    dropped = int((~keep).sum())
+    if dropped:
+        logger.info("Quality gate: dropped %d/%d fixes with accuracy > %.0f m",
+                    dropped, len(df), max_accuracy_m)
+    return df.loc[keep].reset_index(drop=True)
+
 
 # ─── Step 2: Re-split into tracks based on time gaps ─────────────────────────
 
@@ -177,19 +212,25 @@ def detect_stay_points(
     grp: pd.DataFrame,
     dist_thresh: float = STAY_DIST,
     time_thresh: float = STAY_TIME,
+    excursion_grace: float = EXCURSION_GRACE,
 ) -> np.ndarray:
     """
-    Li et al. (2008) stay-point detection over a single time-ordered track.
+    Li et al. (2008) stay-point detection over a single time-ordered track,
+    hardened against GPS drift.
 
     Returns an int array (one per point): -1 = move, and 0,1,2,… for each
     distinct stay within the track.
 
-    A stay is a maximal run of consecutive points all within ``dist_thresh``
-    metres of the run's *anchor* (its first point), spanning at least
-    ``time_thresh`` seconds. Measuring every point against the fixed anchor
-    bounds a stop's diameter to ~2*dist_thresh — unlike DBSCAN, whose
-    transitive linking let a slow walk chain an entire building into one
-    cluster.
+    A stay is a maximal run of points around a fixed *anchor* (its first point):
+    every point within ``dist_thresh`` metres of the anchor extends it. A short
+    burst of points beyond ``dist_thresh`` is *absorbed* (treated as drift) as
+    long as the track returns within ``dist_thresh`` of the anchor within
+    ``excursion_grace`` seconds; otherwise the stay ends at the last in-radius
+    point. The stay counts as a stop when its total span ≥ ``time_thresh``.
+
+    Measuring against the fixed anchor bounds a stop's diameter to ~2*dist_thresh
+    (no DBSCAN-style chaining), while the grace window keeps a single stay from
+    being split into stop→walk→stop by transient jitter.
     """
     n = len(grp)
     cluster = np.full(n, -1, dtype=int)
@@ -197,23 +238,41 @@ def detect_stay_points(
     lon = grp["longitude"].values
     ts = grp["timestamp"].values  # numpy datetime64[ns]
 
+    def _secs(a, b):
+        return (ts[b] - ts[a]) / np.timedelta64(1, "s")
+
     stay_id = 0
     i = 0
     while i < n:
-        # Extend the window while points stay within dist_thresh of anchor i.
+        last_in = i             # last point confirmed within dist_thresh of anchor i
         j = i + 1
         while j < n:
             d = haversine_distance(lat[i], lon[i], lat[j], lon[j], 0, 0)
-            if d > dist_thresh:
-                break
-            j += 1
+            if d <= dist_thresh:
+                last_in = j
+                j += 1
+                continue
+            # Out of radius: peek ahead — does the track return to the anchor
+            # within the grace window? If so, absorb the excursion as drift.
+            k = j
+            returned = False
+            while k < n and _secs(j, k) <= excursion_grace:
+                if haversine_distance(lat[i], lon[i], lat[k], lon[k], 0, 0) <= dist_thresh:
+                    returned = True
+                    break
+                k += 1
+            if returned:
+                last_in = k     # points j..k are drift belonging to this stay
+                j = k + 1
+            else:
+                break           # genuine departure — stay ends at last_in
 
-        # Points i..j-1 are all within dist_thresh of the anchor.
-        dwell = (ts[j - 1] - ts[i]) / np.timedelta64(1, "s")
+        # Stay spans anchor i .. last_in inclusive.
+        dwell = _secs(i, last_in)
         if dwell >= time_thresh:
-            cluster[i:j] = stay_id
+            cluster[i:last_in + 1] = stay_id
             stay_id += 1
-            i = j               # resume scanning from the first point that left
+            i = last_in + 1     # resume after the stay (drift points consumed)
         else:
             i += 1              # too brief — anchor moves on by one point
 
@@ -382,6 +441,94 @@ def remove_outliers(values: np.ndarray):
     upper_bound = q3 + 1.5 * iqr
     return (values >= lower_bound) & (values <= upper_bound)
 
+def _accuracy_weights(accuracy) -> np.ndarray | None:
+    """Per-point centroid weights from the horizontal accuracy radius
+    (1/accuracy² — inverse variance, so a tight ±5 m fix pulls the centroid ~100×
+    harder than a loose ±50 m one). Returns None when no point has a usable
+    accuracy (all NaN/≤0) so the caller falls back to a plain mean. Points missing
+    an accuracy still count, but only as much as the worst *measured* fix, so a
+    null-accuracy reading can never dominate a well-measured one.
+    """
+    if accuracy is None:
+        return None
+    a = np.asarray(accuracy, dtype=float)
+    valid = np.isfinite(a) & (a > 0)
+    if not valid.any():
+        return None
+    w = np.zeros(len(a), dtype=float)
+    w[valid] = 1.0 / (a[valid] ** 2)
+    w[~valid] = w[valid].min()
+    return w
+
+
+def _weighted_mean(values: np.ndarray, mask: np.ndarray, weights) -> float:
+    """Mean of ``values`` over the non-outlier ``mask``, accuracy-weighted by
+    ``weights`` when available. Falls back to a plain mean (whole segment) when the
+    mask is empty or the weights are unusable."""
+    if not mask.any():
+        mask = np.ones(len(values), dtype=bool)
+    if weights is None:
+        return float(values[mask].mean())
+    w = weights[mask]
+    if w.sum() <= 0:
+        return float(values[mask].mean())
+    return float(np.average(values[mask], weights=w))
+
+
+# A "move" this short (few points, brief) sandwiched between two stops at the
+# *same* place is GPS drift — a lone fix that jumped out of the stay and back — or
+# a short cross-track gap token, not a real trip. Both bounds must hold so a
+# genuine leave-and-return (drive round the block, back home) survives: a real
+# loop has many points over minutes even though it ends where it began.
+MOVE_COALESCE_MAX_S = 120   # seconds — max move duration to absorb
+MOVE_COALESCE_MAX_PTS = 3   # points  — max move size to absorb
+
+
+def _merge_stop_run(a: dict, m: dict, b: dict) -> dict:
+    """Merge stop ``a`` + spurious move ``m`` + stop ``b`` (same place) into one
+    stop spanning a.start … b.end. Keeps a's stop identity/place_id; blends the
+    two stop centroids by point count (both are the same place, <~150 m apart)."""
+    merged = dict(a)
+    merged["end"] = b["end"]
+    merged["end_ts"] = b["end_ts"]
+    merged["end_lat"] = b["end_lat"]
+    merged["end_lon"] = b["end_lon"]
+    merged["end_alt"] = b["end_alt"]
+    merged["n_points"] = a["n_points"] + m["n_points"] + b["n_points"]
+    na, nb = a["n_points"], b["n_points"]
+    if na + nb > 0:
+        merged["centroid_lat"] = (a["centroid_lat"] * na + b["centroid_lat"] * nb) / (na + nb)
+        merged["centroid_lon"] = (a["centroid_lon"] * na + b["centroid_lon"] * nb) / (na + nb)
+    return merged
+
+
+def coalesce_spurious_moves(segments: list[dict]) -> list[dict]:
+    """Stitch ``stop(P) → shortMove → stop(P)`` back into one stop so a single
+    drifted fix (or short gap token) can't split one visit into Place→move→Place.
+    Only absorbs a move that is both brief and tiny (see the thresholds); a real
+    leave-and-return trip is long/dense enough to survive. ``segments`` must be
+    time-ordered. Chains, so stop-move-stop-move-stop at one place folds to one."""
+    if len(segments) < 3:
+        return segments
+    segs = list(segments)
+    i = 0
+    while i + 2 < len(segs):
+        a, m, b = segs[i], segs[i + 1], segs[i + 2]
+        pid = a.get("place_id")
+        is_blip_move = (
+            bool(a["is_stop"]) and not bool(m["is_stop"]) and bool(b["is_stop"])
+            and pid is not None and pid == b.get("place_id")
+            and m["n_points"] <= MOVE_COALESCE_MAX_PTS
+            and (m["end_ts"] - m["start_ts"]).total_seconds() <= MOVE_COALESCE_MAX_S
+        )
+        if is_blip_move:
+            segs[i] = _merge_stop_run(a, m, b)
+            del segs[i + 1:i + 3]   # stay at i to chain a following move
+        else:
+            i += 1
+    return segs
+
+
 def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     """
     Collapse consecutive same-label rows (within each track) into segments.
@@ -411,8 +558,15 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
             if boundary:
                 seg = grp.iloc[seg_start:i]
                 # Remove outliers from the segment before calculating centroid and other stats
-                lat_mask = remove_outliers(seg["latitude"].values)
-                lon_mask = remove_outliers(seg["longitude"].values)
+                lat_vals = seg["latitude"].values
+                lon_vals = seg["longitude"].values
+                lat_mask = remove_outliers(lat_vals)
+                lon_mask = remove_outliers(lon_vals)
+                # Accuracy-weight the centroid by the horizontal accuracy radius
+                # (1/accuracy²) so a few loose urban-canyon fixes don't drag a stop
+                # off its true venue. None when accuracy is absent → plain mean,
+                # matching prior behaviour.
+                w = _accuracy_weights(seg["accuracy"].values) if "accuracy" in seg else None
 
                 entry = {
                     "track_id":     track_id,
@@ -421,8 +575,8 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                     "start_ts":     seg["timestamp"].iloc[0],
                     "end_ts":       seg["timestamp"].iloc[-1],
                     "is_stop":      seg["label_smooth"].iloc[0],
-                    "centroid_lat": seg["latitude"][lat_mask].mean() if lat_mask.any() else seg["latitude"].mean(),
-                    "centroid_lon": seg["longitude"][lon_mask].mean() if lon_mask.any() else seg["longitude"].mean(),
+                    "centroid_lat": _weighted_mean(lat_vals, lat_mask, w),
+                    "centroid_lon": _weighted_mean(lon_vals, lon_mask, w),
                     "centroid_alt": seg["elevation"].mean(),
                     "start_lat":    seg["latitude"].iloc[0],
                     "start_lon":    seg["longitude"].iloc[0],
@@ -437,8 +591,10 @@ def build_segments(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                 segments.append(entry)
                 seg_start = i
 
-    # Sort segments by start time for easier analysis
+    # Sort segments by start time, then stitch away spurious drift moves that
+    # split one visit into stop→move→stop at the same place.
     segments.sort(key=lambda x: x["start_ts"])
+    segments = coalesce_spurious_moves(segments)
     df.sort_values("timestamp", inplace=True)
     return df, segments
 
@@ -655,10 +811,10 @@ def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts) -> dict 
     candidates = pgaz.nearby_pois(session, lat, lon)
     if not candidates:
         return None
-    visual_vec = pgaz.stop_visual_vector(session, device, start_ts, end_ts)
-    if visual_vec is None:
+    activity_labels = pgaz.stop_activity_labels(session, device, start_ts, end_ts)
+    if not activity_labels:
         return None
-    return pgaz.disambiguate_poi(candidates, visual_vec)
+    return pgaz.disambiguate_poi(candidates, activity_labels)
 
 
 def enrich_and_index_segments(
@@ -1006,6 +1162,13 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
         logger.warning(f"No GPS data found for device={device} date={date}, skipping.")
         return
 
+    # 1b. Quality gate — drop fixes reporting a loose accuracy radius before any
+    # track/stay processing, so junk never reaches stay detection or the filters.
+    df = filter_low_accuracy(df)
+    if len(df) == 0:
+        logger.warning(f"All GPS fixes for device={device} date={date} failed the accuracy gate, skipping.")
+        return
+
     # 2. Re-splitting tracks by time gap…
     df = assign_tracks_by_gap(df)
 
@@ -1103,5 +1266,26 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
     # session.commit()
     # print(f"Reset segments for date {date} and device {device}.")
     load_all_segments(session, device, date, skip_annotations=False)
+
+    # GPS clustering changed stops/locations, so the cached day summary (segment
+    # locations + per-visit descriptions) is stale. Flag it for a full rebuild and
+    # drop browse caches so the next day-summary request regenerates everything.
+    try:
+        from database.types import DaySummaryRecord
+        from integrations.sessions.redis import bust_day_caches
+        DaySummaryRecord.update_one(
+            {"date": date, "device": device},
+            data={"$set": {
+                "updated": True,
+                "text_summary_stale": True,
+                "dirty_segment_ids": [],
+                "segments": [],
+            }},
+            upsert=True,
+        )
+        bust_day_caches(device, date)
+    except Exception as _e:
+        logger.warning("run_pipeline: failed to invalidate day summary for %s/%s: %s", device, date, _e)
+
     logger.info(f"Finished processing device={device} date={date}")
     session.flush()

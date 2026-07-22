@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 # ImageEmbedding is the populated CLIP/search embedding (clip_embedding table is
 # empty/vestigial); both are Vector(768) in clip_model space.
 from database.models import Image, ImageEmbedding, OSMPoi, OSMTile
+from integrations.llm import llm
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_RADIUS_M = 40.0
 MAX_CANDIDATES = 12
 
-# VAISL θ: only let vision override the geocoder when the winning candidate's
-# probability clears this (and clears the runner-up by a margin). Below it the
-# scene is too ambiguous, so we fall back to the Nominatim name.
-POI_CONF_THRESHOLD = 0.75
-POI_CONF_MARGIN = 0.10
+# Only let the LLM override the geocoder name when it is at least this confident
+# the activities point to a specific candidate. Below it the scene is ambiguous,
+# so we keep the Nominatim name.
+POI_LLM_CONF_THRESHOLD = 0.6
+
+# Activity labels that carry no venue signal — skipped so a generic "no activity"
+# or transit run doesn't dilute the real cues handed to the disambiguator.
+_SKIP_ACTIVITIES = {"no activity", "unclear", "unclear activity", "", "walking through lobby"}
 
 # ─── Lazy tile fetch (Overpass) ───────────────────────────────────────────────
 TILE_GRID = 0.05            # degrees (~5.5 km) — one Overpass fetch per cell
@@ -252,39 +256,103 @@ def stop_visual_vector(session: Session, device: str, start_ts, end_ts) -> np.nd
     return feats.mean(axis=0)
 
 
-def disambiguate_poi(candidates: list[dict], visual_vec: np.ndarray | None) -> dict | None:
+def stop_activity_labels(session: Session, device: str, start_ts, end_ts) -> list[tuple[str, int]]:
     """
-    Pick the candidate venue that best matches the stop's visual vector.
+    Dominant activity annotations for a stop, as (label, frame_count) pairs,
+    most frequent first.
 
-    Builds "I am in a {category} called {name}" per candidate and scores them
-    against ``visual_vec`` with the shared CLIP zero-shot classifier. Returns the
-    winner only when it clears POI_CONF_THRESHOLD *and* beats the runner-up by
-    POI_CONF_MARGIN — otherwise None (caller falls back to the geocoder name).
+    The LLM activity layer already describes what the lifelogger was *doing*
+    ("watching a movie", "exercising at gym"). That behaviour — not the drifted
+    GPS point — is what separates co-located venues (a cinema above a gym), so we
+    hand these labels to the disambiguator. Returns [] when the stop has no
+    meaningful labels.
     """
-    if not candidates or visual_vec is None:
-        return None
-    descs = [
-        f"{c['category']} called {c['name']}" if c.get("category") else c["name"]
-        for c in candidates
-    ]
+    if start_ts is None or end_ts is None:
+        return []
+    start_dt = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else start_ts
+    end_dt = end_ts.to_pydatetime() if hasattr(end_ts, "to_pydatetime") else end_ts
     try:
-        from services.clip_classifier import ClipPromptClassifier
-        clf = ClipPromptClassifier(descs, prompt_templates=["I am in a {}"])
-        probs = clf.predict_proba_from_features(
-            np.asarray(visual_vec, dtype=np.float32)[None, :]
-        )[0]
-    except Exception as exc:  # model unavailable / dim mismatch
-        logger.warning("POI visual disambiguation failed: %s", exc)
+        rows = session.execute(
+            select(Image.activity, func.count().label("n"))
+            .where(Image.device == device)
+            .where(Image.timestamp.between(start_dt, end_dt))
+            .where(Image.activity.isnot(None))
+            .group_by(Image.activity)
+        ).all()
+    except Exception as exc:
+        logger.warning("stop_activity_labels query failed: %s", exc)
+        return []
+    labels = [
+        (str(a).strip(), int(n)) for a, n in rows
+        if a and str(a).strip().lower() not in _SKIP_ACTIVITIES
+    ]
+    labels.sort(key=lambda x: x[1], reverse=True)
+    return labels
+
+
+def disambiguate_poi(
+    candidates: list[dict],
+    activity_labels: list[tuple[str, int]],
+) -> dict | None:
+    """
+    Pick which nearby venue a stop was actually inside, using the LLM.
+
+    A 2-D GPS fix can't separate stacked/adjacent units (a cinema above a gym),
+    and CLIP zero-shot on the mean image vector is too weak to tell them apart —
+    so we reason over the stop's *activity annotations* instead. The LLM is given
+    the ranked candidate venues (name, category, distance) and the observed
+    activities (with frame counts) and returns the best-matching venue, or null
+    when genuinely ambiguous. This runs on the annotation LLM (an API call), so
+    it needs no local GPU. Returns the chosen candidate dict, or None to defer to
+    the geocoder name.
+    """
+    if not candidates or not activity_labels:
         return None
 
-    order = probs.argsort()[::-1]
-    top = int(order[0])
-    runner = probs[order[1]] if len(order) > 1 else 0.0
-    if probs[top] < POI_CONF_THRESHOLD or (probs[top] - runner) < POI_CONF_MARGIN:
+    cand_lines = "\n".join(
+        f"{i + 1}. {c['name']}"
+        f" ({c.get('category') or 'unknown type'}, ~{c.get('distance_m', 0):.0f} m from GPS)"
+        for i, c in enumerate(candidates)
+    )
+    act_lines = "\n".join(f"- {label} (seen in {n} photos)" for label, n in activity_labels)
+    prompt = (
+        "A lifelogger stopped at one place. GPS is only accurate to a few metres "
+        "and cannot tell apart venues that are stacked on different floors or right "
+        "next to each other, so trust what the person was DOING over raw GPS distance.\n\n"
+        f"Nearby candidate venues (nearest first):\n{cand_lines}\n\n"
+        f"Activities observed during the stop (from their photos):\n{act_lines}\n\n"
+        "Which single venue were they most likely inside? Weigh the activities "
+        "heavily: e.g. watching a movie => a cinema, exercising => a gym, eating => "
+        "a restaurant. If the activities don't clearly point to any listed venue, "
+        "return null.\n\n"
+        'Respond with ONLY JSON: {"index": <1-based number of the chosen venue, or '
+        'null>, "confidence": <0.0-1.0>, "reason": "<short>"}'
+    )
+
+    try:
+        result = llm.generate_from_text(prompt, parse_json=True)
+    except Exception as exc:
+        logger.warning("LLM POI disambiguation failed: %s", exc)
         return None
-    chosen = candidates[top]
+    if not isinstance(result, dict):
+        return None
+
+    idx = result.get("index")
+    conf = result.get("confidence", 0.0)
+    try:
+        conf = float(conf)
+    except (TypeError, ValueError):
+        conf = 0.0
+    if idx is None or not isinstance(idx, (int, float)):
+        return None
+    idx = int(idx) - 1  # 1-based → 0-based
+    if idx < 0 or idx >= len(candidates) or conf < POI_LLM_CONF_THRESHOLD:
+        return None
+
+    chosen = candidates[idx]
     logger.info(
-        "Visual POI pick: %r (p=%.2f, %d candidates, %.0fm from centroid)",
-        chosen["name"], probs[top], len(candidates), chosen.get("distance_m", -1),
+        "LLM POI pick: %r (conf=%.2f, %d candidates, %.0fm from centroid) — %s",
+        chosen["name"], conf, len(candidates), chosen.get("distance_m", -1),
+        result.get("reason", ""),
     )
     return chosen

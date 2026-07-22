@@ -89,6 +89,7 @@ export type NavSegment = {
     segmentId: number;
     startTime: string;
     endTime: string;
+    timezone?: string | null;
     duration: number;
     activity: string;
     activityGroup: string;

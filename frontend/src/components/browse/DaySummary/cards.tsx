@@ -18,14 +18,26 @@ import {
     Tooltip,
     Typography,
 } from '@mui/material';
-import { DaySummary, SummarySegment } from '@utils/types';
+import { DaySummary, LocationVisit, SummarySegment } from '@utils/types';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import { CategoryPieChart } from 'components/charts/CategoryChart';
 import ImageWithDate from 'components/common/ImageWithDate';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import { minutesToHM } from './shared';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+// Segment/visit times are naive UTC. Parse as UTC for correct epoch math, and
+// display in the capture zone (the segment's own timezone) so times read as
+// local wall-clock rather than UTC. Falls back to UTC when the zone is absent.
+const uMs = (t: string) => dayjs.utc(t).valueOf();
+const hm = (ms: number, tz?: string | null) =>
+    (tz ? dayjs(ms).tz(tz) : dayjs.utc(ms)).format('HH:mm');
 
 /**
  * Renders Binary metrics (like Social/Alone) as progress bars
@@ -215,7 +227,7 @@ export function PeriodCard({
                         {segments.map((segment, index) => (
                             <PeriodTimeTab
                                 key={index}
-                                label={`${dayjs(segment.startTime).format('HH:mm')} - ${dayjs(segment.endTime).format('HH:mm')}`}
+                                label={`${hm(uMs(segment.startTime), segment.timezone)} - ${hm(uMs(segment.endTime), segment.timezone)}`}
                             />
                         ))}
                     </Tabs>
@@ -321,16 +333,82 @@ export function SummaryText({ summaryText }: { summaryText: string }) {
     );
 }
 
+/**
+ * Place-by-place narrative: one description per location visit (a run of
+ * consecutive segments at the same place). Coarser than the raw timeline.
+ */
+export function LocationVisitsCard({ visits }: { visits?: LocationVisit[] }) {
+    const described = (visits ?? []).filter((v) => (v.description || '').trim());
+    if (described.length === 0) return null;
+    return (
+        <Card variant="outlined" sx={{ height: '100%' }}>
+            <CardContent>
+                <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    gutterBottom
+                >
+                    Places Visited
+                </Typography>
+                <Stack spacing={1.5} mt={1}>
+                    {described.map((v) => (
+                        <Box
+                            key={v.visitIndex}
+                            sx={{
+                                pl: 1.5,
+                                borderLeft: '3px solid',
+                                borderColor: 'divider',
+                            }}
+                        >
+                            <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="baseline"
+                                flexWrap="wrap"
+                            >
+                                <Typography variant="body2" fontWeight="bold">
+                                    {v.locationName || 'Unknown place'}
+                                </Typography>
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                >
+                                    {hm(uMs(v.startTime), v.timezone)} –{' '}
+                                    {hm(uMs(v.endTime), v.timezone)}
+                                </Typography>
+                            </Stack>
+                            <Typography variant="body2" sx={{ mt: 0.25 }}>
+                                {v.description}
+                            </Typography>
+                            {v.eventContext && (
+                                <Typography
+                                    variant="caption"
+                                    color="primary"
+                                    sx={{ display: 'block', mt: 0.25 }}
+                                >
+                                    📍 {v.eventContext}
+                                </Typography>
+                            )}
+                        </Box>
+                    ))}
+                </Stack>
+            </CardContent>
+        </Card>
+    );
+}
+
 export const OverviewSummary = ({
     totalMinutes,
     totalImages,
     startTime,
     endTime,
+    timezone,
 }: {
     totalMinutes: number;
     totalImages: number;
     startTime?: string;
     endTime?: string;
+    timezone?: string | null;
 }) => {
     return (
         <Card variant="outlined">
@@ -353,7 +431,7 @@ export const OverviewSummary = ({
                 {startTime && endTime && (
                     <Box mt={1}>
                         <Typography variant="body2" color="text.secondary">
-                            {dayjs(startTime).format('HH:mm')} – {dayjs(endTime).format('HH:mm')}
+                            {hm(uMs(startTime), timezone)} – {hm(uMs(endTime), timezone)}
                         </Typography>
                     </Box>
                 )}
@@ -368,28 +446,83 @@ export const OverviewSummary = ({
     );
 };
 
+// Gaps between segments longer than this are treated as recording breaks:
+// collapsed to a fixed-width labeled marker instead of proportional blank space,
+// so a long break doesn't squish the actual activity.
+const BREAK_THRESHOLD_MS = 15 * 60 * 1000;
+
+// Fixed pixel width of a collapsed break marker; the bar row and the tick row
+// both reserve this so their columns stay aligned.
+const BREAK_MARKER_W = 56;
+
+type Stretch = {
+    segments: SummarySegment[];
+    startMs: number;
+    endMs: number;
+    weight: number; // flex weight = sum of segment weights, keeps columns aligned
+    tz: string | null;
+};
+type TimelineItem =
+    | { type: 'stretch'; stretch: Stretch; key: string }
+    | { type: 'break'; gapMs: number; startTime: string; endTime: string; tz: string | null; key: string };
+
+const segWeight = (s: SummarySegment) => Math.max(s.duration, 1);
+
+// Clock-aligned 3-hour ticks (…, 09:00, 12:00, 15:00, …) inside one continuous
+// stretch. Time is linear within a stretch (breaks only fall between stretches),
+// so ticks position correctly by percentage.
+const TICK_STEP_H = 3;
+function stretchTicks(startMs: number, endMs: number, tz?: string | null): { pct: number; label: string }[] {
+    const spanMs = endMs - startMs;
+    if (spanMs <= 0) return [];
+    const ticks: { pct: number; label: string }[] = [];
+    let t = (tz ? dayjs(startMs).tz(tz) : dayjs.utc(startMs)).startOf('hour');
+    while (t.valueOf() <= startMs || t.hour() % TICK_STEP_H !== 0) t = t.add(1, 'hour');
+    while (t.valueOf() < endMs) {
+        const pct = ((t.valueOf() - startMs) / spanMs) * 100;
+        if (pct > 2 && pct < 98) ticks.push({ pct, label: t.format('HH:mm') });
+        t = t.add(TICK_STEP_H, 'hour');
+    }
+    return ticks;
+}
+
 export function Timeline({ daySummary }: { daySummary: DaySummary }) {
     const segments = daySummary?.segments ?? [];
 
-    const firstStart = segments.length > 0 ? dayjs(segments[0].startTime).valueOf() : null;
-    const lastEnd = segments.length > 0 ? dayjs(segments[segments.length - 1].endTime).valueOf() : null;
-    const totalSpanMs = firstStart != null && lastEnd != null ? lastEnd - firstStart : 0;
-
-    // Hourly tick marks within the span
-    const ticks = React.useMemo(() => {
-        if (!firstStart || !totalSpanMs) return [];
-        const result: { pct: number; label: string }[] = [];
-        // Start at the next whole hour after firstStart
-        let t = dayjs(firstStart).startOf('hour').add(1, 'hour').valueOf();
-        while (t < lastEnd!) {
-            result.push({
-                pct: ((t - firstStart) / totalSpanMs) * 100,
-                label: dayjs(t).format('HH:mm'),
-            });
-            t = dayjs(t).add(1, 'hour').valueOf();
-        }
+    // Split segments into continuous stretches at every recording break. Each
+    // stretch renders as a linear time axis; breaks between them collapse to a
+    // fixed labeled marker so a long gap doesn't squish the activity.
+    const items = React.useMemo<TimelineItem[]>(() => {
+        const result: TimelineItem[] = [];
+        let current: Stretch | null = null;
+        segments.forEach((segment, index) => {
+            const segStart = uMs(segment.startTime);
+            const segEnd = uMs(segment.endTime);
+            if (index > 0) {
+                const prevEnd = uMs(segments[index - 1].endTime);
+                const gapMs = segStart - prevEnd;
+                if (gapMs >= BREAK_THRESHOLD_MS) {
+                    result.push({
+                        type: 'break',
+                        gapMs,
+                        startTime: segments[index - 1].endTime,
+                        endTime: segment.startTime,
+                        tz: segment.timezone ?? null,
+                        key: `break-${index}`,
+                    });
+                    current = null;
+                }
+            }
+            if (!current) {
+                current = { segments: [], startMs: segStart, endMs: segEnd, weight: 0, tz: segment.timezone ?? null };
+                result.push({ type: 'stretch', stretch: current, key: `stretch-${index}` });
+            }
+            current.segments.push(segment);
+            current.endMs = segEnd;
+            current.weight += segWeight(segment);
+        });
         return result;
-    }, [firstStart, lastEnd, totalSpanMs]);
+    }, [segments]);
 
     return (
         <Card variant="outlined" sx={{ height: '100%' }}>
@@ -401,66 +534,110 @@ export function Timeline({ daySummary }: { daySummary: DaySummary }) {
                 >
                     Timeline
                 </Typography>
-                {segments.length > 0 && totalSpanMs > 0 && (
+                {segments.length > 0 && (
                     <Box sx={{ position: 'relative', width: '100%', pt: 1 }}>
-                        {/* Segment bars */}
-                        <Box sx={{ display: 'flex', flexDirection: 'row', width: '100%' }}>
-                            {segments.map((segment: SummarySegment, index: number) => {
-                                const segStartMs = dayjs(segment.startTime).valueOf();
-                                const segEndMs = dayjs(segment.endTime).valueOf();
-                                const prevEndMs = index === 0
-                                    ? firstStart!
-                                    : dayjs(segments[index - 1].endTime).valueOf();
-
-                                const gapPct = ((segStartMs - prevEndMs) / totalSpanMs) * 100;
-                                const widthPct = ((segEndMs - segStartMs) / totalSpanMs) * 100;
-
-                                return (
-                                    <React.Fragment key={index}>
-                                        {gapPct > 0 && (
-                                            <Box sx={{ width: `${gapPct}%`, height: 48, backgroundColor: 'transparent' }} />
-                                        )}
+                        {/* Segment bars, grouped into stretches with breaks collapsed */}
+                        <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', width: '100%' }}>
+                            {items.map((item) => {
+                                if (item.type === 'break') {
+                                    return (
                                         <Tooltip
-                                            title={`${segment.activity}: ${dayjs(segment.startTime).format('HH:mm')} – ${dayjs(segment.endTime).format('HH:mm')} (${minutesToHM(segment.duration / 60)})`}
+                                            key={item.key}
+                                            title={`No recording: ${hm(uMs(item.startTime), item.tz)} – ${hm(uMs(item.endTime), item.tz)} (${minutesToHM(item.gapMs / 60000)})`}
                                             followCursor
                                         >
                                             <Box
                                                 sx={{
+                                                    flex: `0 0 ${BREAK_MARKER_W}px`,
                                                     height: 48,
-                                                    width: `${widthPct}%`,
-                                                    minWidth: 2,
-                                                    backgroundColor:
-                                                        THEME_COLORS[segment.activityGroup] ||
-                                                        CATEGORIES[segment.activity] ||
-                                                        '#bdc3c7',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    borderLeft: '1px dashed',
+                                                    borderRight: '1px dashed',
+                                                    borderColor: 'divider',
+                                                    backgroundColor: 'transparent',
                                                 }}
-                                            />
+                                            >
+                                                <Typography
+                                                    variant="caption"
+                                                    color="text.disabled"
+                                                    sx={{ fontSize: 10, whiteSpace: 'nowrap' }}
+                                                >
+                                                    ┈ {minutesToHM(item.gapMs / 60000)} ┈
+                                                </Typography>
+                                            </Box>
                                         </Tooltip>
-                                    </React.Fragment>
+                                    );
+                                }
+                                return (
+                                    <Box
+                                        key={item.key}
+                                        sx={{ flexGrow: item.stretch.weight, flexBasis: 0, display: 'flex', minWidth: 0 }}
+                                    >
+                                        {item.stretch.segments.map((segment, si) => (
+                                            <Tooltip
+                                                key={si}
+                                                title={`${segment.activity}: ${hm(uMs(segment.startTime), segment.timezone)} – ${hm(uMs(segment.endTime), segment.timezone)} (${minutesToHM(segment.duration / 60)})`}
+                                                followCursor
+                                            >
+                                                <Box
+                                                    sx={{
+                                                        height: 48,
+                                                        flexGrow: segWeight(segment),
+                                                        flexBasis: 0,
+                                                        minWidth: 2,
+                                                        backgroundColor:
+                                                            THEME_COLORS[segment.activityGroup] ||
+                                                            CATEGORIES[segment.activity] ||
+                                                            '#bdc3c7',
+                                                    }}
+                                                />
+                                            </Tooltip>
+                                        ))}
+                                    </Box>
                                 );
                             })}
                         </Box>
 
-                        {/* X-axis tick marks */}
-                        <Box sx={{ position: 'relative', width: '100%', height: 20, mt: '2px' }}>
-                            {ticks.map(({ pct, label }) => (
-                                <Box
-                                    key={label}
-                                    sx={{
-                                        position: 'absolute',
-                                        left: `${pct}%`,
-                                        transform: 'translateX(-50%)',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                    }}
-                                >
-                                    <Box sx={{ width: '1px', height: 4, backgroundColor: 'text.disabled' }} />
-                                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10, lineHeight: 1 }}>
-                                        {label}
-                                    </Typography>
-                                </Box>
-                            ))}
+                        {/* Time axis — a tick every 3h within each stretch, plus the
+                            resume time at the start of a stretch that follows a break.
+                            The break resets the axis instead of skewing it. */}
+                        <Box sx={{ display: 'flex', width: '100%', mt: '2px', alignItems: 'flex-start' }}>
+                            {items.map((item, i) => {
+                                if (item.type === 'break') {
+                                    return <Box key={item.key} sx={{ flex: `0 0 ${BREAK_MARKER_W}px` }} />;
+                                }
+                                const { startMs, endMs, weight, tz } = item.stretch;
+                                const ticks = stretchTicks(startMs, endMs, tz);
+                                const afterBreak = i > 0 && items[i - 1].type === 'break';
+                                const beforeBreak = i < items.length - 1 && items[i + 1].type === 'break';
+                                return (
+                                    <Box
+                                        key={item.key}
+                                        sx={{ flexGrow: weight, flexBasis: 0, minWidth: 0, position: 'relative', height: 16 }}
+                                    >
+                                        {afterBreak && (
+                                            <Typography variant="caption" color="text.secondary"
+                                                sx={{ position: 'absolute', left: 0, fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                                {hm(startMs, tz)}
+                                            </Typography>
+                                        )}
+                                        {ticks.map((tick) => (
+                                            <Typography key={tick.label} variant="caption" color="text.disabled"
+                                                sx={{ position: 'absolute', left: `${tick.pct}%`, transform: 'translateX(-50%)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
+                                                {tick.label}
+                                            </Typography>
+                                        ))}
+                                        {beforeBreak && (
+                                            <Typography variant="caption" color="text.secondary"
+                                                sx={{ position: 'absolute', right: 0, fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                                {hm(endMs, tz)}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                );
+                            })}
                         </Box>
                     </Box>
                 )}

@@ -46,9 +46,11 @@ class OpenAILLM(LLM):
         self.client = OpenAI(api_key=API_KEY)
         self.model_name = OPENAI_MODEL
 
-    def generate(self, contents: Any, parse_json=False):
+    def generate(self, contents: Any, parse_json=False, use_search: bool = False):
         """
-        Generate completions from a list of messages
+        Generate completions from a list of messages.
+        ``use_search`` is accepted for interface parity; chat.completions has no
+        grounding, so grounded lookups must go through ``web_search`` instead.
         """
         response = self.client.chat.completions.create(
             model=self.model_name,
@@ -69,16 +71,62 @@ class OpenAILLM(LLM):
                 print("Warning: Could not parse JSON from completion.")
         return completion
 
-    def generate_from_text(self, text: str, parse_json=False) -> Optional[Dict | str]:
+    def __parse(self, response: str) -> Optional[Dict]:
+        """
+        Extract a JSON object from a completion, tolerating truncation via
+        partialjson. Unlike the Gemini wrapper this does not assume a ```json
+        fence: chat models (gpt-5-mini) usually return raw JSON, so we strip an
+        optional fence and otherwise fall back to the outermost {...} span.
+        """
+        if not response:
+            return None
+        text = response.strip()
+        if "```" in text:
+            # ```json ... ``` or ``` ... ``` — take the fenced body
+            fence = text.split("```")[1]
+            if fence.startswith("json"):
+                fence = fence[len("json"):]
+            text = fence.strip()
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        blob = text[start:end + 1]
+        try:
+            return parser.parse(blob)
+        except Exception:
+            print("Warning: Could not parse JSON from completion.")
+            return None
+
+    def web_search(self, prompt: str) -> Optional[str]:
+        """
+        Grounded text generation using OpenAI's built-in web_search tool
+        (Responses API). Returns plain text, or None on error.
+        """
+        try:
+            response = self.client.responses.create(
+                model=self.model_name,
+                tools=[{"type": "web_search"}],
+                input=prompt,
+            )
+            return response.output_text
+        except Exception as e:
+            print(f"OpenAI web_search failed: {e}")
+            return None
+
+    def generate_from_text(
+        self, text: str, parse_json=False, use_search: bool = False
+    ) -> Optional[Dict | str]:
         """
         Generate completions from text
         Then parse the JSON object from the completion
         If the completion is not a JSON object, return the text
         """
+        if use_search:
+            return self.web_search(text)
         return self.generate([{"type": "text", "text": text}], parse_json=parse_json)
 
     def generate_from_mixed_media(
-        self, data: Sequence[MixedContent], parse_json=False
+        self, data: Sequence[MixedContent], parse_json=False, use_search: bool = False
     ) -> Optional[Dict | str]:
         parts: List[Any] = []
         for part in data:
