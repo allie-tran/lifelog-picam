@@ -346,3 +346,83 @@ class DaySummary(CamelCaseModel):
     analysis_checkpoint: Optional[str] = None  # image_path of last CLIP-analyzed image
     processing: bool = False  # True while a background rebuild task is running
     text_summary_generated_at: Optional[datetime] = None  # last time LLM text was generated
+
+
+# ---------------------------------------------------------------------------
+# Multi-day period summaries (week / month / trip / custom) — a hierarchy on
+# top of the per-day DaySummary. The day is the atomic unit; a period rolls up
+# the DaySummary records in its span. Higher levels summarize the highlights of
+# the level below.
+# ---------------------------------------------------------------------------
+class TopLocation(CamelCaseModel):
+    """A place visited during the period, aggregated across its days."""
+    name: str
+    latitude: Coordinate = None
+    longitude: Coordinate = None
+    days: int = 0          # distinct days the place was visited
+    visits: int = 0        # total visit count across the period
+    minutes: float = 0.0   # total minutes spent
+    representative_image: Optional[LifelogImage] = None
+
+
+class BioTrendPoint(CamelCaseModel):
+    date: str
+    sleep_minutes: Optional[int] = None
+    avg_hr: Optional[float] = None
+    step_count: Optional[int] = None
+
+
+class BioTrend(CamelCaseModel):
+    avg_sleep_minutes: Optional[float] = None
+    avg_hr: Optional[float] = None
+    resting_hr: Optional[float] = None
+    max_hr: Optional[float] = None
+    avg_steps: Optional[float] = None
+    series: List[BioTrendPoint] = Field(default_factory=list)
+
+
+class TrendItem(CamelCaseModel):
+    """A single behavioural change vs the previous comparable period."""
+    metric: str                        # e.g. "Leisure & Wellbeing", "sleep_minutes"
+    current: Optional[float] = None
+    previous: Optional[float] = None
+    delta: Optional[float] = None      # current - previous
+    direction: str = "flat"            # "up" | "down" | "flat" | "new" | "gone"
+    note: str = ""                     # short human phrasing
+
+
+class PeriodSummary(CamelCaseModel):
+    kind: str                          # "week" | "month" | "trip" | "custom"
+    device: str = ""
+    start_date: str                    # YYYY-MM-DD inclusive
+    end_date: str                      # YYYY-MM-DD inclusive
+    label: str = ""
+
+    day_dates: List[str] = Field(default_factory=list)   # days actually in the span
+    active_days: int = 0               # days with any captured activity
+
+    # Hierarchy pointers: children this period rolls up (week->days, month->weeks)
+    child_kind: str = "day"
+    child_keys: List[str] = Field(default_factory=list)
+
+    # Roll-ups
+    category_minutes: Dict[str, float] = Field(default_factory=dict)
+    total_minutes: float = 0.0
+    total_images: int = 0
+    binary_totals: Dict[str, float] = Field(default_factory=dict)
+    burst_totals: Dict[str, int] = Field(default_factory=dict)
+
+    top_locations: List[TopLocation] = Field(default_factory=list)
+    bio_trend: Optional[BioTrend] = None
+
+    summary_text: str = ""
+    highlights: List[str] = Field(default_factory=list)
+    trends: List[TrendItem] = Field(default_factory=list)
+
+    # Bookkeeping
+    updated: bool = False
+    processing: bool = False
+    generated_at: Optional[datetime] = None
+    # Hash of the child days' (date, text_summary_generated_at, updated). Lets a
+    # fetch reuse the cached period unless an underlying day actually changed.
+    source_sig: Optional[str] = None

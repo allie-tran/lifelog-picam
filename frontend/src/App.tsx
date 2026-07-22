@@ -21,7 +21,7 @@ import PasswordLock from 'components/common/PasswordLock';
 import FeedbackComponents from 'components/common/FeedbackComponents';
 import dayjs from 'dayjs';
 import Admin from 'pages/Admin';
-import Biometrics from 'pages/Biometrics';
+import Insights from 'pages/Insights';
 import Profile from 'pages/Profile';
 import { ProcessingStatusPage } from 'pages/ProcessingStatusPage';
 import { UploadPage } from 'pages/UploadPage';
@@ -238,9 +238,15 @@ const App = () => {
                                             </PasswordLock>
                                         />
                                         <Route
+                                            path="/insights"
+                                            element=<PasswordLock>
+                                                <Insights />
+                                            </PasswordLock>
+                                        />
+                                        <Route
                                             path="/biometrics"
                                             element=<PasswordLock>
-                                                <Biometrics />
+                                                <Insights />
                                             </PasswordLock>
                                         />
                                     </Routes>

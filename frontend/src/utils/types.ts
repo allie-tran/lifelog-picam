@@ -168,6 +168,68 @@ interface Point {
     y: number;
 }
 
+// ── Multi-day period summaries (week / month / trip / custom) ──────────────
+export type TopLocation = {
+    name: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    days: number;
+    visits: number;
+    minutes: number;
+    representativeImage?: ImageObject | null;
+};
+
+export type BioTrendPoint = {
+    date: string;
+    sleepMinutes?: number | null;
+    avgHr?: number | null;
+    stepCount?: number | null;
+};
+
+export type BioTrend = {
+    avgSleepMinutes?: number | null;
+    avgHr?: number | null;
+    restingHr?: number | null;
+    maxHr?: number | null;
+    avgSteps?: number | null;
+    series: BioTrendPoint[];
+};
+
+export type TrendItem = {
+    metric: string;
+    current?: number | null;
+    previous?: number | null;
+    delta?: number | null;
+    direction: string; // "up" | "down" | "flat" | "new" | "gone"
+    note: string;
+};
+
+export type PeriodSummary = {
+    kind: string; // "week" | "month" | "trip" | "custom"
+    device: string;
+    startDate: string;
+    endDate: string;
+    label: string;
+    dayDates: string[];
+    activeDays: number;
+    childKind: string;
+    childKeys: string[];
+    categoryMinutes: Record<string, number>;
+    totalMinutes: number;
+    totalImages: number;
+    binaryTotals: Record<string, number>;
+    burstTotals: Record<string, number>;
+    topLocations: TopLocation[];
+    bioTrend?: BioTrend | null;
+    summaryText: string;
+    highlights: string[];
+    trends: TrendItem[];
+    updated: boolean;
+    processing: boolean;
+    generatedAt?: string | null;
+    sourceSig?: string | null;
+};
+
 export type { ImageObject, SummarySegment, LocationVisit, DaySummary, Point };
 
 export type SensorStatus = {

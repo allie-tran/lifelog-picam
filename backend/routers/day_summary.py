@@ -18,8 +18,8 @@ from auth.types import AccessLevel, User
 from core.dependencies import CamelCaseModel
 from database import get_session
 from database.models import Image as ImageModel
-from database.types import DaySummaryRecord, ImageRecord
-from schemas import CustomTarget, DaySummary
+from database.types import DaySummaryRecord, ImageRecord, PeriodSummaryRecord
+from schemas import CustomTarget, DaySummary, PeriodSummary
 from services.summary import summarize_lifelog_by_day, update_dirty_segments
 from tasks import describe_segment_task
 from tasks.day_summary import (
@@ -293,6 +293,100 @@ def get_day_summary(
     )
 
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Multi-day period summary (week / month / trip / custom)
+# ---------------------------------------------------------------------------
+
+_PERIOD_KINDS = {"week", "month", "trip", "custom"}
+
+
+@router.get("/period-summary", response_model=Optional[PeriodSummary],
+            summary="Get (or trigger generation of) a multi-day period summary")
+def get_period_summary(
+    device: str,
+    start: str,
+    end: str,
+    background_tasks: BackgroundTasks,
+    kind: str = "custom",
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Roll up the day summaries in [start, end] into a period summary.
+
+    Serves a cache hit when the underlying days are unchanged (``source_sig``);
+    otherwise schedules a background build and returns a ``processing``
+    placeholder. ``None`` when the range has no summarized days.
+    """
+    _require_any_access(access_level)
+    if kind not in _PERIOD_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(_PERIOD_KINDS)}")
+    if not start or not end or start > end:
+        raise HTTPException(status_code=400, detail="Valid start and end (start<=end) required.")
+
+    from services.period_summary import (
+        _load_day_records, _period_summary_bg, aggregate_period, period_source_sig,
+    )
+
+    recs = _load_day_records(device, start, end)
+    if not recs:
+        return None
+    sig = period_source_sig(recs)
+
+    existing = PeriodSummaryRecord.find_one(filter={
+        "device": device, "kind": kind, "start_date": start, "end_date": end,
+    })
+
+    if (
+        existing and existing.summary_text
+        and existing.source_sig == sig
+        and not getattr(existing, "updated", False)
+        and not getattr(existing, "processing", False)
+    ):
+        logger.info("period-summary cache hit for %s/%s %s..%s", device, kind, start, end)
+        return PeriodSummary.model_validate(existing.__dict__)
+
+    if getattr(existing, "processing", False):
+        return PeriodSummary.model_validate(existing.__dict__)
+
+    # Schedule a background build; return the aggregated shell (metrics + top
+    # locations are cheap and useful immediately) with processing=True.
+    shell = aggregate_period(session, device, start, end, kind=kind)
+    shell.processing = True
+    PeriodSummaryRecord.update_one(
+        {"device": device, "kind": kind, "start_date": start, "end_date": end},
+        data={"$set": {**shell.model_dump(), "processing": True}},
+        upsert=True,
+    )
+    background_tasks.add_task(_period_summary_bg, device, kind, start, end)
+    return shell
+
+
+class TripSpanResponse(CamelCaseModel):
+    start: str
+    end: str
+    days: int
+    label: str
+
+
+@router.get("/trips", response_model=List[TripSpanResponse],
+            summary="Detected multi-day trips (away from home) for the picker")
+def get_trips(
+    device: str,
+    window_days: Optional[int] = None,
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    """Lightweight trip detection (no LLM) — spans + destination labels over the
+    device's FULL history by default (pass ``window_days`` to restrict). Selecting
+    one fetches its full summary via /period-summary?kind=trip (built lazily)."""
+    _require_any_access(access_level)
+    from services.trips import detect_trips
+    spans = detect_trips(session, device, window_days=window_days)
+    # Most recent trips first for the picker.
+    spans.sort(key=lambda t: t.start, reverse=True)
+    return [TripSpanResponse(start=t.start, end=t.end, days=t.days, label=t.label) for t in spans]
 
 
 # ---------------------------------------------------------------------------

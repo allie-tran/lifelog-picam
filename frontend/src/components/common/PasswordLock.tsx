@@ -182,11 +182,11 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                                 <HomeRounded />
                             </IconButton>
                         </Tooltip>
-                        <Tooltip title="Biometrics">
+                        <Tooltip title="Insights">
                             <IconButton
                                 size="large"
                                 color="secondary"
-                                onClick={() => navTo('/biometrics', { date: searchParams.get('date') })}
+                                onClick={() => navTo('/insights', { date: searchParams.get('date') })}
                             >
                                 <MonitorHeartRounded />
                             </IconButton>

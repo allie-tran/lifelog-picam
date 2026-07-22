@@ -79,6 +79,16 @@ celery.conf.update(
             "task": "tasks.relearn_meal_times_all_devices",
             "schedule": crontab(hour=4, minute=0),
         },
+        # Monday 05:00 UTC — build the just-completed ISO week per device
+        "weekly-summaries": {
+            "task": "tasks.weekly_summaries_all_devices",
+            "schedule": crontab(hour=5, minute=0, day_of_week=1),
+        },
+        # 05:30 UTC — refresh trip detection/summaries over the trailing window
+        "detect-trips": {
+            "task": "tasks.detect_trips_all_devices",
+            "schedule": crontab(hour=5, minute=30),
+        },
     },
     timezone="UTC",
 )

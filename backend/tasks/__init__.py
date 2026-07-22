@@ -1142,6 +1142,59 @@ def nightly_bio_stats_all_devices():
 
     logging.info("Queued nightly bio_day_stats for %d devices.", len(device_ids))
 
+
+# ---------------------------------------------------------------------------
+# Multi-day period summaries (week / trip)
+# ---------------------------------------------------------------------------
+
+def _recent_summary_devices(session, days: int = 90) -> list[str]:
+    """Distinct image devices active within the trailing window."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    return list(session.execute(
+        select(Image.device).where(Image.date >= since).distinct()
+    ).scalars().all())
+
+
+@celery.task(name="tasks.build_period_summary_task", bind=True)
+def build_period_summary_task(self, device: str, kind: str, start: str, end: str, label: str | None = None):
+    from services.period_summary import build_period_summary
+    try:
+        with Session(engine) as session:
+            build_period_summary(session, device, kind, start, end, label=label)
+        logging.info("Built %s summary for %s %s..%s", kind, device, start, end)
+    except Exception as e:
+        logging.error("build_period_summary_task failed for %s %s %s..%s: %s", device, kind, start, end, e)
+
+
+@celery.task(name="tasks.weekly_summaries_all_devices")
+def weekly_summaries_all_devices():
+    """Build the just-completed ISO week (Mon–Sun) for every recently-active device."""
+    today = datetime.now(timezone.utc).date()
+    last_monday = today - timedelta(days=today.weekday() + 7)  # Monday of previous week
+    last_sunday = last_monday + timedelta(days=6)
+    start, end = last_monday.strftime("%Y-%m-%d"), last_sunday.strftime("%Y-%m-%d")
+    with Session(engine) as session:
+        devices = _recent_summary_devices(session)
+    for device in devices:
+        build_period_summary_task.delay(device, "week", start, end)
+    logging.info("Queued weekly summary %s..%s for %d devices.", start, end, len(devices))
+
+
+@celery.task(name="tasks.detect_trips_all_devices")
+def detect_trips_all_devices():
+    """Detect + (re)build trip summaries over the trailing window for each device."""
+    from services.trips import build_trip_summaries
+    with Session(engine) as session:
+        devices = _recent_summary_devices(session)
+        total = 0
+        for device in devices:
+            try:
+                total += len(build_trip_summaries(session, device))
+            except Exception as e:
+                logging.error("detect_trips_all_devices failed for %s: %s", device, e)
+    logging.info("Built %d trip summaries across %d devices.", total, len(devices))
+
+
 @celery.task(name="tasks.location_update_all_devices")
 def location_update_all_devices():
     from sqlalchemy import func

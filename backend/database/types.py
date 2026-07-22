@@ -24,7 +24,7 @@ from collections import Counter
 from sqlalchemy.orm import Session
 from mongodb_odm import Document
 
-from schemas import DaySummary, GPSInfo, GridImage, LifelogImage, LocationInfo, ResultSegment
+from schemas import DaySummary, GPSInfo, GridImage, LifelogImage, LocationInfo, PeriodSummary, ResultSegment
 from database.models import Image, ImageGPS, Location
 
 logger = logging.getLogger(__name__)
@@ -333,3 +333,12 @@ class ImageRecord:
 class DaySummaryRecord(Document, DaySummary):
     class ODMConfig(Document.ODMConfig):
         collection_name = "day_summaries"
+
+
+# ---------------------------------------------------------------------------
+# PeriodSummaryRecord — multi-day roll-up (week / month / trip / custom).
+# De-facto keyed by {device, kind, start_date, end_date}.
+# ---------------------------------------------------------------------------
+class PeriodSummaryRecord(Document, PeriodSummary):
+    class ODMConfig(Document.ODMConfig):
+        collection_name = "period_summaries"
