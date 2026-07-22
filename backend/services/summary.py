@@ -544,20 +544,14 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                 visit_lines.append(line)
             if visit_lines:
                 day_summary_text = llm.generate_from_text(
-                    "You are writing a warm, engaging recap of someone's day from the "
-                    "place-by-place notes below (each line is one place they visited, in "
-                    "order).\n\n"
-                    "Format the output as Markdown, in two parts:\n"
-                    "1. A short narrative paragraph (3-5 sentences, ~80-120 words) that "
-                    "walks through the day in order, names the main places, and captures "
-                    "the arc and feel of the day — not a dry list. Bold the key place "
-                    "names with **double asterisks**.\n"
-                    "2. A '**Highlights**' line, then 2-4 Markdown bullets ('- ') calling "
-                    "out the standout, most notable, unusual, or enjoyable moments.\n\n"
-                    "Rules: ground every detail in the notes — do NOT invent places, "
-                    "events, or feelings that aren't supported. Write as an external "
-                    "observer describing the person's day (use 'you'). Do not add a "
-                    "top-level title or heading.\n\n"
+                    "From the place-by-place notes below (each line is one place someone "
+                    "visited, in order), pick the day's highlights.\n\n"
+                    "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short "
+                    "line each, for the most notable, memorable, or unusual moments of "
+                    "the day. Bold the key place name in each bullet with **double "
+                    "asterisks**. No intro line, no narrative paragraph, no title.\n\n"
+                    "Ground every bullet in the notes — do NOT invent. Address the person "
+                    "as 'you'.\n\n"
                     + "\n".join(visit_lines)
                 )
                 day_summary.summary_text = str(day_summary_text).strip()
@@ -611,15 +605,13 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             activity_lines.append(line)
 
         day_summary_text = llm.generate_from_text(
-            "Write a warm, engaging recap of the day from the timestamped activities "
-            "below. Ignore unclear activities.\n\n"
-            "Format as Markdown, in two parts:\n"
-            "1. A short narrative paragraph (3-5 sentences, ~80-120 words) covering the "
-            "arc and feel of the day, not just a list.\n"
-            "2. A '**Highlights**' line, then 2-4 Markdown bullets ('- ') for the "
-            "standout, notable, or unusual moments.\n\n"
-            "Ground every detail in the activities — do not invent. Write as an external "
-            "observer describing the person's day (use 'you'). No top-level title.\n\n"
+            "From the timestamped activities below, pick the day's highlights. Ignore "
+            "unclear activities.\n\n"
+            "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short line each, "
+            "for the most notable, memorable, or unusual moments. No intro, no narrative "
+            "paragraph, no title.\n\n"
+            "Ground every bullet in the activities — do not invent. Address the person "
+            "as 'you'.\n\n"
             + "\n".join(activity_lines)
         )
         day_summary.summary_text = str(day_summary_text).strip()
