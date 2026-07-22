@@ -545,11 +545,17 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             if visit_lines:
                 day_summary_text = llm.generate_from_text(
                     "From the place-by-place notes below (each line is one place someone "
-                    "visited, in order), pick the day's highlights.\n\n"
+                    "visited, in order), pick what made THIS day different from a normal "
+                    "day.\n\n"
                     "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short "
-                    "line each, for the most notable, memorable, or unusual moments of "
-                    "the day. Bold the key place name in each bullet with **double "
-                    "asterisks**. No intro line, no narrative paragraph, no title.\n\n"
+                    "line each, for the most notable, memorable, or unusual moments. Bold "
+                    "the key place name in each bullet with **double asterisks**. No "
+                    "intro line, no narrative paragraph, no title.\n\n"
+                    "SKIP ordinary everyday routine that happens on most days — grooming "
+                    "(e.g. styling hair), checking the phone, commuting, generic 'having "
+                    "food' or 'having coffee'. Mention a meal ONLY when the specific dish "
+                    "or venue is distinctive and worth remembering (e.g. 'pho at Phở Cô "
+                    "Út'), never just that they ate.\n\n"
                     "Ground every bullet in the notes — do NOT invent. Address the person "
                     "as 'you'.\n\n"
                     + "\n".join(visit_lines)
@@ -605,11 +611,15 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             activity_lines.append(line)
 
         day_summary_text = llm.generate_from_text(
-            "From the timestamped activities below, pick the day's highlights. Ignore "
-            "unclear activities.\n\n"
+            "From the timestamped activities below, pick what made THIS day different "
+            "from a normal day. Ignore unclear activities.\n\n"
             "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short line each, "
             "for the most notable, memorable, or unusual moments. No intro, no narrative "
             "paragraph, no title.\n\n"
+            "SKIP ordinary everyday routine that happens on most days — grooming, "
+            "checking the phone, commuting, generic 'having food' or 'having coffee'. "
+            "Mention a meal ONLY when the specific dish or venue is distinctive and worth "
+            "remembering, never just that they ate.\n\n"
             "Ground every bullet in the activities — do not invent. Address the person "
             "as 'you'.\n\n"
             + "\n".join(activity_lines)
