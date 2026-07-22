@@ -25,6 +25,7 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { CategoryPieChart } from 'components/charts/CategoryChart';
+import ReactMarkdown from 'react-markdown';
 import ImageWithDate from 'components/common/ImageWithDate';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 import { minutesToHM } from './shared';
@@ -321,13 +322,23 @@ export function SummaryText({ summaryText }: { summaryText: string }) {
                 >
                     Day Overview
                 </Typography>
-                <Typography
-                    variant="body2"
-                    fontStyle="italic"
-                    sx={{ whiteSpace: 'pre-line' }}
+                <Box
+                    sx={{
+                        '& p': { m: 0, mb: 1, fontSize: '0.875rem' },
+                        '& ul': { m: 0, mb: 1, pl: 2.5 },
+                        '& li': { fontSize: '0.875rem' },
+                        '& strong': { fontWeight: 600 },
+                        '& > :last-child': { mb: 0 },
+                    }}
                 >
-                    {summaryText || 'No summary available for this day.'}
-                </Typography>
+                    {summaryText ? (
+                        <ReactMarkdown>{summaryText}</ReactMarkdown>
+                    ) : (
+                        <Typography variant="body2" fontStyle="italic">
+                            No summary available for this day.
+                        </Typography>
+                    )}
+                </Box>
             </CardContent>
         </Card>
     );

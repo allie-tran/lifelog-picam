@@ -544,10 +544,20 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                 visit_lines.append(line)
             if visit_lines:
                 day_summary_text = llm.generate_from_text(
-                    "Summarize the day as a short itinerary of the places visited, based on "
-                    "the place-by-place notes below. Write ONE or TWO short sentences that "
-                    "name the main locations in order and what happened there. Be concise "
-                    "(max ~40 words), first person, as an external observer.\n"
+                    "You are writing a warm, engaging recap of someone's day from the "
+                    "place-by-place notes below (each line is one place they visited, in "
+                    "order).\n\n"
+                    "Format the output as Markdown, in two parts:\n"
+                    "1. A short narrative paragraph (3-5 sentences, ~80-120 words) that "
+                    "walks through the day in order, names the main places, and captures "
+                    "the arc and feel of the day — not a dry list. Bold the key place "
+                    "names with **double asterisks**.\n"
+                    "2. A '**Highlights**' line, then 2-4 Markdown bullets ('- ') calling "
+                    "out the standout, most notable, unusual, or enjoyable moments.\n\n"
+                    "Rules: ground every detail in the notes — do NOT invent places, "
+                    "events, or feelings that aren't supported. Write as an external "
+                    "observer describing the person's day (use 'you'). Do not add a "
+                    "top-level title or heading.\n\n"
                     + "\n".join(visit_lines)
                 )
                 day_summary.summary_text = str(day_summary_text).strip()
@@ -601,8 +611,15 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             activity_lines.append(line)
 
         day_summary_text = llm.generate_from_text(
-            "What is the highlight of the day based on the following activities? Answer as if you are NOT the user, but an external observer describing the day.\n"
-            "Ignore unclear activities. Write 2-3 sentences in first person.\n"
+            "Write a warm, engaging recap of the day from the timestamped activities "
+            "below. Ignore unclear activities.\n\n"
+            "Format as Markdown, in two parts:\n"
+            "1. A short narrative paragraph (3-5 sentences, ~80-120 words) covering the "
+            "arc and feel of the day, not just a list.\n"
+            "2. A '**Highlights**' line, then 2-4 Markdown bullets ('- ') for the "
+            "standout, notable, or unusual moments.\n\n"
+            "Ground every detail in the activities — do not invent. Write as an external "
+            "observer describing the person's day (use 'you'). No top-level title.\n\n"
             + "\n".join(activity_lines)
         )
         day_summary.summary_text = str(day_summary_text).strip()
