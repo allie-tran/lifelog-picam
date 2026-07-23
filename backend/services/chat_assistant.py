@@ -134,10 +134,33 @@ def _render_memory(memories: List[ChatMemoryRecord]) -> str:
     return "Known facts about the user:\n" + "\n".join(lines)
 
 
-def _render_day_context(device: str, date: str) -> str:
+def _segment_descriptions(session: Session, device: str, date: str) -> Dict[int, str]:
+    """Per-segment factual descriptions (the LLM's 1-2 sentence annotation, e.g.
+    what food/drink is visible). Stored identically on every image of a segment,
+    so one DISTINCT query per segment suffices."""
+    rows = session.execute(
+        select(ImageModel.segment_id, ImageModel.activity_description)
+        .where(
+            ImageModel.device == device,
+            ImageModel.date == date,
+            ImageModel.deleted == False,
+            ImageModel.segment_id.isnot(None),
+            ImageModel.activity_description.isnot(None),
+        )
+        .distinct()
+    ).all()
+    out: Dict[int, str] = {}
+    for seg_id, desc in rows:
+        if desc and seg_id not in out:
+            out[seg_id] = desc
+    return out
+
+
+def _render_day_context(session: Session, device: str, date: str) -> str:
     day = DaySummaryRecord.find_one({"device": device, "date": date})
     if not day:
         return f"No summary exists yet for {date}."
+    descriptions = _segment_descriptions(session, device, date)
     lines = [f"Day {date} — {day.number_of_images} images."]
     if day.summary_text:
         lines.append(f"Current summary:\n{day.summary_text}")
@@ -147,20 +170,22 @@ def _render_day_context(device: str, date: str) -> str:
             name = v.location_name or "Unknown place"
             desc = f" — {v.description}" if v.description else ""
             lines.append(f"  [{name}] segments {v.segment_ids}{desc}")
-    lines.append("Segments (segment_id · activity · time · place):")
+    lines.append("Segments (segment_id · activity · time · place · description):")
     for s in day.segments:
         t = s.start_time.strftime("%H:%M") if s.start_time else "?"
         place = s.location_name or "-"
-        lines.append(f"  #{s.segment_id} · {s.activity} · {t} · {place}")
+        desc = descriptions.get(s.segment_id or -1, "")
+        desc_part = f" · {desc}" if desc else ""
+        lines.append(f"  #{s.segment_id} · {s.activity} · {t} · {place}{desc_part}")
     return "\n".join(lines)
 
 
-def _render_period_context(device: str, date: Optional[str]) -> str:
+def _render_period_context(session: Session, device: str, date: Optional[str]) -> str:
     # Global/period scope: point the model at whatever period record matches the
     # anchor date if given; otherwise stay general.
     if not date:
         return "No specific date in focus. Ask the user which day to look at."
-    return _render_day_context(device, date)
+    return _render_day_context(session, device, date)
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +395,9 @@ def _build_turn(
     (system, messages, applied_actions_list, dispatch)."""
     memories = _load_memories(username, device)
     if scope == "day" and date:
-        context = _render_day_context(device, date)
+        context = _render_day_context(session, device, date)
     else:
-        context = _render_period_context(device, date)
+        context = _render_period_context(session, device, date)
 
     system = _SYSTEM_PROMPT
     mem = _render_memory(memories)
