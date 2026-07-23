@@ -292,6 +292,65 @@ def run_chat_turn(
     user_text: str,
 ) -> Tuple[str, List[AppliedAction], TokenUsage]:
     """Run one turn. Returns (reply, applied_actions, message_usage)."""
+    system, messages, applied, dispatch = _build_turn(
+        session, device, username, scope, date, history, user_text
+    )
+    result = openai_llm.chat(
+        messages, tools=_tool_schemas(), dispatch=dispatch, system=system
+    )
+    usage = TokenUsage(
+        prompt=result.usage.prompt,
+        completion=result.usage.completion,
+        total=result.usage.total,
+    )
+    return result.reply, applied, usage
+
+
+def stream_turn(
+    session: Session,
+    device: str,
+    username: str,
+    scope: str,
+    date: Optional[str],
+    history: List[ChatMessage],
+    user_text: str,
+):
+    """Streaming variant of ``run_chat_turn``. Generator yielding event dicts:
+      {"type": "delta", "text": str}
+      {"type": "tool", "action": AppliedAction}
+      {"type": "usage", "usage": TokenUsage}
+    The final usage event lets the caller persist the transcript."""
+    system, messages, _applied, dispatch = _build_turn(
+        session, device, username, scope, date, history, user_text
+    )
+    for ev in openai_llm.chat_stream(
+        messages, tools=_tool_schemas(), dispatch=dispatch, system=system
+    ):
+        if ev["type"] == "delta":
+            yield {"type": "delta", "text": ev["text"]}
+        elif ev["type"] == "tool":
+            yield {"type": "tool", "action": AppliedAction(
+                tool=ev["name"], args=ev.get("args", {}), outcome=ev.get("outcome", ""),
+            )}
+        elif ev["type"] == "usage":
+            u = ev["usage"]
+            yield {"type": "usage", "usage": TokenUsage(
+                prompt=u.prompt, completion=u.completion, total=u.total,
+            )}
+
+
+def _build_turn(
+    session: Session,
+    device: str,
+    username: str,
+    scope: str,
+    date: Optional[str],
+    history: List[ChatMessage],
+    user_text: str,
+):
+    """Shared setup for both turn runners: system prompt (memory + context),
+    the OpenAI message list, and a tool dispatcher. Returns
+    (system, messages, applied_actions_list, dispatch)."""
     memories = _load_memories(username, device)
     if scope == "day" and date:
         context = _render_day_context(device, date)
@@ -305,7 +364,9 @@ def run_chat_turn(
     system += "\n\n--- Context ---\n" + context
 
     messages: List[Dict[str, Any]] = [
-        {"role": m.role, "content": m.content} for m in history if m.role in ("user", "assistant") and m.content
+        {"role": m.role, "content": m.content}
+        for m in history
+        if m.role in ("user", "assistant") and m.content
     ]
     messages.append({"role": "user", "content": user_text})
 
@@ -329,12 +390,4 @@ def run_chat_turn(
         applied.append(AppliedAction(tool=name, args=args, outcome=outcome))
         return outcome
 
-    result = openai_llm.chat(
-        messages, tools=_tool_schemas(), dispatch=dispatch, system=system
-    )
-    usage = TokenUsage(
-        prompt=result.usage.prompt,
-        completion=result.usage.completion,
-        total=result.usage.total,
-    )
-    return result.reply, applied, usage
+    return system, messages, applied, dispatch

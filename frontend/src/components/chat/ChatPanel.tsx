@@ -15,11 +15,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useSWRConfig } from 'swr';
-import { getChatThread, sendChatMessage } from '@apis/chat';
-import { AppliedAction, ChatMessage, TokenUsage } from '@utils/types';
-import { useAppSelector } from 'reducers/hooks';
-
-const EMPTY_USAGE: TokenUsage = { prompt: 0, completion: 0, total: 0 };
+import { AppliedAction } from '@utils/types';
+import { useAppDispatch, useAppSelector } from 'reducers/hooks';
+import { closePanel, loadThread, sendMessageStream, togglePanel } from 'reducers/chat';
 
 // Tools whose effects change the rendered day/period — refresh those SWR caches.
 const REFRESH_TOOLS = new Set([
@@ -32,79 +30,46 @@ export default function ChatPanel() {
     const [searchParams] = useSearchParams();
     const date = searchParams.get('date') || undefined;
     const { isAuthenticated, device } = useAppSelector((s) => s.auth);
+    const { open, messages, streaming, lastUsage, totalUsage } = useAppSelector((s) => s.chat);
+    const dispatch = useAppDispatch();
     const { mutate } = useSWRConfig();
 
-    const [open, setOpen] = useState(false);
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [totalUsage, setTotalUsage] = useState<TokenUsage>(EMPTY_USAGE);
-    const [lastUsage, setLastUsage] = useState<TokenUsage>(EMPTY_USAGE);
     const listRef = useRef<HTMLDivElement | null>(null);
 
-    // Day threads are keyed device:date — load the transcript when the panel
-    // opens against a day so the conversation resumes.
+    // Day threads are keyed device:date — resume the transcript when opened.
     const threadId = date && device ? `${device}:${date}` : undefined;
 
-    const loadThread = useCallback(async () => {
-        if (!device || !threadId) return;
-        try {
-            const t = await getChatThread(device, threadId);
-            setMessages(t.messages || []);
-            setTotalUsage(t.tokenUsage || EMPTY_USAGE);
-        } catch {
-            // No thread yet — fresh conversation.
-            setMessages([]);
-            setTotalUsage(EMPTY_USAGE);
-        }
-    }, [device, threadId]);
-
     useEffect(() => {
-        if (open) loadThread();
-    }, [open, loadThread]);
+        if (open && device && threadId) {
+            dispatch(loadThread({ device, threadId }));
+        }
+    }, [open, device, threadId, dispatch]);
 
     useEffect(() => {
         listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-    }, [messages, loading]);
+    }, [messages, streaming]);
 
-    const refreshAffectedViews = (actions: AppliedAction[]) => {
+    const refreshAffectedViews = useCallback((actions: AppliedAction[]) => {
         if (actions.some((a) => REFRESH_TOOLS.has(a.tool))) {
             mutate((k: any) => !!k && (k.key === 'day-summary' || k.key === 'period-summary'));
         }
-    };
+    }, [mutate]);
 
     const handleSend = async () => {
         const text = input.trim();
-        if (!text || !device || loading) return;
+        if (!text || !device || streaming) return;
         setInput('');
-        setMessages((m) => [...m, { role: 'user', content: text }]);
-        setLoading(true);
-        try {
-            const res = await sendChatMessage(device, text, {
+        const res = await dispatch(
+            sendMessageStream({
+                device,
+                text,
                 scope: date ? 'day' : 'global',
                 date: date ?? null,
                 threadId,
-            });
-            setMessages((m) => [
-                ...m,
-                {
-                    role: 'assistant',
-                    content: res.reply,
-                    appliedActions: res.appliedActions,
-                    tokenUsage: res.messageUsage,
-                },
-            ]);
-            setLastUsage(res.messageUsage);
-            setTotalUsage(res.totalUsage);
-            refreshAffectedViews(res.appliedActions || []);
-        } catch (e) {
-            setMessages((m) => [
-                ...m,
-                { role: 'assistant', content: `⚠️ ${(e as Error).message || 'Chat failed'}` },
-            ]);
-        } finally {
-            setLoading(false);
-        }
+            }),
+        ).unwrap();
+        if (res?.appliedActions) refreshAffectedViews(res.appliedActions);
     };
 
     if (!isAuthenticated) return null;
@@ -113,7 +78,7 @@ export default function ChatPanel() {
         <>
             <Tooltip title="Chat about this day">
                 <IconButton
-                    onClick={() => setOpen((o) => !o)}
+                    onClick={() => dispatch(togglePanel())}
                     sx={{
                         ml: 1,
                         boxShadow: 2,
@@ -126,7 +91,7 @@ export default function ChatPanel() {
                 </IconButton>
             </Tooltip>
 
-            <Drawer anchor="right" open={open} onClose={() => setOpen(false)}>
+            <Drawer anchor="right" open={open} onClose={() => dispatch(closePanel())}>
                 <Box sx={{ width: 400, display: 'flex', flexDirection: 'column', height: '100%' }}>
                     {/* Spacer so the header clears the sticky AppBar. */}
                     <Toolbar disableGutters sx={{ minHeight: { xs: 56, sm: 64 } }} />
@@ -144,14 +109,14 @@ export default function ChatPanel() {
                                 {date ? `Chatting about ${date}` : 'General assistant'}
                             </Typography>
                         </Box>
-                        <IconButton size="small" onClick={() => setOpen(false)}>
+                        <IconButton size="small" onClick={() => dispatch(closePanel())}>
                             <Close fontSize="inherit" />
                         </IconButton>
                     </Stack>
                     <Divider />
 
                     <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-                        {messages.length === 0 && !loading ? (
+                        {messages.length === 0 && !streaming ? (
                             <Box sx={{ textAlign: 'center', mt: 8 }}>
                                 <Typography fontSize={40}>💬</Typography>
                                 <Typography color="text.secondary" mt={1}>
@@ -161,43 +126,46 @@ export default function ChatPanel() {
                             </Box>
                         ) : (
                             <Stack spacing={1.5}>
-                                {messages.map((m, i) => (
-                                    <Box
-                                        key={i}
-                                        sx={{
-                                            alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                                            maxWidth: '85%',
-                                            px: 1.5,
-                                            py: 1,
-                                            borderRadius: 2,
-                                            backgroundColor:
-                                                m.role === 'user' ? 'primary.main' : 'action.hover',
-                                            color: m.role === 'user' ? 'primary.contrastText' : 'text.primary',
-                                        }}
-                                    >
-                                        <Typography fontSize={14} sx={{ whiteSpace: 'pre-wrap' }}>
-                                            {m.content}
-                                        </Typography>
-                                        {m.appliedActions && m.appliedActions.length > 0 && (
-                                            <Stack direction="row" flexWrap="wrap" gap={0.5} mt={0.75}>
-                                                {m.appliedActions.map((a, j) => (
-                                                    <Chip
-                                                        key={j}
-                                                        size="small"
-                                                        label={a.tool.replace(/_/g, ' ')}
-                                                        color="success"
-                                                        variant="outlined"
-                                                    />
-                                                ))}
-                                            </Stack>
-                                        )}
-                                    </Box>
-                                ))}
-                                {loading && (
-                                    <Box sx={{ alignSelf: 'flex-start', p: 1 }}>
-                                        <CircularProgress size={18} />
-                                    </Box>
-                                )}
+                                {messages.map((m, i) => {
+                                    const isLast = i === messages.length - 1;
+                                    const showCursor = streaming && isLast && m.role === 'assistant';
+                                    return (
+                                        <Box
+                                            key={i}
+                                            sx={{
+                                                alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                                                maxWidth: '85%',
+                                                px: 1.5,
+                                                py: 1,
+                                                borderRadius: 2,
+                                                backgroundColor:
+                                                    m.role === 'user' ? 'primary.main' : 'action.hover',
+                                                color: m.role === 'user' ? 'primary.contrastText' : 'text.primary',
+                                            }}
+                                        >
+                                            <Typography fontSize={14} sx={{ whiteSpace: 'pre-wrap' }}>
+                                                {m.content}
+                                                {showCursor && !m.content && (
+                                                    <CircularProgress size={12} sx={{ ml: 0.5 }} />
+                                                )}
+                                                {showCursor && m.content ? ' ▍' : ''}
+                                            </Typography>
+                                            {m.appliedActions && m.appliedActions.length > 0 && (
+                                                <Stack direction="row" flexWrap="wrap" gap={0.5} mt={0.75}>
+                                                    {m.appliedActions.map((a, j) => (
+                                                        <Chip
+                                                            key={j}
+                                                            size="small"
+                                                            label={a.tool.replace(/_/g, ' ')}
+                                                            color="success"
+                                                            variant="outlined"
+                                                        />
+                                                    ))}
+                                                </Stack>
+                                            )}
+                                        </Box>
+                                    );
+                                })}
                             </Stack>
                         )}
                     </Box>
@@ -224,12 +192,12 @@ export default function ChatPanel() {
                                         handleSend();
                                     }
                                 }}
-                                disabled={loading}
+                                disabled={streaming}
                             />
                             <IconButton
                                 color="primary"
                                 onClick={handleSend}
-                                disabled={loading || !input.trim()}
+                                disabled={streaming || !input.trim()}
                             >
                                 <Send />
                             </IconButton>

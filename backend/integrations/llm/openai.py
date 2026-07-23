@@ -176,6 +176,99 @@ class OpenAILLM(LLM):
             usage.total += final.usage.total_tokens or 0
         return ChatResult(reply=final.choices[0].message.content or "", usage=usage)
 
+    def chat_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        dispatch: Optional[Any] = None,
+        system: Optional[str] = None,
+        max_tool_rounds: int = 6,
+    ):
+        """
+        Streaming variant of ``chat()``. A generator yielding event dicts:
+          {"type": "delta", "text": str}                 — a chunk of reply text
+          {"type": "tool", "name", "args", "outcome"}    — a tool the model ran
+          {"type": "usage", "usage": TokenUsage}         — final, once, at the end
+
+        Every round is streamed. Content deltas are forwarded as they arrive;
+        tool-call deltas are accumulated, dispatched at end-of-round, and the
+        loop continues. ``stream_options.include_usage`` gives a final usage
+        chunk (empty ``choices``) per round, summed across rounds.
+        """
+        convo: List[Dict[str, Any]] = []
+        if system:
+            convo.append({"role": "system", "content": system})
+        convo.extend(messages)
+
+        usage = TokenUsage()
+
+        for _ in range(max_tool_rounds):
+            kwargs: Dict[str, Any] = {
+                "model": self.model_name,
+                "messages": convo,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+
+            stream = self.client.chat.completions.create(**kwargs)
+
+            tool_acc: Dict[int, Dict[str, str]] = {}
+            for chunk in stream:
+                if chunk.usage is not None:
+                    usage.prompt += chunk.usage.prompt_tokens or 0
+                    usage.completion += chunk.usage.completion_tokens or 0
+                    usage.total += chunk.usage.total_tokens or 0
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta is None:
+                    continue
+                if delta.content:
+                    yield {"type": "delta", "text": delta.content}
+                for tc in delta.tool_calls or []:
+                    slot = tool_acc.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        slot["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        slot["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        slot["args"] += tc.function.arguments
+
+            if not tool_acc:
+                yield {"type": "usage", "usage": usage}
+                return
+
+            # Replay the assistant tool-call turn, then dispatch each tool.
+            convo.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": s["id"],
+                        "type": "function",
+                        "function": {"name": s["name"], "arguments": s["args"] or "{}"},
+                    }
+                    for s in tool_acc.values()
+                ],
+            })
+            for s in tool_acc.values():
+                try:
+                    args = json.loads(s["args"] or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                outcome = dispatch(s["name"], args) if dispatch else "No handler."
+                yield {"type": "tool", "name": s["name"], "args": args, "outcome": outcome}
+                convo.append({
+                    "role": "tool",
+                    "tool_call_id": s["id"],
+                    "content": str(outcome),
+                })
+
+        yield {"type": "usage", "usage": usage}
+
     def web_search(self, prompt: str) -> Optional[str]:
         """
         Grounded text generation using OpenAI's built-in web_search tool
