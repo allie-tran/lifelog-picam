@@ -50,7 +50,16 @@ this over manage_memory for anything the user didn't explicitly tell you to stor
 Obvious durable facts are also captured automatically after the turn, so don't nag; \
 use suggest_memory only for genuinely useful, non-obvious facts. Only call a tool when \
 the user asks for a change, tells you to remember, or clearly states a durable fact. \
-Never invent segment_ids — use the ones in the context below."""
+Never invent segment_ids — use the ones in the context below.
+
+ANSWERING STYLE: Prefer answering to asking. When a question is ambiguous, pick the \
+most likely interpretation from the context, answer it, and state the assumption you \
+made in one short clause ("Assuming the morning trip …"). Ask a clarifying question \
+ONLY when the plausible answers differ a lot AND you truly cannot pick a default — and \
+then ask at most once. Each segment below has start–end times, a duration, and a \
+transport mode when known, so you can compute trip durations (door-to-door = from the \
+last segment at the origin to the first at the destination) and travel times directly; \
+do the arithmetic instead of asking. If the data genuinely can't answer, say so plainly."""
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +189,34 @@ def _segment_descriptions(session: Session, device: str, date: str) -> Dict[int,
     return out
 
 
+def _segment_modes(session: Session, device: str, date: str) -> Dict[int, str]:
+    """Most-common transport mode per segment (walk/train/car/…), from ImageGPS.
+    Lets the assistant answer travel-time / trip-duration questions."""
+    from collections import Counter
+    from database.models import ImageGPS
+    rows = session.execute(
+        select(ImageModel.segment_id, ImageGPS.mode)
+        .join(ImageGPS, ImageGPS.image_id == ImageModel.id)
+        .where(
+            ImageModel.device == device,
+            ImageModel.date == date,
+            ImageModel.deleted == False,
+            ImageModel.segment_id.isnot(None),
+            ImageGPS.mode.isnot(None),
+        )
+    ).all()
+    by_seg: Dict[int, List[str]] = {}
+    for seg_id, mode in rows:
+        by_seg.setdefault(seg_id, []).append(mode)
+    return {sid: Counter(ms).most_common(1)[0][0] for sid, ms in by_seg.items()}
+
+
 def _render_day_context(session: Session, device: str, date: str) -> str:
     day = DaySummaryRecord.find_one({"device": device, "date": date})
     if not day:
         return f"No summary exists yet for {date}."
     descriptions = _segment_descriptions(session, device, date)
+    modes = _segment_modes(session, device, date)
     lines = [f"Day {date} — {day.number_of_images} images."]
     if day.summary_text:
         lines.append(f"Current summary:\n{day.summary_text}")
@@ -194,13 +226,21 @@ def _render_day_context(session: Session, device: str, date: str) -> str:
             name = v.location_name or "Unknown place"
             desc = f" — {v.description}" if v.description else ""
             lines.append(f"  [{name}] segments {v.segment_ids}{desc}")
-    lines.append("Segments (segment_id · activity · time · place · description):")
+    lines.append(
+        "Segments (segment_id · activity · start–end (duration) · place · mode · description):"
+    )
     for s in day.segments:
-        t = s.start_time.strftime("%H:%M") if s.start_time else "?"
+        start = s.start_time.strftime("%H:%M") if s.start_time else "?"
+        end = s.end_time.strftime("%H:%M") if s.end_time else "?"
+        mins = round((s.duration or 0) / 60)
         place = s.location_name or "-"
+        mode = modes.get(s.segment_id or -1)
+        mode_part = f" · {mode}" if mode else ""
         desc = descriptions.get(s.segment_id or -1, "")
         desc_part = f" · {desc}" if desc else ""
-        lines.append(f"  #{s.segment_id} · {s.activity} · {t} · {place}{desc_part}")
+        lines.append(
+            f"  #{s.segment_id} · {s.activity} · {start}–{end} ({mins}m) · {place}{mode_part}{desc_part}"
+        )
     return "\n".join(lines)
 
 
