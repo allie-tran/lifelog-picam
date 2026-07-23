@@ -82,6 +82,10 @@ function modal<T>(items: T[]): T | null {
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0][0];
 }
 
+// A short stationary run (≤ this) between moves is a transit waypoint (a bus/tram
+// stop, a platform wait), not a destination. Mirrors location_visits._WAIT_MAX_S.
+const WAIT_MAX_S = 15 * 60;
+
 // Header label + tooltip text for a location run (transit vs. place, with icons).
 function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
     const modeIcon = run.mode ? MODE_ICON[run.mode] ?? '' : '';
@@ -89,8 +93,11 @@ function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
     const headerText = run.isMove
         ? `${modeIcon}`.trim()
         : `${labelIcon} ${run.name ?? '—'}`.trim();
+    // For a move show its route (e.g. "Pfauen → Garbenstrasse"), falling back to
+    // the transport mode; for a place show the venue name.
+    const moveLabel = run.name && run.name.includes('→') ? run.name : run.mode ?? 'transit';
     const tipBits = [
-        run.isMove ? `${modeIcon} ${run.mode}` : `📍 ${run.name ?? 'Unknown'}`,
+        run.isMove ? `${modeIcon} ${moveLabel}`.trim() : `📍 ${run.name ?? 'Unknown'}`,
         `${hm(run.startMs, run.tz)}–${hm(run.endMs, run.tz)}`,
         fmtDuration(run.totalSeconds),
     ];
@@ -147,7 +154,91 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
         run.labelKind =
             run.segments.map((s) => s.labelKind).find((k) => k === 'home' || k === 'work') ?? null;
     }
-    return runs;
+    // Fold short transfer stops into the journey so one ride reads as one run,
+    // matching the day-summary visits (location_visits._merge_transit_waypoints).
+    return mergeTransitWaypoints(runs);
+}
+
+// ── Transit-waypoint folding (ported from location_visits.py) ────────────────
+type RunKind = 'real_stop' | 'transit' | 'short_stop';
+
+const runStationarySeconds = (run: LocationRun): number =>
+    run.segments.reduce((s, seg) => s + (seg.locationStop === true ? seg.duration : 0), 0);
+
+function runKind(run: LocationRun): RunKind {
+    if (runStationarySeconds(run) > WAIT_MAX_S) return 'real_stop';
+    if (run.isMove) return 'transit';
+    return 'short_stop';
+}
+
+// Route label from a merged journey's segments: origin → destination taken from
+// its 'A → B' move names (first origin, last destination).
+function journeyName(segs: NavSegment[]): string {
+    const arrows = segs.map((s) => s.locationName ?? '').filter((n) => n.includes('→'));
+    if (arrows.length) {
+        const origin = arrows[0].split('→')[0].trim();
+        const dest = (arrows[arrows.length - 1].split('→').pop() ?? '').trim();
+        if (origin && dest) return origin !== dest ? `${origin} → ${dest}` : origin;
+    }
+    const named = segs.map((s) => s.locationName ?? '').find((n) => n && !n.includes('→'));
+    return named || 'In transit';
+}
+
+function mergeRuns(runs: LocationRun[]): LocationRun {
+    const segments = runs.flatMap((r) => r.segments);
+    return {
+        name: journeyName(segments),
+        startMs: runs[0].startMs,
+        endMs: runs[runs.length - 1].endMs,
+        totalSeconds: runs.reduce((s, r) => s + r.totalSeconds, 0),
+        segments,
+        isMove: true,
+        mode: modal(segments.map((s) => s.mode).filter(Boolean) as string[]),
+        labelKind: null,
+        tz: runs[0].tz,
+    };
+}
+
+// A maximal run of consecutive transit/short-stop runs (within the break window)
+// that contains at least one move is merged into one journey; the transit-bounded
+// core (moves + interior waypoint stops) collapses, while short stops before the
+// first / after the last move stay separate as their own brief places.
+function mergeTransitWaypoints(runs: LocationRun[]): LocationRun[] {
+    const out: LocationRun[] = [];
+    let i = 0;
+    const n = runs.length;
+    while (i < n) {
+        if (runKind(runs[i]) === 'real_stop') {
+            out.push(runs[i]);
+            i += 1;
+            continue;
+        }
+        const group = [runs[i]];
+        let j = i + 1;
+        while (
+            j < n &&
+            runKind(runs[j]) !== 'real_stop' &&
+            runs[j].startMs - runs[j - 1].endMs < BREAK_THRESHOLD_MS
+        ) {
+            group.push(runs[j]);
+            j += 1;
+        }
+        const transitIdx = group
+            .map((r, k) => (runKind(r) === 'transit' ? k : -1))
+            .filter((k) => k >= 0);
+        if (transitIdx.length) {
+            const first = transitIdx[0];
+            const last = transitIdx[transitIdx.length - 1];
+            group.slice(0, first).forEach((r) => out.push(r));
+            out.push(mergeRuns(group.slice(first, last + 1)));
+            group.slice(last + 1).forEach((r) => out.push(r));
+            i = j;
+        } else {
+            out.push(runs[i]);
+            i += 1;
+        }
+    }
+    return out;
 }
 
 const MOVE_BG = '#9575cd20';
