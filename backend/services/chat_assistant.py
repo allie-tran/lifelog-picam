@@ -40,6 +40,10 @@ You can call tools to APPLY edits directly (the user has authorised auto-apply):
 actually was. Pass the segment_id and a short instruction.
 - edit_day_summary_text: replace the day's summary text (Markdown bullets).
 - change_location: correct/label the place a segment was at.
+- search_lifelog: semantic search across ALL the user's days when the answer isn't in \
+the current day's context (e.g. "when did I last see Luca?").
+- web_search: look up external facts on the public web (opening hours, what a venue is \
+known for) — never for the user's own data.
 - manage_memory: remember durable facts the user EXPLICITLY asks you to remember \
 (op="add"/"update" with a short key, or op="remove").
 - suggest_memory: when the user mentions something durable but did NOT ask you to \
@@ -130,6 +134,36 @@ def _tool_schemas() -> List[Dict[str, Any]]:
                         "text": {"type": "string", "description": "The fact (omit for remove)."},
                     },
                     "required": ["op", "key"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_lifelog",
+                "description": "Semantic search across ALL of the user's days for moments "
+                               "matching a description (e.g. 'coffee with Luca', 'red bridge'). "
+                               "Use when the answer isn't in the current day's context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "description": "Max results (default 8)."},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the public web for external facts (opening hours, what a "
+                               "venue is known for, event info). Not for the user's own data.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
                 },
             },
         },
@@ -375,6 +409,54 @@ def upsert_memory(username: str, device: str, key: str, text: str) -> None:
         ).create()
 
 
+def _search_lifelog(session: Session, device: str, query: str, k: int):
+    """Semantic CLIP search over the whole lifelog (all days). Mirrors the
+    text-query path of services.embedding.retrieve_image_with_filters."""
+    from services.embedding import (
+        apply_transformation,
+        get_matrix,
+        search_by_embedding,
+        search_model,
+    )
+    emb = search_model.encode_text(query)
+    emb = apply_transformation(emb, get_matrix(session, device))
+    return search_by_embedding(session, emb, device, k, sort_by="relevance")
+
+
+def _handle_search_lifelog(session: Session, device: str, args: Dict[str, Any]) -> str:
+    query = (args.get("query") or "").strip()
+    if not query:
+        return "Error: query required."
+    k = min(int(args.get("limit") or 8), 15)
+    try:
+        recs = _search_lifelog(session, device, query, k)
+    except Exception as e:
+        logger.exception("lifelog search failed")
+        return f"Search failed: {e}"
+    if not recs:
+        return f"No moments matched '{query}'."
+    lines = []
+    for r in recs:
+        d = getattr(r, "date", None) or "?"
+        t = r.timestamp.strftime("%H:%M") if getattr(r, "timestamp", None) else "?"
+        act = getattr(r, "activity", None) or ""
+        desc = getattr(r, "activity_description", None) or ""
+        lines.append(f"{d} {t} · {act}{(' · ' + desc) if desc else ''}")
+    return f"Top matches for '{query}':\n" + "\n".join(lines)
+
+
+def _handle_web_search(args: Dict[str, Any]) -> str:
+    query = (args.get("query") or "").strip()
+    if not query:
+        return "Error: query required."
+    try:
+        res = openai_llm.web_search(query)
+    except Exception as e:
+        logger.exception("web search failed")
+        return f"Web search failed: {e}"
+    return res or "No web results."
+
+
 def _handle_manage_memory(username: str, device: str, args: Dict[str, Any]) -> str:
     op = args.get("op")
     key = (args.get("key") or "").strip()
@@ -563,6 +645,10 @@ def _build_turn(
                 outcome = _handle_edit_day_summary_text(device, date or "", args)
             elif name == "change_location":
                 outcome = _handle_change_location(session, username, device, date or "", args)
+            elif name == "search_lifelog":
+                outcome = _handle_search_lifelog(session, device, args)
+            elif name == "web_search":
+                outcome = _handle_web_search(args)
             elif name == "manage_memory":
                 outcome = _handle_manage_memory(username, device, args)
             elif name == "suggest_memory":
