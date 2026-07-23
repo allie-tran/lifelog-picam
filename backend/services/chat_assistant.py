@@ -12,6 +12,7 @@ consistent with the manual UI:
   * change_location       → same upsert as routers/location.upsert_label
 """
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -357,13 +358,37 @@ def _handle_suggest_memory(args: Dict[str, Any]) -> str:
     return f"Proposed to remember '{key}'."
 
 
+_QUESTION_WORDS = {
+    "what", "when", "where", "who", "whom", "whose", "why", "how", "which",
+    "did", "do", "does", "is", "are", "was", "were", "can", "could", "would",
+    "will", "should", "have", "has", "had",
+}
+
+
+def _worth_distilling(user_text: str) -> bool:
+    """Skip turns unlikely to carry a durable fact — too short, or a bare
+    question ("what did I eat?") with no declarative clause. A message that
+    mixes a statement with a question ("Luca's my partner. What did we do?")
+    still passes because it has more than one sentence."""
+    t = user_text.strip()
+    words = t.split()
+    if len(words) < 4:
+        return False
+    # A single sentence opening with a question word is treated as a bare
+    # question (the '?' is often dropped in chat) — nothing durable to keep.
+    sentences = [s for s in re.split(r"[.!?]+", t) if s.strip()]
+    if len(sentences) <= 1 and words[0].lower().strip(",") in _QUESTION_WORDS:
+        return False
+    return True
+
+
 def distill_and_store(
     username: str, device: str, user_text: str, reply: str
 ) -> List[ChatMemory]:
     """After a turn, ask the LLM for 0-3 durable facts and silently upsert them.
     Returns the facts stored so the caller can surface them ('🧠 remembered …').
     Obvious captures happen here; the bot uses suggest_memory for the rest."""
-    if not reply or reply.startswith("⚠️"):
+    if not reply or reply.startswith("⚠️") or not _worth_distilling(user_text):
         return []
     existing = _load_memories(username, device)
     known = "; ".join(f"{m.key}: {m.text}" for m in existing) or "(none)"
