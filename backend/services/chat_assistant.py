@@ -13,16 +13,13 @@ consistent with the manual UI:
 """
 import logging
 import re
-import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from database.models import Image as ImageModel
-from database.models import LocationLabel
 from database.types import ChatMemoryRecord, DaySummaryRecord, ImageRecord
 from integrations.llm.openai import openai_llm
 from integrations.sessions.redis import bust_day_caches
@@ -105,17 +102,14 @@ def _tool_schemas() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "change_location",
-                "description": "Set a personal label/name for the place a segment was at.",
+                "description": "Correct the venue a stop segment was at. Re-resolves the "
+                               "stop to the named place (matching a real nearby venue when "
+                               "possible), not just a display label.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "segment_id": {"type": "integer"},
-                        "label": {"type": "string", "description": "The name/label for the place."},
-                        "label_kind": {
-                            "type": "string",
-                            "enum": ["home", "work", "other"],
-                            "description": "Category of the place.",
-                        },
+                        "label": {"type": "string", "description": "The real name of the place."},
                     },
                     "required": ["segment_id", "label"],
                 },
@@ -337,48 +331,24 @@ def _handle_edit_day_summary_text(device: str, date: str, args: Dict[str, Any]) 
 
 
 def _handle_change_location(
-    session: Session, username: str, device: str, date: str, args: Dict[str, Any]
+    session: Session, device: str, date: str, args: Dict[str, Any]
 ) -> str:
     segment_id = args.get("segment_id")
     label = (args.get("label") or "").strip()
-    label_kind = args.get("label_kind") or "other"
     if segment_id is None or not label:
         return "Error: segment_id and label required."
-    location_id = session.execute(
-        select(ImageModel.location_id)
-        .where(
-            ImageModel.device == device,
-            ImageModel.date == date,
-            ImageModel.segment_id == segment_id,
-            ImageModel.location_id.isnot(None),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if location_id is None:
-        return f"Error: segment {segment_id} has no resolved location to label."
-    # Mirror routers.location.upsert_label — user-scoped label upsert.
-    session.execute(
-        insert(LocationLabel)
-        .values(
-            id=uuid.uuid4(),
-            username=username,
-            location_id=location_id,
-            label=label,
-            label_kind=label_kind,
-        )
-        .on_conflict_do_update(
-            constraint="uq_location_label_user_loc",
-            set_={"label": label, "label_kind": label_kind},
-        )
-    )
-    session.commit()
 
-    # Force the day summary to pick up the new label. Segment/nav/browse caches
-    # are keyed by geocoded name, and the location-visit layer reuses stored
-    # visits whenever ``location_visits_sig`` matches — which it always does on a
-    # relabel (the sig is built from the *unlabeled* segment names). Clearing the
-    # sig + marking the text stale makes the next fetch rebuild the visits (which
-    # DO honour the user's label) and regenerate the summary text.
+    # Use the name to re-disambiguate the stop's venue (adopt a matching nearby
+    # OSM POI, or mint a manual venue) rather than a cosmetic per-user label —
+    # this propagates to visits, events grounding and the summary.
+    from location.stop_correction import correct_stop_venue
+    changed, message = correct_stop_venue(session, device, date, int(segment_id), label)
+    if not changed:
+        return message
+
+    # Reassigning images changes segment location_name → the visit signature
+    # changes on rebuild; clear it + mark text stale so the next fetch rebuilds
+    # visits and summary text, and drop the stale geocoded caches.
     bust_day_caches(device, date)
     DaySummaryRecord.update_one(
         {"date": date, "device": device},
@@ -388,10 +358,7 @@ def _handle_change_location(
             "updated": True,
         }},
     )
-    return (
-        f"Labeled the place for segment {segment_id} as '{label}'. "
-        "The day's places will refresh shortly."
-    )
+    return message + " The day's places will refresh shortly."
 
 
 def upsert_memory(username: str, device: str, key: str, text: str) -> None:
@@ -644,7 +611,7 @@ def _build_turn(
             elif name == "edit_day_summary_text":
                 outcome = _handle_edit_day_summary_text(device, date or "", args)
             elif name == "change_location":
-                outcome = _handle_change_location(session, username, device, date or "", args)
+                outcome = _handle_change_location(session, device, date or "", args)
             elif name == "search_lifelog":
                 outcome = _handle_search_lifelog(session, device, args)
             elif name == "web_search":
