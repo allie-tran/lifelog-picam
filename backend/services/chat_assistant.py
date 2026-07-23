@@ -24,7 +24,7 @@ from database.models import Image as ImageModel
 from database.models import LocationLabel
 from database.types import ChatMemoryRecord, DaySummaryRecord, ImageRecord
 from integrations.llm.openai import openai_llm
-from integrations.sessions.redis import redis_client
+from integrations.sessions.redis import bust_day_caches
 from schemas import AppliedAction, ChatMessage, TokenUsage
 from tasks import describe_segment_task
 
@@ -249,9 +249,26 @@ def _handle_change_location(
         )
     )
     session.commit()
-    redis_client.delete_pattern("day-nav:*")
-    redis_client.delete_pattern("browse:day:*")
-    return f"Labeled the place for segment {segment_id} as '{label}'."
+
+    # Force the day summary to pick up the new label. Segment/nav/browse caches
+    # are keyed by geocoded name, and the location-visit layer reuses stored
+    # visits whenever ``location_visits_sig`` matches — which it always does on a
+    # relabel (the sig is built from the *unlabeled* segment names). Clearing the
+    # sig + marking the text stale makes the next fetch rebuild the visits (which
+    # DO honour the user's label) and regenerate the summary text.
+    bust_day_caches(device, date)
+    DaySummaryRecord.update_one(
+        {"date": date, "device": device},
+        data={"$set": {
+            "location_visits_sig": None,
+            "text_summary_stale": True,
+            "updated": True,
+        }},
+    )
+    return (
+        f"Labeled the place for segment {segment_id} as '{label}'. "
+        "The day's places will refresh shortly."
+    )
 
 
 def _handle_manage_memory(username: str, device: str, args: Dict[str, Any]) -> str:
