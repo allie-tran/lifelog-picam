@@ -17,6 +17,7 @@ from location.utils import find_timezone
 from location import transport_mode as tmode
 
 from services.segmentation import load_all_segments
+from integrations.sessions.redis import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -802,19 +803,68 @@ _SEG_IMG_PRE = timedelta(seconds=5)
 _SEG_IMG_POST = timedelta(seconds=15)
 
 
+def _prior_stop_poi(session, device, start_ts, end_ts, candidates: list[dict]) -> dict | None:
+    """
+    The gazetteer POI this stop was already resolved to on a previous run, if any.
+
+    Disambiguation reads ``Image.activity`` labels, but those are written by the
+    annotation Celery task fired *after* this pass runs — so on a fresh run the
+    labels aren't there yet and the LLM can't pick. Without this, the enrich step
+    would then fall back to the Nominatim nearest venue and *overwrite* a name a
+    previous (annotated) run had already corrected, flipping e.g. a lab back to
+    the frozen-yogurt shop next door. We look up the Location currently assigned
+    to this stop's images and, when it matches one of the candidates by OSM
+    element, return it so the earlier pick is preserved.
+    """
+    if start_ts is None or end_ts is None or not candidates:
+        return None
+    start_dt = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else start_ts
+    end_dt = end_ts.to_pydatetime() if hasattr(end_ts, "to_pydatetime") else end_ts
+    try:
+        loc = session.execute(
+            select(Location.osm_type, Location.osm_id)
+            .join(Image, Image.location_id == Location.id)
+            .where(Image.device == device)
+            .where(Image.timestamp.between(start_dt, end_dt))
+            .where(Location.stop.is_(True))
+            .where(Location.osm_id.isnot(None))
+            .group_by(Location.osm_type, Location.osm_id)
+            .order_by(func.count().desc())
+            .limit(1)
+        ).first()
+    except Exception as exc:
+        logger.warning("prior stop POI lookup failed: %s", exc)
+        return None
+    if not loc:
+        return None
+    osm_type, osm_id = loc
+    return next(
+        (c for c in candidates
+         if str(c.get("osm_id")) == str(osm_id) and c.get("osm_type") == osm_type),
+        None,
+    )
+
+
 def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts) -> dict | None:
     """
     Pick the venue a stop was actually in by matching its photos against nearby
     gazetteer candidates. Returns the chosen POI dict, or None to defer to the
     geocoder (no candidates, no images, or a sub-θ visual match).
+
+    Non-regressing: once a stop has resolved to a gazetteer POI, a later run whose
+    activity labels aren't ready yet (annotation runs async, after this pass) — or
+    whose LLM call comes back ambiguous — reuses that prior POI instead of letting
+    Nominatim's nearest-wins overwrite it. Only a *confident* LLM pick can move a
+    stop to a different venue.
     """
     candidates = pgaz.nearby_pois(session, lat, lon)
     if not candidates:
         return None
+    prior = _prior_stop_poi(session, device, start_ts, end_ts, candidates)
     activity_labels = pgaz.stop_activity_labels(session, device, start_ts, end_ts)
     if not activity_labels:
-        return None
-    return pgaz.disambiguate_poi(candidates, activity_labels)
+        return prior  # annotations not ready — keep the earlier pick, don't downgrade
+    return pgaz.disambiguate_poi(candidates, activity_labels) or prior
 
 
 def enrich_and_index_segments(
@@ -861,6 +911,26 @@ def enrich_and_index_segments(
         is_stop = bool(seg.get("is_stop"))
         start_ts = seg.get("start_ts")
         end_ts = seg.get("end_ts")
+
+        # Respect a user's chat correction: if this stop's images are already
+        # pinned to a user-confirmed Location, leave it untouched — don't
+        # re-resolve the venue or reassign images (that clobbered the edit).
+        if is_stop and start_ts is not None and end_ts is not None:
+            s_dt = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else start_ts
+            e_dt = end_ts.to_pydatetime() if hasattr(end_ts, "to_pydatetime") else end_ts
+            pinned = session.execute(
+                select(Location.id)
+                .join(Image, Image.location_id == Location.id)
+                .where(
+                    Image.device == device,
+                    Image.timestamp.between(s_dt - _SEG_IMG_PRE, e_dt + _SEG_IMG_POST),
+                    Location.user_confirmed.is_(True),
+                )
+                .limit(1)
+            ).scalar()
+            if pinned:
+                logger.info("Stop segment %d is user-confirmed — skipping re-resolution", i)
+                continue
 
         if is_stop:
             geo = stop_geos.get(i) or enrich_stop(float(lat), float(lon))
@@ -1148,19 +1218,50 @@ def _upsert_image_gps(session, rows: list[dict]) -> None:
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def run_pipeline(session: Session, device: str, date: str, modes_only: bool = False):
+def _day_gps_signature(session: Session, device: str, date: str, raw_df: pd.DataFrame) -> str:
+    """Cheap fingerprint of a day's inputs — raw-GPS count + latest fix time + image
+    count. When it is unchanged from the last successful run, re-running the pipeline
+    would only re-geocode identical stops (re-hitting Nominatim/Overpass/LLM) and risk
+    reverting a name a later annotated run had corrected. So we skip on a match."""
+    raw_n = len(raw_df)
+    raw_max = str(raw_df["timestamp"].max()) if raw_n else ""
+    img_n = session.execute(
+        select(func.count()).select_from(Image)
+        .where(Image.device == device, Image.date == date, Image.deleted == False)
+    ).scalar() or 0
+    return f"{raw_n}:{raw_max}:{img_n}"
+
+
+def run_pipeline(session: Session, device: str, date: str, modes_only: bool = False,
+                 force: bool = False):
     """
     ``modes_only=True`` recomputes/refreshes only the per-segment transport mode (steps up to the ImageGPS mode upsert) and skips the slow tail — geocoding
     (enrich_and_index_segments) and segment annotation (load_all_segments). Used
     to backfill modes after the GPS-authoritative fusion change without
     re-hitting Nominatim/Overpass/LLM. Clear ImageGPS.mode first, else the
     COALESCE upsert keeps the stored value.
+
+    ``force=True`` bypasses the unchanged-day skip guard — use it for a manual
+    re-geocode (e.g. after a code change). The automatic live-GPS trigger leaves it
+    False so a day whose GPS/images haven't changed is not reprocessed again and
+    again (which needlessly re-geocodes and can revert corrected stop names).
     """
     logger.info(f"Processing device={device} date={date}")
     df = load_all_points(session, device, date)
     if len(df) == 0:
         logger.warning(f"No GPS data found for device={device} date={date}, skipping.")
         return
+
+    # Skip when nothing about the day changed since the last successful full run.
+    sig_key = f"gps_sig:{device}:{date}"
+    sig = _day_gps_signature(session, device, date, df)
+    if not modes_only and not force:
+        try:
+            if redis_client.get_value(sig_key) == sig.encode():
+                logger.info("run_pipeline: %s/%s unchanged (sig=%s) — skipping", device, date, sig)
+                return
+        except Exception as _e:
+            logger.debug("run_pipeline sig check failed for %s/%s: %s", device, date, _e)
 
     # 1b. Quality gate — drop fixes reporting a loose accuracy radius before any
     # track/stay processing, so junk never reaches stay detection or the filters.
@@ -1286,6 +1387,12 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
         bust_day_caches(device, date)
     except Exception as _e:
         logger.warning("run_pipeline: failed to invalidate day summary for %s/%s: %s", device, date, _e)
+
+    # Record the day's input fingerprint so an identical later run is skipped.
+    try:
+        redis_client.set_value(sig_key, sig)
+    except Exception as _e:
+        logger.debug("run_pipeline: failed to store gps sig for %s/%s: %s", device, date, _e)
 
     logger.info(f"Finished processing device={device} date={date}")
     session.flush()

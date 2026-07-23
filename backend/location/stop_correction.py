@@ -127,6 +127,7 @@ def correct_stop_venue(
         osm_id=geo.get("osm_id") or None,
         wikidata_id=geo.get("wikidata_id") or None,
         categories=categories_str,
+        user_confirmed=True,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["key"],
@@ -139,6 +140,7 @@ def correct_stop_venue(
             "osm_id": stmt.excluded.osm_id,
             "wikidata_id": stmt.excluded.wikidata_id,
             "categories": stmt.excluded.categories,
+            "user_confirmed": True,
         },
     ).returning(Location.id)
     new_location_id = session.execute(stmt).scalar()

@@ -79,6 +79,12 @@ class Location(Base):
     description: Mapped[str | None] = mapped_column(Text)    # Wikidata short description
     categories: Mapped[str | None] = mapped_column(Text)     # semicolon-separated type list
 
+    # Set when the user corrects the venue via chat (stop_correction). The GPS
+    # pipeline must NOT re-resolve / overwrite a stop pinned to this Location.
+    user_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+
     # Legacy — kept for backwards compatibility, no longer populated
     fsq_id: Mapped[str | None] = mapped_column(Text)
     info: Mapped[str | None] = mapped_column(Text)
