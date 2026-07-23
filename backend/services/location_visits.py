@@ -22,7 +22,7 @@ from partialjson.json_parser import JSONParser
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database.models import Image, ImagePerson, LocationLabel
+from database.models import Image, ImageGPS, ImagePerson, LocationLabel
 from integrations.llm import llm
 
 _json_parser = JSONParser()
@@ -173,7 +173,31 @@ def _representative_name(group: list, name_by_seg: Optional[dict[int, str]]) -> 
     return raw[0] if raw else ""
 
 
-def _group_segments(segments: list, name_by_seg: Optional[dict[int, str]] = None) -> list[list]:
+def _fetch_segment_modes(session: Session, device: str, date: str) -> dict[int, str]:
+    """Dominant transport mode per segment (from ImageGPS.mode)."""
+    from collections import Counter
+    rows = session.execute(
+        select(Image.segment_id, ImageGPS.mode)
+        .join(ImageGPS, ImageGPS.image_id == Image.id)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.deleted == False,
+            Image.segment_id.isnot(None),
+            ImageGPS.mode.isnot(None),
+        )
+    ).all()
+    by_seg: dict[int, list[str]] = {}
+    for sid, mode in rows:
+        by_seg.setdefault(sid, []).append(mode)
+    return {sid: Counter(ms).most_common(1)[0][0] for sid, ms in by_seg.items()}
+
+
+def _group_segments(
+    segments: list,
+    name_by_seg: Optional[dict[int, str]] = None,
+    mode_by_seg: Optional[dict[int, str]] = None,
+) -> list[list]:
     """
     Group consecutive segments into visits, distinguishing stops from transit:
 
@@ -243,17 +267,58 @@ def _group_segments(segments: list, name_by_seg: Optional[dict[int, str]] = None
                 continue
         groups.append([seg])
 
-    return _merge_transit_waypoints(groups)
+    return _merge_transit_waypoints(groups, mode_by_seg)
 
 
-def _merge_transit_waypoints(groups: list[list]) -> list[list]:
+def _group_mode(group: list, mode_by_seg: dict[int, str]) -> Optional[str]:
+    """Dominant transport mode of a group's move segments (None for a stop-only
+    group or when no mode is recorded)."""
+    from collections import Counter
+    if not any(s.location_stop is False for s in group):
+        return None
+    modes = [mode_by_seg.get(s.segment_id) for s in group if s.segment_id is not None]
+    modes = [m for m in modes if m]
+    return Counter(modes).most_common(1)[0][0] if modes else None
+
+
+def _split_core_by_mode(core: list[list], mode_by_seg: Optional[dict[int, str]]) -> list[list]:
+    """Split a transit-bounded core (list of groups) into one flattened leg per
+    contiguous transport mode, so "walk → bus → walk" becomes three legs. A
+    waypoint stop right before a mode change attaches to the upcoming leg (you
+    wait, then board). Returns a list of segment-lists."""
+    flat_all = [s for g in core for s in g]
+    if not mode_by_seg:
+        return [flat_all]
+    chunks: list[list] = []
+    cur: list = []
+    cur_mode: Optional[str] = None
+    for k, g in enumerate(core):
+        m = _group_mode(g, mode_by_seg)
+        if m is None and cur and cur_mode is not None:
+            nxt = next((mm for mm in (_group_mode(x, mode_by_seg) for x in core[k + 1:]) if mm), None)
+            if nxt and nxt != cur_mode:
+                chunks.append(cur)
+                cur, cur_mode = [], None
+        elif m is not None and cur_mode is not None and m != cur_mode and cur:
+            chunks.append(cur)
+            cur = []
+        cur.extend(g)
+        if m is not None:
+            cur_mode = m
+    if cur:
+        chunks.append(cur)
+    return chunks or [flat_all]
+
+
+def _merge_transit_waypoints(groups: list[list], mode_by_seg: Optional[dict[int, str]] = None) -> list[list]:
     """
     Fold short waiting-stops (a tram platform, a bus stop) that sit between
     moving segments into a single transit journey. A maximal run of consecutive
     transit groups and short (≤ ``_WAIT_MAX_S``) stop groups that contains at
-    least one moving group is merged into one visit — so "walk → wait → tram →
-    walk" reads as one trip. Long stops (real destinations) and lone short stops
-    with no transit neighbour are left untouched.
+    least one moving group is merged — so "walk → wait → tram → walk" reads as
+    one trip, then split into one leg per contiguous transport mode. Long stops
+    (real destinations) and lone short stops with no transit neighbour are left
+    untouched.
     """
     def _kind(g: list) -> str:
         # A substantial total stay is a real destination, even if it also
@@ -286,10 +351,11 @@ def _merge_transit_waypoints(groups: list[list]) -> list[list]:
             first, last = transit_idx[0], transit_idx[-1]
             # Short stops before the first / after the last move are real (brief)
             # stops, not waypoints — keep them separate. Only the transit-bounded
-            # core (moves + interior platform waits) merges into one journey.
+            # core (moves + interior platform waits) merges, then splits by mode.
             for g in run[:first]:
                 merged.append(g)
-            merged.append([s for g in run[first:last + 1] for s in g])
+            for leg in _split_core_by_mode(run[first:last + 1], mode_by_seg):
+                merged.append(leg)
             for g in run[last + 1:]:
                 merged.append(g)
         else:
@@ -568,8 +634,9 @@ def build_location_visits(
     owner = _owner_username(device)
     seg_loc = _fetch_segment_locations(session, device, date, username=owner)
     name_by_seg = {sid: v[0] for sid, v in seg_loc.items()}
+    mode_by_seg = _fetch_segment_modes(session, device, date)
 
-    groups = _group_segments(segments, name_by_seg)
+    groups = _group_segments(segments, name_by_seg, mode_by_seg)
     if not groups:
         return []
 
