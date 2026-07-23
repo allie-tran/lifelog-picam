@@ -31,7 +31,13 @@ from schemas import (
     MemoryUpsertRequest,
     TokenUsage,
 )
-from services.chat_assistant import distill_and_store, run_chat_turn, stream_turn, upsert_memory
+from services.chat_assistant import (
+    _DISTILL_EVERY,
+    maybe_distill,
+    run_chat_turn,
+    stream_turn,
+    upsert_memory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +133,10 @@ def post_message(
     total = _persist_turn(
         thread, thread_id, user.username, device, request, history, reply, applied, usage
     )
-    distilled = distill_and_store(user.username, device, request.text, reply)
+    all_user = [m.content for m in history if m.role == "user" and m.content] + [request.text]
+    distilled = maybe_distill(
+        user.username, device, len(all_user), all_user[-_DISTILL_EVERY:], reply
+    )
 
     return ChatTurnResponse(
         thread_id=thread_id,
@@ -194,7 +203,10 @@ def post_message_stream(
             total = _persist_turn(
                 thread, thread_id, username, device, request, history, reply, applied, usage
             )
-            distilled = distill_and_store(username, device, request.text, reply)
+            all_user = [m.content for m in history if m.role == "user" and m.content] + [request.text]
+            distilled = maybe_distill(
+                username, device, len(all_user), all_user[-_DISTILL_EVERY:], reply
+            )
             yield sse({
                 "type": "done",
                 "threadId": thread_id,

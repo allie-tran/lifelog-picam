@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 # stored + displayed; this only bounds the per-turn prompt cost).
 _HISTORY_LIMIT = 8
 
+# Auto-distillation (an extra LLM call) runs only every N user turns, batching
+# the messages since the last run so nothing is missed.
+_DISTILL_EVERY = 3
+
 _SYSTEM_PROMPT = """You are a lifelog assistant. The user reviews their day, captured \
 automatically by a wearable camera + GPS. You help them understand and correct their \
 timeline. Be concise and factual.
@@ -515,24 +519,37 @@ def _worth_distilling(user_text: str) -> bool:
     return True
 
 
-def distill_and_store(
-    username: str, device: str, user_text: str, reply: str
+def maybe_distill(
+    username: str, device: str, user_turn_count: int, recent_user_texts: List[str], reply: str
 ) -> List[ChatMemory]:
-    """After a turn, ask the LLM for 0-3 durable facts and silently upsert them.
-    Returns the facts stored so the caller can surface them ('🧠 remembered …').
-    Obvious captures happen here; the bot uses suggest_memory for the rest."""
-    if not reply or reply.startswith("⚠️") or not _worth_distilling(user_text):
+    """Run distillation only every _DISTILL_EVERY user turns (an extra LLM call
+    per turn is the cost). When it fires it batches the recent user messages so
+    facts from the skipped turns aren't lost."""
+    if user_turn_count <= 0 or user_turn_count % _DISTILL_EVERY != 0:
+        return []
+    return distill_and_store(username, device, recent_user_texts, reply)
+
+
+def distill_and_store(
+    username: str, device: str, user_texts: List[str], reply: str
+) -> List[ChatMemory]:
+    """Ask the LLM for 0-3 durable facts across the recent user messages and
+    silently upsert them. Returns the facts stored so the caller can surface them
+    ('🧠 remembered …'). Obvious captures happen here; the bot uses suggest_memory
+    for the rest."""
+    worth = [t for t in user_texts if _worth_distilling(t)]
+    if not reply or reply.startswith("⚠️") or not worth:
         return []
     existing = _load_memories(username, device)
     known = "; ".join(f"{m.key}: {m.text}" for m in existing) or "(none)"
+    convo = "\n".join(f"User: {t}" for t in worth) + f"\nAssistant (latest reply): {reply}"
     prompt = (
-        "From the exchange below, extract 0-3 DURABLE personal facts worth remembering "
-        "long-term: people and their relationship to the user, routines, stable "
-        "preferences, custom place names. Ignore one-off/day-specific details, questions, "
-        "and anything already known.\n"
+        "From the recent messages below, extract 0-3 DURABLE personal facts worth "
+        "remembering long-term: people and their relationship to the user, routines, "
+        "stable preferences, custom place names. Ignore one-off/day-specific details, "
+        "questions, and anything already known.\n"
         f"Already known: {known}\n"
-        f"User: {user_text}\n"
-        f"Assistant: {reply}\n"
+        f"{convo}\n"
         'Return JSON: {"facts": [{"key": "short_snake_key", "text": "the fact"}]}. '
         "Empty list if nothing durable."
     )
