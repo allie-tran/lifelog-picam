@@ -28,6 +28,10 @@ from tasks import describe_segment_task
 
 logger = logging.getLogger(__name__)
 
+# Max prior transcript messages sent to the LLM per turn (full history is still
+# stored + displayed; this only bounds the per-turn prompt cost).
+_HISTORY_LIMIT = 8
+
 _SYSTEM_PROMPT = """You are a lifelog assistant. The user reviews their day, captured \
 automatically by a wearable camera + GPS. You help them understand and correct their \
 timeline. Be concise and factual.
@@ -37,6 +41,8 @@ You can call tools to APPLY edits directly (the user has authorised auto-apply):
 actually was. Pass the segment_id and a short instruction.
 - edit_day_summary_text: replace the day's summary text (Markdown bullets).
 - change_location: correct/label the place a segment was at.
+- get_segment_details: fetch photo descriptions for specific segments of the current \
+day when the one-line segment table isn't detailed enough (e.g. what food was eaten).
 - search_lifelog: semantic search across ALL the user's days when the answer isn't in \
 the current day's context (e.g. "when did I last see Luca?").
 - web_search: look up external facts on the public web (opening hours, what a venue is \
@@ -128,6 +134,22 @@ def _tool_schemas() -> List[Dict[str, Any]]:
                         "text": {"type": "string", "description": "The fact (omit for remove)."},
                     },
                     "required": ["op", "key"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_segment_details",
+                "description": "Fetch the photo descriptions (and transport mode) for specific "
+                               "segments of the current day. Use when you need detail beyond the "
+                               "activity label — e.g. what food was on the table.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "segment_ids": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": ["segment_ids"],
                 },
             },
         },
@@ -240,10 +262,12 @@ def _segment_modes(session: Session, device: str, date: str) -> Dict[int, str]:
 
 
 def _render_day_context(session: Session, device: str, date: str) -> str:
+    """Compact always-on context: the day's summary, places, and a one-line
+    segment table (no per-segment descriptions — those are large and fetched on
+    demand via get_segment_details, which keeps the per-turn prompt small)."""
     day = DaySummaryRecord.find_one({"device": device, "date": date})
     if not day:
         return f"No summary exists yet for {date}."
-    descriptions = _segment_descriptions(session, device, date)
     modes = _segment_modes(session, device, date)
     lines = [f"Day {date} — {day.number_of_images} images."]
     if day.summary_text:
@@ -255,7 +279,8 @@ def _render_day_context(session: Session, device: str, date: str) -> str:
             desc = f" — {v.description}" if v.description else ""
             lines.append(f"  [{name}] segments {v.segment_ids}{desc}")
     lines.append(
-        "Segments (segment_id · activity · start–end (duration) · place · mode · description):"
+        "Segments (segment_id · activity · start–end (duration) · place · mode). "
+        "Call get_segment_details for the photo descriptions of specific segments:"
     )
     for s in day.segments:
         start = s.start_time.strftime("%H:%M") if s.start_time else "?"
@@ -264,10 +289,8 @@ def _render_day_context(session: Session, device: str, date: str) -> str:
         place = s.location_name or "-"
         mode = modes.get(s.segment_id or -1)
         mode_part = f" · {mode}" if mode else ""
-        desc = descriptions.get(s.segment_id or -1, "")
-        desc_part = f" · {desc}" if desc else ""
         lines.append(
-            f"  #{s.segment_id} · {s.activity} · {start}–{end} ({mins}m) · {place}{mode_part}{desc_part}"
+            f"  #{s.segment_id} · {s.activity} · {start}–{end} ({mins}m) · {place}{mode_part}"
         )
     return "\n".join(lines)
 
@@ -374,6 +397,27 @@ def upsert_memory(username: str, device: str, key: str, text: str) -> None:
             username=username, device=device, key=key, text=text,
             updated=datetime.utcnow(),
         ).create()
+
+
+def _handle_get_segment_details(session: Session, device: str, date: str, args: Dict[str, Any]) -> str:
+    """On-demand per-segment photo descriptions (+ mode), so the always-on
+    context can stay small. The model calls this only for segments it cares about."""
+    ids = args.get("segment_ids") or []
+    if not isinstance(ids, list) or not ids:
+        return "Error: segment_ids (a list) required."
+    ids = [int(i) for i in ids][:20]
+    descriptions = _segment_descriptions(session, device, date)
+    modes = _segment_modes(session, device, date)
+    lines = []
+    for sid in ids:
+        desc = descriptions.get(sid)
+        mode = modes.get(sid)
+        if desc or mode:
+            extra = f" [{mode}]" if mode else ""
+            lines.append(f"#{sid}{extra}: {desc or '(no description)'}")
+        else:
+            lines.append(f"#{sid}: (no details)")
+    return "\n".join(lines)
 
 
 def _search_lifelog(session: Session, device: str, query: str, k: int):
@@ -595,11 +639,14 @@ def _build_turn(
         system += "\n\n" + mem
     system += "\n\n--- Context ---\n" + context
 
-    messages: List[Dict[str, Any]] = [
+    # Only the last few turns go to the LLM — the full transcript is still stored
+    # and shown in the UI, but resending it all every turn is the main token sink.
+    recent = [
         {"role": m.role, "content": m.content}
         for m in history
         if m.role in ("user", "assistant") and m.content
-    ]
+    ][-_HISTORY_LIMIT:]
+    messages: List[Dict[str, Any]] = recent
     messages.append({"role": "user", "content": user_text})
 
     applied: List[AppliedAction] = []
@@ -612,6 +659,8 @@ def _build_turn(
                 outcome = _handle_edit_day_summary_text(device, date or "", args)
             elif name == "change_location":
                 outcome = _handle_change_location(session, device, date or "", args)
+            elif name == "get_segment_details":
+                outcome = _handle_get_segment_details(session, device, date or "", args)
             elif name == "search_lifelog":
                 outcome = _handle_search_lifelog(session, device, args)
             elif name == "web_search":
