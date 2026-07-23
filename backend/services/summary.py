@@ -299,11 +299,16 @@ def time_to_ms(date_str, time_str):
 def _fetch_segment_locations(session, device: str, date: str, username: str | None = None) -> dict[int, tuple[str, bool, float | None, float | None]]:
     """
     Return {segment_id: (display_name, stop, latitude, longitude)} for the given date/device.
-    When `username` is given, a user's label for a location (Home/Work/…) overrides
-    the geocoded display name. One query, grouped in Python.
+    A user's label for a location (Home/Work/a chat-assigned name) overrides the
+    geocoded display name. ``username`` defaults to the device owner when omitted,
+    so the timeline honours labels in background rebuilds (no request user). One
+    query, grouped in Python.
     """
     from collections import Counter
     from database.models import LocationLabel
+    if username is None:
+        from services.location_visits import _owner_username
+        username = _owner_username(device)
     rows = session.execute(
         select(Image.segment_id, Location.name, Location.address, Location.stop, Location.latitude, Location.longitude, LocationLabel.label)
         .join(Location, Image.location_id == Location.id)
