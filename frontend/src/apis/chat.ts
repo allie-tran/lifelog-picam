@@ -101,6 +101,13 @@ export const getChatThread = async (device: string, threadId: string): Promise<C
     return response.data as ChatThread;
 };
 
+export const deleteChatThread = async (threadId: string) => {
+    const response = await axios.delete(
+        `${BACKEND_URL}/chat/thread/${encodeURIComponent(threadId)}`
+    );
+    return response.data;
+};
+
 export const getChatThreads = async (
     device: string,
     scope?: 'day' | 'global'

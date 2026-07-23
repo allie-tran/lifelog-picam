@@ -1,4 +1,4 @@
-import { Add, Close, DeleteOutline, PsychologyOutlined, SmartToyOutlined, Send } from '@mui/icons-material';
+import { Add, Close, DeleteOutline, DeleteSweepOutlined, PsychologyOutlined, SmartToyOutlined, Send } from '@mui/icons-material';
 import {
     Box,
     Button,
@@ -19,6 +19,7 @@ import { useSWRConfig } from 'swr';
 import { AppliedAction, ChatMemory } from '@utils/types';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import {
+    clearThread,
     closePanel,
     fetchMemories,
     loadThread,
@@ -74,9 +75,32 @@ export default function ChatPanel() {
         }
     }, [mutate]);
 
+    // Slash commands typed in the input. Returns true if handled (not sent to the LLM).
+    const runCommand = (text: string): boolean => {
+        const [cmd] = text.slice(1).trim().toLowerCase().split(/\s+/);
+        switch (cmd) {
+            case 'clear':
+                dispatch(clearThread({ threadId }));
+                return true;
+            case 'memory':
+            case 'memories':
+                setShowMemory(true);
+                return true;
+            case 'help':
+                window.alert('Commands:\n/clear — clear this conversation\n/memory — view remembered facts');
+                return true;
+            default:
+                return false; // unknown → fall through and send as a normal message
+        }
+    };
+
     const handleSend = async () => {
         const text = input.trim();
         if (!text || !device || streaming) return;
+        if (text.startsWith('/') && runCommand(text)) {
+            setInput('');
+            return;
+        }
         setInput('');
         const res = await dispatch(
             sendMessageStream({
@@ -100,6 +124,12 @@ export default function ChatPanel() {
         dispatch(saveMemory({ device, key, text: newText.trim() }));
         setNewKey('');
         setNewText('');
+    };
+
+    const handleClear = () => {
+        if (streaming) return;
+        if (messages.length && !window.confirm('Clear this conversation?')) return;
+        dispatch(clearThread({ threadId }));
     };
 
     if (!isAuthenticated) return null;
@@ -142,6 +172,19 @@ export default function ChatPanel() {
                             </Typography>
                         </Box>
                         <Stack direction="row" spacing={0.5}>
+                            {!showMemory && (
+                                <Tooltip title="Clear conversation">
+                                    <span>
+                                        <IconButton
+                                            size="small"
+                                            onClick={handleClear}
+                                            disabled={streaming || messages.length === 0}
+                                        >
+                                            <DeleteSweepOutlined fontSize="small" />
+                                        </IconButton>
+                                    </span>
+                                </Tooltip>
+                            )}
                             <Tooltip title={showMemory ? 'Back to chat' : 'What I remember'}>
                                 <IconButton size="small" onClick={() => setShowMemory((v) => !v)}>
                                     <PsychologyOutlined
@@ -280,7 +323,7 @@ export default function ChatPanel() {
                                 size="small"
                                 multiline
                                 maxRows={4}
-                                placeholder="Message the assistant…"
+                                placeholder="Message the assistant…  (/clear, /memory)"
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={(e) => {

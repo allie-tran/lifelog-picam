@@ -1,6 +1,7 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import {
     deleteChatMemory,
+    deleteChatThread,
     getChatMemory,
     getChatThread,
     putChatMemory,
@@ -67,6 +68,14 @@ export const removeMemory = createAsyncThunk(
     async ({ device, key }: { device: string; key: string }) => {
         await deleteChatMemory(device, key);
         return key;
+    },
+);
+
+// Clear the current thread's transcript (deletes it server-side if it exists).
+export const clearThread = createAsyncThunk(
+    'chat/clearThread',
+    async ({ threadId }: { threadId?: string }) => {
+        if (threadId) await deleteChatThread(threadId);
     },
 );
 
@@ -181,6 +190,12 @@ const chatSlice = createSlice({
             })
             .addCase(removeMemory.fulfilled, (state, action: PayloadAction<string>) => {
                 state.memories = state.memories.filter((m) => m.key !== action.payload);
+            })
+            .addCase(clearThread.fulfilled, (state) => {
+                state.messages = [];
+                state.lastUsage = EMPTY_USAGE;
+                state.totalUsage = EMPTY_USAGE;
+                state.error = null;
             });
     },
 });
