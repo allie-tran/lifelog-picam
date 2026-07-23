@@ -2,6 +2,7 @@
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
@@ -36,6 +37,19 @@ print("Using OpenAI Model Name:", OPENAI_MODEL)
 
 def encode_to_base64(data: bytes) -> str:
     return base64.b64encode(data).decode('utf-8')
+
+
+@dataclass
+class TokenUsage:
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+@dataclass
+class ChatResult:
+    reply: str
+    usage: TokenUsage
 
 
 class OpenAILLM(LLM):
@@ -96,6 +110,71 @@ class OpenAILLM(LLM):
         except Exception:
             print("Warning: Could not parse JSON from completion.")
             return None
+
+    def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        dispatch: Optional[Any] = None,
+        system: Optional[str] = None,
+        max_tool_rounds: int = 6,
+    ) -> "ChatResult":
+        """
+        Multi-turn chat with optional function-calling. ``messages`` is the prior
+        conversation as OpenAI role/content dicts; ``tools`` is a list of tool
+        JSON schemas; ``dispatch(name, args) -> str`` executes a tool and returns
+        a short result string (the orchestrator owns any side effects / action
+        bookkeeping). Runs the tool loop until the model stops calling tools or
+        ``max_tool_rounds`` is hit, accumulating token usage across rounds.
+
+        Only implemented for OpenAI (gpt-5-mini) — Gemini/Ollama wrappers do not
+        provide ``chat()`` yet.
+        """
+        convo: List[Dict[str, Any]] = []
+        if system:
+            convo.append({"role": "system", "content": system})
+        convo.extend(messages)
+
+        usage = TokenUsage()
+
+        for _ in range(max_tool_rounds):
+            kwargs: Dict[str, Any] = {"model": self.model_name, "messages": convo}
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            response = self.client.chat.completions.create(**kwargs)
+
+            if response.usage is not None:
+                usage.prompt += response.usage.prompt_tokens or 0
+                usage.completion += response.usage.completion_tokens or 0
+                usage.total += response.usage.total_tokens or 0
+
+            msg = response.choices[0].message
+            tool_calls = getattr(msg, "tool_calls", None)
+            if not tool_calls:
+                return ChatResult(reply=msg.content or "", usage=usage)
+
+            # Echo the assistant tool-call turn back, then append each result.
+            convo.append(msg.model_dump(exclude_none=True))
+            for call in tool_calls:
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result = dispatch(call.function.name, args) if dispatch else "No handler."
+                convo.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": str(result),
+                })
+
+        # Tool budget exhausted — do one final untooled pass for a text reply.
+        final = self.client.chat.completions.create(model=self.model_name, messages=convo)
+        if final.usage is not None:
+            usage.prompt += final.usage.prompt_tokens or 0
+            usage.completion += final.usage.completion_tokens or 0
+            usage.total += final.usage.total_tokens or 0
+        return ChatResult(reply=final.choices[0].message.content or "", usage=usage)
 
     def web_search(self, prompt: str) -> Optional[str]:
         """

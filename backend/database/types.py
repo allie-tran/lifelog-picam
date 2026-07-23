@@ -24,7 +24,7 @@ from collections import Counter
 from sqlalchemy.orm import Session
 from mongodb_odm import Document
 
-from schemas import DaySummary, GPSInfo, GridImage, LifelogImage, LocationInfo, PeriodSummary, ResultSegment
+from schemas import ChatMemory, ChatThread, DaySummary, GPSInfo, GridImage, LifelogImage, LocationInfo, PeriodSummary, ResultSegment
 from database.models import Image, ImageGPS, Location
 
 logger = logging.getLogger(__name__)
@@ -342,3 +342,17 @@ class DaySummaryRecord(Document, DaySummary):
 class PeriodSummaryRecord(Document, PeriodSummary):
     class ODMConfig(Document.ODMConfig):
         collection_name = "period_summaries"
+
+
+# ---------------------------------------------------------------------------
+# Chat assistant — transcripts + distilled memory (see schemas.ChatThread /
+# schemas.ChatMemory). Both live in MongoDB alongside the day/period records.
+# ---------------------------------------------------------------------------
+class ChatThreadRecord(Document, ChatThread):
+    class ODMConfig(Document.ODMConfig):
+        collection_name = "chat_threads"
+
+
+class ChatMemoryRecord(Document, ChatMemory):
+    class ODMConfig(Document.ODMConfig):
+        collection_name = "chat_memories"

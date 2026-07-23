@@ -269,6 +269,53 @@ export interface Notification {
     segmentId?: number;
 }
 
+// --- Chat assistant ---
+export interface TokenUsage {
+    prompt: number;
+    completion: number;
+    total: number;
+}
+
+export interface AppliedAction {
+    tool: string;
+    args: Record<string, any>;
+    outcome: string;
+}
+
+export interface ChatMessage {
+    role: 'user' | 'assistant' | 'tool';
+    content: string;
+    appliedActions?: AppliedAction[];
+    tokenUsage?: TokenUsage;
+    ts?: string;
+}
+
+export interface ChatThread {
+    threadId: string;
+    username?: string;
+    device?: string;
+    scope: 'day' | 'global' | string;
+    date?: string | null;
+    messages: ChatMessage[];
+    tokenUsage: TokenUsage;
+    created?: string;
+    updated?: string;
+}
+
+export interface ChatTurnResponse {
+    threadId: string;
+    reply: string;
+    appliedActions: AppliedAction[];
+    messageUsage: TokenUsage;
+    totalUsage: TokenUsage;
+}
+
+export interface ChatMemory {
+    key: string;
+    text: string;
+    updated?: string;
+}
+
 export type SearchQuery = {
     text: string;
     isImageQuery: boolean;

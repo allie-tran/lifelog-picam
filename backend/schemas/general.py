@@ -426,3 +426,69 @@ class PeriodSummary(CamelCaseModel):
     # Hash of the child days' (date, text_summary_generated_at, updated). Lets a
     # fetch reuse the cached period unless an underlying day actually changed.
     source_sig: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Chat assistant — a conversation the user has about their days. The bot can
+# answer questions and auto-apply edits (segment activity, day summary text,
+# location label) via tool-calls, and maintains a distilled memory of durable
+# facts. Transcripts persist per thread; a day thread is keyed {device}:{date}.
+# ---------------------------------------------------------------------------
+class TokenUsage(CamelCaseModel):
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+class AppliedAction(CamelCaseModel):
+    """A tool-call the bot executed during a turn — surfaced so the UI can show
+    what changed and refresh the affected day/period view."""
+    tool: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+    outcome: str = ""
+
+
+class ChatMessage(CamelCaseModel):
+    role: str                       # "user" | "assistant" | "tool"
+    content: str = ""
+    # Present on assistant turns that invoked tools (for transcript replay).
+    applied_actions: List[AppliedAction] = Field(default_factory=list)
+    token_usage: Optional[TokenUsage] = None
+    ts: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatThread(CamelCaseModel):
+    thread_id: str
+    username: str = ""
+    device: str = ""
+    scope: str = "day"              # "day" | "global"
+    date: Optional[str] = None      # set for day-scoped threads
+    messages: List[ChatMessage] = Field(default_factory=list)
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    created: datetime = Field(default_factory=datetime.utcnow)
+    updated: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatMemory(CamelCaseModel):
+    """One durable fact the bot maintains about the user, injected into every
+    future turn's system prompt. Keyed by (username, device, key)."""
+    username: str = ""
+    device: str = ""
+    key: str
+    text: str = ""
+    updated: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatMessageRequest(CamelCaseModel):
+    scope: str = "day"
+    date: Optional[str] = None
+    thread_id: Optional[str] = None
+    text: str
+
+
+class ChatTurnResponse(CamelCaseModel):
+    thread_id: str
+    reply: str
+    applied_actions: List[AppliedAction] = Field(default_factory=list)
+    message_usage: TokenUsage = Field(default_factory=TokenUsage)
+    total_usage: TokenUsage = Field(default_factory=TokenUsage)

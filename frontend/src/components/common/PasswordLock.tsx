@@ -35,6 +35,7 @@ import {
 import DeviceSelect from 'pages/DeviceSelect';
 import DRESSettings from 'components/meta/DRESSettings';
 import NotificationsPanel from 'components/notifications/NotificationsPanel';
+import ChatPanel from 'components/chat/ChatPanel';
 
 const DRESWidget = () => {
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -164,6 +165,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         <Box sx={{ flex: 1 }} />
                         <DeviceSelect />
                         <DRESWidget />
+                        <ChatPanel />
                         <NotificationsPanel />
                     </Toolbar>
                 </AppBar>
