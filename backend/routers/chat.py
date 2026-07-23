@@ -28,9 +28,10 @@ from schemas import (
     ChatMessageRequest,
     ChatThread,
     ChatTurnResponse,
+    MemoryUpsertRequest,
     TokenUsage,
 )
-from services.chat_assistant import run_chat_turn, stream_turn
+from services.chat_assistant import distill_and_store, run_chat_turn, stream_turn, upsert_memory
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ def post_message(
     total = _persist_turn(
         thread, thread_id, user.username, device, request, history, reply, applied, usage
     )
+    distilled = distill_and_store(user.username, device, request.text, reply)
 
     return ChatTurnResponse(
         thread_id=thread_id,
@@ -133,6 +135,7 @@ def post_message(
         applied_actions=applied,
         message_usage=usage,
         total_usage=total,
+        distilled=distilled,
     )
 
 
@@ -191,12 +194,14 @@ def post_message_stream(
             total = _persist_turn(
                 thread, thread_id, username, device, request, history, reply, applied, usage
             )
+            distilled = distill_and_store(username, device, request.text, reply)
             yield sse({
                 "type": "done",
                 "threadId": thread_id,
                 "appliedActions": [a.model_dump(by_alias=True) for a in applied],
                 "messageUsage": usage.model_dump(by_alias=True),
                 "totalUsage": total.model_dump(by_alias=True),
+                "distilled": [m.model_dump(by_alias=True) for m in distilled],
             })
 
     return StreamingResponse(
@@ -258,8 +263,25 @@ def list_memory(
     access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
 ):
     _require_owner(access_level)
-    rows = ChatMemoryRecord.find({"username": user.username, "device": device})
+    rows = ChatMemoryRecord.find(
+        {"username": user.username, "device": device}, sort=[("updated", -1)]
+    )
     return [ChatMemory(**m.model_dump()) for m in rows]
+
+
+@router.put("/memory", summary="Add or update a remembered fact", response_model=ChatMemory)
+def put_memory(
+    request: MemoryUpsertRequest,
+    device: str,
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+):
+    _require_owner(access_level)
+    key = request.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key required")
+    upsert_memory(user.username, device, key, request.text.strip())
+    return ChatMemory(username=user.username, device=device, key=key, text=request.text.strip())
 
 
 @router.delete("/memory/{key}", summary="Forget one remembered fact")

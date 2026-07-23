@@ -25,7 +25,7 @@ from database.models import LocationLabel
 from database.types import ChatMemoryRecord, DaySummaryRecord, ImageRecord
 from integrations.llm.openai import openai_llm
 from integrations.sessions.redis import bust_day_caches
-from schemas import AppliedAction, ChatMessage, TokenUsage
+from schemas import AppliedAction, ChatMemory, ChatMessage, TokenUsage
 from tasks import describe_segment_task
 
 logger = logging.getLogger(__name__)
@@ -39,11 +39,17 @@ You can call tools to APPLY edits directly (the user has authorised auto-apply):
 actually was. Pass the segment_id and a short instruction.
 - edit_day_summary_text: replace the day's summary text (Markdown bullets).
 - change_location: correct/label the place a segment was at.
-- manage_memory: remember durable facts the user tells you (people, routines, naming \
-preferences). Use op="add"/"update" with a short key, or op="remove".
+- manage_memory: remember durable facts the user EXPLICITLY asks you to remember \
+(op="add"/"update" with a short key, or op="remove").
+- suggest_memory: when the user mentions something durable but did NOT ask you to \
+remember it (a person + relationship, a routine, a stable preference, a place's real \
+name), propose it. This does NOT save — the user gets a one-tap Save button. Prefer \
+this over manage_memory for anything the user didn't explicitly tell you to store.
 
-Only call a tool when the user actually asks for a change or tells you something worth \
-remembering. Never invent segment_ids — use the ones in the context below."""
+Obvious durable facts are also captured automatically after the turn, so don't nag; \
+use suggest_memory only for genuinely useful, non-obvious facts. Only call a tool when \
+the user asks for a change, tells you to remember, or clearly states a durable fact. \
+Never invent segment_ids — use the ones in the context below."""
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +120,23 @@ def _tool_schemas() -> List[Dict[str, Any]]:
                         "text": {"type": "string", "description": "The fact (omit for remove)."},
                     },
                     "required": ["op", "key"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "suggest_memory",
+                "description": "Propose a durable fact for the user to save with one tap "
+                               "(does not store it). Use for facts the user mentioned but "
+                               "did not explicitly ask you to remember.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "Short stable key, e.g. 'partner_name'."},
+                        "text": {"type": "string", "description": "The fact to propose remembering."},
+                    },
+                    "required": ["key", "text"],
                 },
             },
         },
@@ -296,29 +319,82 @@ def _handle_change_location(
     )
 
 
+def upsert_memory(username: str, device: str, key: str, text: str) -> None:
+    """Create or update one durable fact. Shared by the tool, auto-distillation,
+    and the manual PUT /chat/memory endpoint."""
+    filt = {"username": username, "device": device, "key": key}
+    if ChatMemoryRecord.find_one(filt):
+        ChatMemoryRecord.update_one(
+            filt, data={"$set": {"text": text, "updated": datetime.utcnow()}}
+        )
+    else:
+        ChatMemoryRecord(
+            username=username, device=device, key=key, text=text,
+            updated=datetime.utcnow(),
+        ).create()
+
+
 def _handle_manage_memory(username: str, device: str, args: Dict[str, Any]) -> str:
     op = args.get("op")
     key = (args.get("key") or "").strip()
     text = (args.get("text") or "").strip()
     if not key:
         return "Error: key required."
-    filt = {"username": username, "device": device, "key": key}
     if op == "remove":
-        ChatMemoryRecord.delete_many(filt)
+        ChatMemoryRecord.delete_many({"username": username, "device": device, "key": key})
         return f"Forgot '{key}'."
     if op in ("add", "update"):
-        existing = ChatMemoryRecord.find_one(filt)
-        if existing:
-            ChatMemoryRecord.update_one(
-                filt, data={"$set": {"text": text, "updated": datetime.utcnow()}}
-            )
-        else:
-            ChatMemoryRecord(
-                username=username, device=device, key=key, text=text,
-                updated=datetime.utcnow(),
-            ).create()
+        upsert_memory(username, device, key, text)
         return f"Remembered '{key}'."
     return f"Error: unknown op '{op}'."
+
+
+def _handle_suggest_memory(args: Dict[str, Any]) -> str:
+    """No write — the proposal surfaces in the UI as a one-tap Save chip."""
+    key = (args.get("key") or "").strip()
+    if not key:
+        return "Error: key required."
+    return f"Proposed to remember '{key}'."
+
+
+def distill_and_store(
+    username: str, device: str, user_text: str, reply: str
+) -> List[ChatMemory]:
+    """After a turn, ask the LLM for 0-3 durable facts and silently upsert them.
+    Returns the facts stored so the caller can surface them ('🧠 remembered …').
+    Obvious captures happen here; the bot uses suggest_memory for the rest."""
+    if not reply or reply.startswith("⚠️"):
+        return []
+    existing = _load_memories(username, device)
+    known = "; ".join(f"{m.key}: {m.text}" for m in existing) or "(none)"
+    prompt = (
+        "From the exchange below, extract 0-3 DURABLE personal facts worth remembering "
+        "long-term: people and their relationship to the user, routines, stable "
+        "preferences, custom place names. Ignore one-off/day-specific details, questions, "
+        "and anything already known.\n"
+        f"Already known: {known}\n"
+        f"User: {user_text}\n"
+        f"Assistant: {reply}\n"
+        'Return JSON: {"facts": [{"key": "short_snake_key", "text": "the fact"}]}. '
+        "Empty list if nothing durable."
+    )
+    try:
+        res = openai_llm.generate_from_text(prompt, parse_json=True)
+    except Exception:
+        logger.exception("memory distillation failed")
+        return []
+    facts = res.get("facts", []) if isinstance(res, dict) else []
+    saved: List[ChatMemory] = []
+    for f in facts[:3]:
+        if not isinstance(f, dict):
+            continue
+        key = (f.get("key") or "").strip()
+        text = (f.get("text") or "").strip()
+        if not key or not text:
+            continue
+        upsert_memory(username, device, key, text)
+        saved.append(ChatMemory(username=username, device=device, key=key, text=text))
+    return saved
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +500,8 @@ def _build_turn(
                 outcome = _handle_change_location(session, username, device, date or "", args)
             elif name == "manage_memory":
                 outcome = _handle_manage_memory(username, device, args)
+            elif name == "suggest_memory":
+                outcome = _handle_suggest_memory(args)
             else:
                 return f"Error: unknown tool '{name}'."
         except Exception as e:  # keep the loop alive; report failure to the model

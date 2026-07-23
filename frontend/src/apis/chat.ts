@@ -7,6 +7,7 @@ export interface StreamDonePayload {
     appliedActions: AppliedAction[];
     messageUsage: TokenUsage;
     totalUsage: TokenUsage;
+    distilled?: ChatMemory[];
 }
 
 export interface StreamHandlers {
@@ -116,6 +117,18 @@ export const getChatMemory = async (device: string): Promise<ChatMemory[]> => {
         `${BACKEND_URL}/chat/memory?device=${encodeURIComponent(device)}`
     );
     return response.data as ChatMemory[];
+};
+
+export const putChatMemory = async (
+    device: string,
+    key: string,
+    text: string
+): Promise<ChatMemory> => {
+    const response = await axios.put(
+        `${BACKEND_URL}/chat/memory?device=${encodeURIComponent(device)}`,
+        { key, text }
+    );
+    return response.data as ChatMemory;
 };
 
 export const deleteChatMemory = async (device: string, key: string) => {

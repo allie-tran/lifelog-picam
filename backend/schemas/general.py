@@ -486,9 +486,16 @@ class ChatMessageRequest(CamelCaseModel):
     text: str
 
 
+class MemoryUpsertRequest(CamelCaseModel):
+    key: str
+    text: str
+
+
 class ChatTurnResponse(CamelCaseModel):
     thread_id: str
     reply: str
     applied_actions: List[AppliedAction] = Field(default_factory=list)
     message_usage: TokenUsage = Field(default_factory=TokenUsage)
     total_usage: TokenUsage = Field(default_factory=TokenUsage)
+    # Durable facts auto-captured from this turn (surfaced as "remembered …").
+    distilled: List[ChatMemory] = Field(default_factory=list)

@@ -1,10 +1,13 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import {
+    deleteChatMemory,
+    getChatMemory,
     getChatThread,
+    putChatMemory,
     streamChatMessage,
     StreamDonePayload,
 } from '@apis/chat';
-import { AppliedAction, ChatMessage, TokenUsage } from '@utils/types';
+import { AppliedAction, ChatMemory, ChatMessage, TokenUsage } from '@utils/types';
 
 const EMPTY_USAGE: TokenUsage = { prompt: 0, completion: 0, total: 0 };
 
@@ -17,6 +20,8 @@ interface ChatState {
     loadingThread: boolean;
     lastUsage: TokenUsage;
     totalUsage: TokenUsage;
+    memories: ChatMemory[];
+    memoriesLoaded: boolean;
     error: string | null;
 }
 
@@ -27,7 +32,15 @@ const initialState: ChatState = {
     loadingThread: false,
     lastUsage: EMPTY_USAGE,
     totalUsage: EMPTY_USAGE,
+    memories: [],
+    memoriesLoaded: false,
     error: null,
+};
+
+const mergeMemories = (list: ChatMemory[], incoming: ChatMemory[]): ChatMemory[] => {
+    const byKey = new Map(list.map((m) => [m.key, m]));
+    incoming.forEach((m) => byKey.set(m.key, m));
+    return Array.from(byKey.values());
 };
 
 // Load an existing day/global thread transcript.
@@ -35,6 +48,25 @@ export const loadThread = createAsyncThunk(
     'chat/loadThread',
     async ({ device, threadId }: { device: string; threadId: string }) => {
         return await getChatThread(device, threadId);
+    },
+);
+
+export const fetchMemories = createAsyncThunk(
+    'chat/fetchMemories',
+    async (device: string) => await getChatMemory(device),
+);
+
+export const saveMemory = createAsyncThunk(
+    'chat/saveMemory',
+    async ({ device, key, text }: { device: string; key: string; text: string }) =>
+        await putChatMemory(device, key, text),
+);
+
+export const removeMemory = createAsyncThunk(
+    'chat/removeMemory',
+    async ({ device, key }: { device: string; key: string }) => {
+        await deleteChatMemory(device, key);
+        return key;
     },
 );
 
@@ -100,8 +132,13 @@ const chatSlice = createSlice({
             state.threadId = action.payload.threadId;
             state.lastUsage = action.payload.messageUsage;
             state.totalUsage = action.payload.totalUsage;
+            const distilled = action.payload.distilled || [];
             const last = state.messages[state.messages.length - 1];
-            if (last && last.role === 'assistant') last.tokenUsage = action.payload.messageUsage;
+            if (last && last.role === 'assistant') {
+                last.tokenUsage = action.payload.messageUsage;
+                if (distilled.length) last.distilled = distilled;
+            }
+            if (distilled.length) state.memories = mergeMemories(state.memories, distilled);
         },
         streamError: (state, action: PayloadAction<string>) => {
             state.streaming = false;
@@ -134,6 +171,16 @@ const chatSlice = createSlice({
             .addCase(sendMessageStream.rejected, (state, action) => {
                 state.streaming = false;
                 state.error = action.error.message ?? 'Chat failed';
+            })
+            .addCase(fetchMemories.fulfilled, (state, action: PayloadAction<ChatMemory[]>) => {
+                state.memories = action.payload;
+                state.memoriesLoaded = true;
+            })
+            .addCase(saveMemory.fulfilled, (state, action: PayloadAction<ChatMemory>) => {
+                state.memories = mergeMemories(state.memories, [action.payload]);
+            })
+            .addCase(removeMemory.fulfilled, (state, action: PayloadAction<string>) => {
+                state.memories = state.memories.filter((m) => m.key !== action.payload);
             });
     },
 });

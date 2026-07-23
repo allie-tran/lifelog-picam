@@ -287,6 +287,7 @@ export interface ChatMessage {
     content: string;
     appliedActions?: AppliedAction[];
     tokenUsage?: TokenUsage;
+    distilled?: ChatMemory[];
     ts?: string;
 }
 
