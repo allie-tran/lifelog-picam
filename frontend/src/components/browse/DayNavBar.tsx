@@ -84,7 +84,7 @@ function modal<T>(items: T[]): T | null {
 
 // A short stationary run (≤ this) between moves is a transit waypoint (a bus/tram
 // stop, a platform wait), not a destination. Mirrors location_visits._WAIT_MAX_S.
-const WAIT_MAX_S = 15 * 60;
+const WAIT_MAX_S = 3 * 60;
 
 // Header label + tooltip text for a location run (transit vs. place, with icons).
 function runHeader(run: LocationRun): { headerText: string; tipTitle: string } {
@@ -184,6 +184,34 @@ function journeyName(segs: NavSegment[]): string {
     return named || 'In transit';
 }
 
+// Split a transit core into contiguous same-mode legs. A waypoint stop (no mode)
+// that sits just before a mode change is attached to the upcoming leg (you wait,
+// then board), so "walk → wait → bus" splits as [walk] [wait+bus].
+function splitByMode(runs: LocationRun[]): LocationRun[][] {
+    const chunks: LocationRun[][] = [];
+    let cur: LocationRun[] = [];
+    let curMode: string | null = null;
+    for (let k = 0; k < runs.length; k++) {
+        const r = runs[k];
+        const m = r.isMove ? r.mode : null;
+        if (m === null && cur.length && curMode !== null) {
+            const nextMove = runs.slice(k + 1).find((x) => x.isMove);
+            if (nextMove && nextMove.mode && nextMove.mode !== curMode) {
+                chunks.push(cur);
+                cur = [];
+                curMode = null;
+            }
+        } else if (m !== null && curMode !== null && m !== curMode && cur.length) {
+            chunks.push(cur);
+            cur = [];
+        }
+        cur.push(r);
+        if (m !== null) curMode = m;
+    }
+    if (cur.length) chunks.push(cur);
+    return chunks;
+}
+
 function mergeRuns(runs: LocationRun[]): LocationRun {
     const segments = runs.flatMap((r) => r.segments);
     return {
@@ -230,7 +258,11 @@ function mergeTransitWaypoints(runs: LocationRun[]): LocationRun[] {
             const first = transitIdx[0];
             const last = transitIdx[transitIdx.length - 1];
             group.slice(0, first).forEach((r) => out.push(r));
-            out.push(mergeRuns(group.slice(first, last + 1)));
+            // Split the transit-bounded core into one leg per contiguous transport
+            // mode, so "walk → bus → walk" reads as three legs, not one blob.
+            for (const chunk of splitByMode(group.slice(first, last + 1))) {
+                out.push(mergeRuns(chunk));
+            }
             group.slice(last + 1).forEach((r) => out.push(r));
             i = j;
         } else {

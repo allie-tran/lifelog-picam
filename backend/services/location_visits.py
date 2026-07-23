@@ -59,10 +59,28 @@ _MOVE_ABSORB_MAX_S = 10 * 60
 # outing (concert, match, exhibition), not a tram platform passed through.
 _EVENT_MIN_STOP_S = 20 * 60
 
+# Activity-group keywords that, on their own, mean the person was NOT attending a
+# public event even while inside a notable venue — they were working, in a meeting,
+# or sleeping/resting there. Being at a stadium's coordinates while heads-down at a
+# laptop is presence, not attendance. Matched as case-insensitive substrings so the
+# check is robust to the exact group punctuation ("Work – Research & Writing").
+_NON_EVENT_GROUP_KEYWORDS = ("work", "meeting", "sleep", "downtime")
+
+
+def _attendance_plausible(activity_groups: list[str]) -> bool:
+    """False when *every* activity group in the visit is non-attending (work /
+    meeting / sleep) — then skip event grounding. Unknown (no groups) → True, so we
+    don't suppress on missing annotations."""
+    if not activity_groups:
+        return True
+    return not all(
+        any(k in g.lower() for k in _NON_EVENT_GROUP_KEYWORDS) for g in activity_groups
+    )
+
 # A stationary stop no longer than this, when sandwiched by transit, is treated
 # as a transit waypoint (waiting at a platform/stop) and folded into the journey
 # rather than shown as its own visit. Longer stops are real destinations.
-_WAIT_MAX_S = 15 * 60
+_WAIT_MAX_S = 3 * 60
 
 
 def _norm(name: Optional[str]) -> str:
@@ -381,10 +399,17 @@ def _events_prompt(
         f"On {date_human}, at {where}.{scene}\n"
         "Identify the specific named public event (concert, match, festival, "
         "tattoo, parade, exhibition, market) happening at this exact location "
-        "and date that is consistent with what the photos show. Use the "
-        "coordinates as the primary anchor; the place name may be a generic or "
-        "adjacent label. Reply with ONE short factual line naming the event. "
-        "If nothing clearly matches, reply exactly with: NONE."
+        "and date. Use the coordinates as the primary anchor; the place name may "
+        "be a generic or adjacent label.\n"
+        "CRITICAL — report an event ONLY if the photos are consistent with the "
+        "person actually ATTENDING it: a crowd, a stage or performance, a sports "
+        "field/arena bowl, exhibits, festival stalls, tickets/programmes. If the "
+        "photos instead show unrelated activity — working at a laptop, a meeting, "
+        "eating at a cafe or restaurant, an office/lobby/corridor/desk, or just "
+        "passing by outside — reply NONE even when an event is on at or near this "
+        "venue. Being at the location is not the same as attending.\n"
+        "Reply with ONE short factual line naming the event, or exactly NONE if "
+        "nothing clearly matches or attendance is not evident."
     )
 
 
@@ -498,12 +523,21 @@ def _describe_visits_global(outline: list[dict]) -> dict[int, str]:
         "list of location visits. Each visit has a place, whether it was a stop or "
         "transit, a time range, and short notes distilled from the photos.\n\n"
         "Using the FULL day for context (so the descriptions connect and do not repeat "
-        "each other), write ONE specific sentence per visit describing what happened "
-        "there: past tense, third person 'they'. Keep stop visits to ~22 words. For a "
-        "transit visit, narrate the whole trip as one flow — walking to the stop, any "
-        "wait, the ride, and the walk at the other end (mention a notable wait in "
-        "minutes if the notes imply one); up to ~35 words. If a visit lists an Event "
-        "and its notes are consistent, name that event. Do not invent facts beyond the "
+        "each other), write ONE factual sentence per visit. Past tense, third person "
+        "'they'. Answer the concrete questions a diary cares about: WHAT they did there "
+        "and WHO they were with. State it plainly.\n\n"
+        "Write like a log entry, NOT prose. Do NOT be flowery, literary, or atmospheric. "
+        "Do NOT set a scene or dwell on incidental visual micro-details (lighting, decor, "
+        "what was on a screen, passing objects) — report the actual activity, not what the "
+        "camera happened to see. Skip filler adjectives.\n\n"
+        "Only mention duration when it is genuinely notable (an unusually long stay, or a "
+        "very brief stop); otherwise leave time out — the app already shows it. Keep stop "
+        "visits to ~18 words. For a transit visit, state the mode and route in one line "
+        "(walk / tram / train / drive), and a wait only if long (give the minutes); up to "
+        "~25 words. A visit may list an Event, but name it ONLY when the notes clearly "
+        "show the person attending it (crowd, performance, match, exhibits); if the notes "
+        "describe unrelated activity (working, a meeting, eating, passing through), IGNORE "
+        "the event and describe what they actually did. Do not invent facts beyond the "
         "notes. Do not restate the place name or the clock time.\n\n"
         "Return ONLY a JSON object mapping each visit number (as a string) to its "
         'sentence, e.g. {"0": "...", "1": "..."}.\n\n'
@@ -563,7 +597,11 @@ def build_location_visits(
         people = _visit_people(session, device, date, seg_ids) if seg_ids else []
 
         event_context: Optional[str] = None
-        if duration >= _EVENT_MIN_STOP_S and _is_notable_venue(name, stop, labeled):
+        if (
+            duration >= _EVENT_MIN_STOP_S
+            and _is_notable_venue(name, stop, labeled)
+            and _attendance_plausible(activity_groups)
+        ):
             date_human = start_time.strftime("%A, %-d %B %Y")
             scene_hint = " ".join(seg_descs[:3])[:300]
             event_context = _lookup_events(name, date_human, lat=lat, lon=lon, scene_hint=scene_hint)
