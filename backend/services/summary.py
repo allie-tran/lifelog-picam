@@ -1,6 +1,7 @@
 # Summary of various activities in the day
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from schemas import ActionType, CustomTarget, DaySummary, SummarySegment
 from auth.ortho import apply_transformation, get_matrix
 from core.config import DIR, GROUPED_CATEGORIES
+from core.timefmt import fmt_hm
 from database.models import Image, ImageEmbedding, HeartRateData, Location
 from database.types import ImageRecord, _orm_to_lifelog
 from integrations.llm import llm
@@ -37,10 +39,6 @@ encoded_activities_dict = {
 }
 
 encoded_prompts = {}
-_raw_text_cache: dict[str, np.ndarray] = {}
-
-# Minimum cosine similarity for period target semantic matching via CLIP text.
-_PERIOD_TEXT_SIM_THRESHOLD = 0.80
 
 # Activity labels that indicate the segment is not yet annotated / has no content.
 _SKIP_ACTIVITIES = {"no activity", "unclear", "unclear activity", ""}
@@ -52,13 +50,6 @@ def encode_with_cache(session: Session, prompt: str, device: str):
     return encoded_prompts[prompt]
 
 
-def _text_vec(text: str) -> np.ndarray:
-    """Raw (no device transformation) CLIP text encoding, cached."""
-    if text not in _raw_text_cache:
-        _raw_text_cache[text] = clip_model.encode_text(text, normalize=True)
-    return _raw_text_cache[text]
-
-
 def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
     """
     Returns True when a segment should count toward a period target.
@@ -67,7 +58,15 @@ def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
       1. activity_tags exact match — LLM-assigned canonical labels (most reliable)
       2. activity_group exact match — LLM's fixed-group pick
       3. activity exact match (case-insensitive)
-      4. CLIP text cosine similarity >= _PERIOD_TEXT_SIM_THRESHOLD (fallback)
+      4. whole-word containment between the activity label and the target
+         (e.g. target "eating" ⊆ activity "eating lunch", "coffee" ⊆ "making coffee")
+
+    We deliberately do NOT fall back to CLIP text-text cosine similarity: CLIP's
+    text embeddings sit on a high anisotropic baseline (unrelated short phrases
+    routinely score 0.75–0.85), so that fallback matched many unrelated segments
+    to a goal ("coding" catching "commuting", etc.). Tags/group/activity are the
+    LLM's own canonical labels and are precise; the word-containment step only
+    bridges the gerund label ("eating lunch") to a one-word target ("eating").
     """
     if seg.activity_tags:
         tag_set = {t.strip().lower() for t in seg.activity_tags.split(",")}
@@ -80,8 +79,14 @@ def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
         return False
     if activity.lower() == target_name.lower():
         return True
-    sim = float(np.dot(_text_vec(activity), _text_vec(target_name)))
-    return sim >= _PERIOD_TEXT_SIM_THRESHOLD
+    # Whole-word containment (order-independent): every word of the shorter phrase
+    # must appear as a word in the longer one. Word sets avoid substring false hits
+    # like "art" in "started".
+    act_words = set(re.findall(r"\w+", activity.lower()))
+    tgt_words = set(re.findall(r"\w+", target_name.lower()))
+    if not act_words or not tgt_words:
+        return False
+    return tgt_words <= act_words or act_words <= tgt_words
 
 
 def summarize_lifelog_by_day(
@@ -530,6 +535,17 @@ def update_dirty_segments(
     return result
 
 
+# Shared voice for the day-summary bullets: warm, lightly playful, and led by
+# the single most unusual moment — while staying strictly grounded in the notes.
+_DAY_TONE = (
+    "VOICE: warm and lightly playful, second person ('you'). A little vivid and "
+    "fun, but truthful — never exaggerate or invent detail that isn't in the "
+    "notes. At most one tasteful emoji per bullet (optional, skip if unsure).\n"
+    "LEAD with the single most surprising / unusual / memorable moment of the "
+    "day as the first bullet; order the rest by how notable they are.\n"
+)
+
+
 def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
     """
     Generate a natural-language highlight of the day.
@@ -543,7 +559,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             for v in sorted(day_summary.location_visits, key=lambda x: x.start_time):
                 if not (v.description or "").strip():
                     continue
-                line = f'{v.start_time.strftime("%H:%M")}–{v.end_time.strftime("%H:%M")}: {v.description.strip()}'
+                line = f'{fmt_hm(v.start_time, v.timezone)}–{fmt_hm(v.end_time, v.timezone)}: {v.description.strip()}'
                 if v.location_name:
                     line += f' @ {v.location_name}'
                 visit_lines.append(line)
@@ -552,7 +568,8 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                     "From the place-by-place notes below (each line is one place someone "
                     "visited, in order), pick what made THIS day different from a normal "
                     "day.\n\n"
-                    "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short "
+                    + _DAY_TONE +
+                    "\nOutput ONLY a Markdown bullet list: 3-5 bullets ('- '), one short "
                     "line each, for the most notable, memorable, or unusual moments. Bold "
                     "the key place name in each bullet with **double asterisks**. No "
                     "intro line, no narrative paragraph, no title.\n\n"
@@ -561,8 +578,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                     "food' or 'having coffee'. Mention a meal ONLY when the specific dish "
                     "or venue is distinctive and worth remembering (e.g. 'pho at Phở Cô "
                     "Út'), never just that they ate.\n\n"
-                    "Ground every bullet in the notes — do NOT invent. Address the person "
-                    "as 'you'.\n\n"
+                    "Ground every bullet in the notes — do NOT invent.\n\n"
                     + "\n".join(visit_lines)
                 )
                 day_summary.summary_text = str(day_summary_text).strip()
@@ -590,6 +606,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                     "activity": record.activity,
                     "activity_description": record.activity_description,
                     "time": [record.timestamp],
+                    "timezone": record.timezone,
                     "location": seg_to_location.get(sid, ("", True, None, None))[0] if sid is not None else "",
                 }
             else:
@@ -602,6 +619,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                 "activity_description": data["activity_description"],
                 "start_time": min(data["time"]),
                 "end_time": max(data["time"]),
+                "timezone": data["timezone"],
                 "location": data["location"],
             })
         raw_activities.sort(key=lambda x: x["start_time"])
@@ -610,7 +628,7 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
         for seg in raw_activities:
             if (seg["activity"] or "").lower() in _SKIP_ACTIVITIES:
                 continue
-            line = f'{seg["start_time"].strftime("%H:%M")}–{seg["end_time"].strftime("%H:%M")}: {seg["activity_description"] or seg["activity"]}'
+            line = f'{fmt_hm(seg["start_time"], seg["timezone"])}–{fmt_hm(seg["end_time"], seg["timezone"])}: {seg["activity_description"] or seg["activity"]}'
             if seg["location"]:
                 line += f' @ {seg["location"]}'
             activity_lines.append(line)
@@ -618,15 +636,15 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
         day_summary_text = llm.generate_from_text(
             "From the timestamped activities below, pick what made THIS day different "
             "from a normal day. Ignore unclear activities.\n\n"
-            "Output ONLY a Markdown bullet list: 3-5 bullets ('- '), one short line each, "
+            + _DAY_TONE +
+            "\nOutput ONLY a Markdown bullet list: 3-5 bullets ('- '), one short line each, "
             "for the most notable, memorable, or unusual moments. No intro, no narrative "
             "paragraph, no title.\n\n"
             "SKIP ordinary everyday routine that happens on most days — grooming, "
             "checking the phone, commuting, generic 'having food' or 'having coffee'. "
             "Mention a meal ONLY when the specific dish or venue is distinctive and worth "
             "remembering, never just that they ate.\n\n"
-            "Ground every bullet in the activities — do not invent. Address the person "
-            "as 'you'.\n\n"
+            "Ground every bullet in the activities — do not invent.\n\n"
             + "\n".join(activity_lines)
         )
         day_summary.summary_text = str(day_summary_text).strip()
