@@ -122,8 +122,25 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
         day_summary.food = None
         return
 
-    meals = [seg.food for seg in sorted(day_summary.segments, key=lambda s: s.start_time)
-             if seg.food]
+    # Consolidate: one meal can span several ~10-min eating segments, each with
+    # its own food record showing the same plate. Group food segments that are
+    # consecutive in time (gap ≤ _MEAL_MERGE_GAP) into a single meal, deduping
+    # items by name so calories aren't multiplied across the segments.
+    _MEAL_MERGE_GAP = timedelta(minutes=30)
+    food_segs = sorted(
+        (s for s in day_summary.segments if s.food and s.food.items),
+        key=lambda s: s.start_time,
+    )
+    meals: list[MealFood] = []
+    group: list[SummarySegment] = []
+    for seg in food_segs:
+        if group and (seg.start_time - group[-1].end_time) > _MEAL_MERGE_GAP:
+            meals.append(_consolidate_meal(group))
+            group = []
+        group.append(seg)
+    if group:
+        meals.append(_consolidate_meal(group))
+
     items = [it.name for m in meals for it in m.items]
     cals = [m.total_calories for m in meals if m.total_calories is not None]
     day_summary.food = DayFood(
@@ -131,6 +148,45 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
         total_calories=sum(cals) if cals else None,
         items=items,
         meals=meals,
+    )
+
+
+def _consolidate_meal(segs: list[SummarySegment]) -> MealFood:
+    """Merge a run of eating segments into one meal: dedupe items by name (keep
+    the richest — max calories / longest portion), so a plate seen across several
+    segments counts once. Calories = sum of the deduped items."""
+    from collections import Counter
+
+    best: dict[str, FoodItem] = {}
+    for s in segs:
+        for it in s.food.items:  # type: ignore[union-attr]
+            key = it.name.strip().lower()
+            cur = best.get(key)
+            if cur is None:
+                best[key] = FoodItem(name=it.name, portion=it.portion, calories=it.calories)
+                continue
+            # Keep the more informative estimate.
+            if (it.calories or 0) > (cur.calories or 0):
+                cur.calories = it.calories
+            if len(it.portion or "") > len(cur.portion or ""):
+                cur.portion = it.portion
+    items = list(best.values())
+    item_cals = [i.calories for i in items if i.calories is not None]
+
+    meal_types = [s.food.meal_type for s in segs if s.food and s.food.meal_type]
+    healths = [s.food.healthiness for s in segs if s.food and s.food.healthiness]
+    summaries = [s.food.summary for s in segs if s.food and s.food.summary]
+    return MealFood(
+        meal_type=Counter(meal_types).most_common(1)[0][0] if meal_types else None,
+        items=items,
+        total_calories=sum(item_cals) if item_cals else None,
+        healthiness=Counter(healths).most_common(1)[0][0] if healths else None,
+        summary=max(summaries, key=len) if summaries else None,
+        start_time=segs[0].start_time,
+        end_time=segs[-1].end_time,
+        timezone=next((s.timezone for s in segs if s.timezone), None),
+        location_name=next((s.location_name for s in segs if s.location_name), None),
+        segment_ids=[s.segment_id for s in segs if s.segment_id is not None],
     )
 
 

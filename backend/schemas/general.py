@@ -241,12 +241,19 @@ class FoodItem(CamelCaseModel):
 
 
 class MealFood(CamelCaseModel):
-    """Structured food detail for one eating segment (from the food pass)."""
+    """Structured food detail for a meal. Per-segment on SummarySegment.food;
+    consolidated across a meal's segments in DayFood.meals (with time/place)."""
     meal_type: Optional[str] = None   # breakfast | lunch | dinner | snack
     items: List[FoodItem] = Field(default_factory=list)
     total_calories: Optional[int] = None
     healthiness: Optional[str] = None
     summary: Optional[str] = None
+    # Set on consolidated meals (DayFood.meals): span, place, and source segments.
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    timezone: Optional[str] = None
+    location_name: Optional[str] = None
+    segment_ids: List[int] = Field(default_factory=list)
 
 
 class DayFood(CamelCaseModel):

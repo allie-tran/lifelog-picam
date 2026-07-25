@@ -299,6 +299,12 @@ export interface MealFood {
     totalCalories?: number | null;
     healthiness?: string | null;
     summary?: string | null;
+    // Set on consolidated meals (DayFood.meals).
+    startTime?: string | null;
+    endTime?: string | null;
+    timezone?: string | null;
+    locationName?: string | null;
+    segmentIds?: number[];
 }
 
 export interface DayFood {

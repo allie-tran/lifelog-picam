@@ -19,7 +19,7 @@ import {
     Tooltip,
     Typography,
 } from '@mui/material';
-import { DaySummary, LocationVisit, MealFood, SummarySegment } from '@utils/types';
+import { DaySummary, LocationVisit, SummarySegment } from '@utils/types';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
@@ -462,12 +462,10 @@ function fmtItem(name: string, portion?: string, calories?: number | null): stri
     return s;
 }
 
-// Eating focus: the day's meals with items, rough portions + calories, plus a
-// rollup strip. Driven by segment.food (per-meal) + daySummary.food (rollup).
+// Eating focus: the day's meals (consolidated across a meal's segments) with
+// items, rough portions + calories, plus a daily rollup strip.
 export function MealsCard({ day }: { day: DaySummary }) {
-    const meals = (day.segments ?? [])
-        .filter((s) => s.food && (s.food.items?.length ?? 0) > 0)
-        .sort((a, b) => uMs(a.startTime) - uMs(b.startTime));
+    const meals = (day.food?.meals ?? []).filter((m) => (m.items?.length ?? 0) > 0);
     if (meals.length === 0) return null;
     const roll = day.food;
 
@@ -490,43 +488,43 @@ export function MealsCard({ day }: { day: DaySummary }) {
                 </Stack>
 
                 <Stack spacing={1.5} mt={1}>
-                    {meals.map((seg) => {
-                        const f = seg.food as MealFood;
-                        return (
-                            <Box key={seg.segmentId ?? seg.startTime}
-                                sx={{ pl: 1.5, borderLeft: '3px solid', borderColor: 'divider' }}>
-                                <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
-                                    {f.mealType && (
-                                        <Typography variant="body2" fontWeight="bold">
-                                            {MEAL_ICON[f.mealType] ?? '🍴'} {f.mealType[0].toUpperCase() + f.mealType.slice(1)}
-                                        </Typography>
-                                    )}
-                                    <Typography variant="caption" color="text.secondary">
-                                        {hm(uMs(seg.startTime), seg.timezone)}
-                                        {seg.locationName ? ` · ${seg.locationName}` : ''}
-                                    </Typography>
-                                    {f.totalCalories != null && (
-                                        <Typography variant="caption" color="warning.main">
-                                            ~{f.totalCalories} kcal
-                                        </Typography>
-                                    )}
-                                </Stack>
-                                <Stack component="ul" sx={{ m: 0, mt: 0.25, pl: 2.5 }} spacing={0.1}>
-                                    {f.items.map((it, i) => (
-                                        <Typography key={i} component="li" variant="body2">
-                                            {fmtItem(it.name, it.portion, it.calories)}
-                                        </Typography>
-                                    ))}
-                                </Stack>
-                                {f.healthiness && (
-                                    <Typography variant="caption" color="text.secondary"
-                                        sx={{ display: 'block', mt: 0.25, fontStyle: 'italic' }}>
-                                        {f.healthiness}
+                    {meals.map((f, mi) => (
+                        <Box key={f.segmentIds?.[0] ?? f.startTime ?? mi}
+                            sx={{ pl: 1.5, borderLeft: '3px solid', borderColor: 'divider' }}>
+                            <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
+                                {f.mealType && (
+                                    <Typography variant="body2" fontWeight="bold">
+                                        {MEAL_ICON[f.mealType] ?? '🍴'} {f.mealType[0].toUpperCase() + f.mealType.slice(1)}
                                     </Typography>
                                 )}
-                            </Box>
-                        );
-                    })}
+                                {f.startTime && (
+                                    <Typography variant="caption" color="text.secondary">
+                                        {hm(uMs(f.startTime), f.timezone)}
+                                        {f.endTime ? `–${hm(uMs(f.endTime), f.timezone)}` : ''}
+                                        {f.locationName ? ` · ${f.locationName}` : ''}
+                                    </Typography>
+                                )}
+                                {f.totalCalories != null && (
+                                    <Typography variant="caption" color="warning.main">
+                                        ~{f.totalCalories} kcal
+                                    </Typography>
+                                )}
+                            </Stack>
+                            <Stack component="ul" sx={{ m: 0, mt: 0.25, pl: 2.5 }} spacing={0.1}>
+                                {f.items.map((it, i) => (
+                                    <Typography key={i} component="li" variant="body2">
+                                        {fmtItem(it.name, it.portion, it.calories)}
+                                    </Typography>
+                                ))}
+                            </Stack>
+                            {f.healthiness && (
+                                <Typography variant="caption" color="text.secondary"
+                                    sx={{ display: 'block', mt: 0.25, fontStyle: 'italic' }}>
+                                    {f.healthiness}
+                                </Typography>
+                            )}
+                        </Box>
+                    ))}
                 </Stack>
                 <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 1 }}>
                     Portions &amp; calories are rough estimates.
