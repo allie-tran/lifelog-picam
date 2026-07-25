@@ -122,10 +122,12 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
         day_summary.food = None
         return
 
-    # Consolidate: one meal can span several ~10-min eating segments, each with
-    # its own food record showing the same plate. Group food segments that are
-    # consecutive in time (gap ≤ _MEAL_MERGE_GAP) into a single meal, deduping
-    # items by name so calories aren't multiplied across the segments.
+    # Consolidate: one meal spans many ~10-min eating segments, each with its own
+    # food record of the same (evolving) plate. Group food segments that are
+    # consecutive in time (gap ≤ _MEAL_MERGE_GAP) AND at the same place. Because
+    # the model paraphrases the same dish differently each segment, we do NOT sum
+    # across segments (that balloons calories); each meal is represented by its
+    # single richest segment, with calories = the largest single-segment estimate.
     _MEAL_MERGE_GAP = timedelta(minutes=30)
     food_segs = sorted(
         (s for s in day_summary.segments if s.food and s.food.items),
@@ -134,7 +136,10 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
     meals: list[MealFood] = []
     group: list[SummarySegment] = []
     for seg in food_segs:
-        if group and (seg.start_time - group[-1].end_time) > _MEAL_MERGE_GAP:
+        if group and (
+            (seg.start_time - group[-1].end_time) > _MEAL_MERGE_GAP
+            or (seg.location_name or "") != (group[-1].location_name or "")
+        ):
             meals.append(_consolidate_meal(group))
             group = []
         group.append(seg)
@@ -152,40 +157,23 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
 
 
 def _consolidate_meal(segs: list[SummarySegment]) -> MealFood:
-    """Merge a run of eating segments into one meal: dedupe items by name (keep
-    the richest — max calories / longest portion), so a plate seen across several
-    segments counts once. Calories = sum of the deduped items."""
-    from collections import Counter
-
-    best: dict[str, FoodItem] = {}
-    for s in segs:
-        for it in s.food.items:  # type: ignore[union-attr]
-            key = it.name.strip().lower()
-            cur = best.get(key)
-            if cur is None:
-                best[key] = FoodItem(name=it.name, portion=it.portion, calories=it.calories)
-                continue
-            # Keep the more informative estimate.
-            if (it.calories or 0) > (cur.calories or 0):
-                cur.calories = it.calories
-            if len(it.portion or "") > len(cur.portion or ""):
-                cur.portion = it.portion
-    items = list(best.values())
-    item_cals = [i.calories for i in items if i.calories is not None]
-
-    meal_types = [s.food.meal_type for s in segs if s.food and s.food.meal_type]
-    healths = [s.food.healthiness for s in segs if s.food and s.food.healthiness]
-    summaries = [s.food.summary for s in segs if s.food and s.food.summary]
+    """Represent a run of eating segments as one meal via its richest single
+    segment (most items; ties broken by highest calories). Summing per-segment
+    records would multiply the same dish (the model re-describes it each frame),
+    so calories are the largest single-segment estimate, not a sum."""
+    rep = max(segs, key=lambda s: (len(s.food.items), s.food.total_calories or 0))  # type: ignore[union-attr]
+    totals = [s.food.total_calories for s in segs if s.food and s.food.total_calories is not None]
     return MealFood(
-        meal_type=Counter(meal_types).most_common(1)[0][0] if meal_types else None,
-        items=items,
-        total_calories=sum(item_cals) if item_cals else None,
-        healthiness=Counter(healths).most_common(1)[0][0] if healths else None,
-        summary=max(summaries, key=len) if summaries else None,
+        meal_type=rep.food.meal_type,          # type: ignore[union-attr]
+        items=[FoodItem(name=i.name, portion=i.portion, calories=i.calories)
+               for i in rep.food.items],        # type: ignore[union-attr]
+        total_calories=max(totals) if totals else None,
+        healthiness=rep.food.healthiness,       # type: ignore[union-attr]
+        summary=rep.food.summary,               # type: ignore[union-attr]
         start_time=segs[0].start_time,
         end_time=segs[-1].end_time,
         timezone=next((s.timezone for s in segs if s.timezone), None),
-        location_name=next((s.location_name for s in segs if s.location_name), None),
+        location_name=rep.location_name,
         segment_ids=[s.segment_id for s in segs if s.segment_id is not None],
     )
 

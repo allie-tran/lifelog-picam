@@ -5,7 +5,6 @@ meal record (items + rough portion, rough calories, meal type, healthiness).
 Portions and calories are explicitly ballpark estimates, not medical figures.
 """
 import io
-import random
 import traceback
 
 from PIL import Image
@@ -20,10 +19,20 @@ _parser = JSONParser()
 
 _MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack"}
 
+# Vision cost scales with images sent. A meal segment's frames are near-duplicates
+# of the same plate, so a few evenly-spaced frames are plenty — keep this small.
+_MAX_IMAGES = 3
+
 _PROMPT = """These are photos from a POV lifelogging camera worn by me during an eating moment{time_hint}.
 
-Identify the food and drink actually visible/being consumed. Estimate ROUGH, ballpark
-portions and calories from what you can see — approximate is fine, do not overthink.
+Identify ONLY the food and drink that I (the camera wearer) am actually eating or
+drinking — my own plate, cup, or what's in my hands. Estimate ROUGH, ballpark
+portions and calories — approximate is fine, do not overthink.
+
+EXCLUDE anything I'm not consuming: other people's plates and drinks, dishes merely
+sitting on the table that I don't touch, untouched/background bottles, condiments and
+jars unless I actually use them, menus, and decor. If you can't tell whether I'm
+consuming an item, leave it out. Better to list fewer, confident items.
 
 Return ONLY valid JSON in this exact format:
 
@@ -45,9 +54,17 @@ your best guess. Pick meal_type using the time of day when given.
 """
 
 
+def _sample_evenly(paths: list[str], n: int) -> list[str]:
+    """Pick up to n evenly-spaced frames (a plate barely changes within a segment,
+    so evenly-spaced beats sending them all)."""
+    if len(paths) <= n:
+        return paths
+    step = (len(paths) - 1) / (n - 1) if n > 1 else 0
+    return [paths[round(i * step)] for i in range(n)]
+
+
 def _load_bytes(device: str, paths: list[str]) -> list[bytes]:
-    if len(paths) > 16:
-        paths = [paths[i] for i in sorted(random.sample(range(len(paths)), 16))]
+    paths = _sample_evenly(paths, _MAX_IMAGES)
     out: list[bytes] = []
     for p in paths:
         path = p if THUMBNAIL_DIR in p else f"{THUMBNAIL_DIR}/{device}/{p}"
