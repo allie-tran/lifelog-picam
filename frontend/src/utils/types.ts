@@ -104,6 +104,7 @@ type SummarySegment = {
     locationStop?: boolean | null;
     locationLatitude?: number | null;
     locationLongitude?: number | null;
+    food?: MealFood | null;
 };
 
 type LocationVisit = {
@@ -161,6 +162,9 @@ type DaySummary = {
     categoryMinutes: Record<string, number>;
     totalImages: number;
     totalMinutes: number;
+
+    // Eating focus: per-day food rollup.
+    food?: DayFood | null;
 };
 
 interface Point {
@@ -280,6 +284,28 @@ export interface AppliedAction {
     tool: string;
     args: Record<string, any>;
     outcome: string;
+}
+
+// --- Eating focus / food ---
+export interface FoodItem {
+    name: string;
+    portion?: string;
+    calories?: number | null;
+}
+
+export interface MealFood {
+    mealType?: string | null;   // breakfast | lunch | dinner | snack
+    items: FoodItem[];
+    totalCalories?: number | null;
+    healthiness?: string | null;
+    summary?: string | null;
+}
+
+export interface DayFood {
+    mealCount: number;
+    totalCalories?: number | null;
+    items: string[];
+    meals: MealFood[];
 }
 
 export interface ChatMessage {

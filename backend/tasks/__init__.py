@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import create_engine, delete, func, insert, or_, select, update
+from sqlalchemy import create_engine, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.orm import Session
 from auth.ortho import get_matrix
 from auth.types import Person
@@ -183,8 +183,80 @@ def describe_segment_task(
             },
             upsert=True,
         )
+
+        # Eating focus: run the structured food pass on food segments.
+        if (activity_obj.get("activity_group") or "") == "Food & Drink":
+            food_pass_task.delay(device, date, thumbnail_paths, segment_id)
     except Exception as e:
         logging.error("Error describing segment %s for %s on %s: %s", segment_id, device, date, e)
+
+
+@celery.task(name="tasks.food_pass_task", bind=True)
+def food_pass_task(self, device, date, thumbnail_paths, segment_id):
+    """Extract structured food detail for one eating segment and upsert SegmentFood."""
+    from database.models import SegmentFood
+    from services.food_pass import describe_food_segment
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    # Local time hint so the model can pick breakfast/lunch/dinner/snack.
+    local_time = ""
+    try:
+        with Session(engine) as session:
+            row = session.execute(
+                select(Image.timestamp, Image.timezone)
+                .where(
+                    Image.device == device, Image.date == date,
+                    Image.segment_id == segment_id, Image.deleted == False,
+                )
+                .order_by(Image.timestamp.asc())
+                .limit(1)
+            ).first()
+        if row and row.timestamp:
+            ts = row.timestamp
+            if row.timezone:
+                try:
+                    from zoneinfo import ZoneInfo
+                    ts = ts.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(row.timezone))
+                except Exception:
+                    pass
+            local_time = ts.strftime("%H:%M")
+    except Exception:
+        pass
+
+    food = describe_food_segment(device, date, thumbnail_paths, segment_id, local_time)
+    if not food:
+        logging.info("food_pass: no food record for %s/%s seg %s", device, date, segment_id)
+        return
+
+    with Session(engine) as session:
+        stmt = pg_insert(SegmentFood).values(
+            device=device, date=date, segment_id=segment_id,
+            items=food["items"], meal_type=food["meal_type"],
+            total_calories=food["total_calories"], healthiness=food["healthiness"],
+            summary=food["summary"],
+        ).on_conflict_do_update(
+            constraint="uq_segment_food_seg",
+            set_={
+                "items": food["items"],
+                "meal_type": food["meal_type"],
+                "total_calories": food["total_calories"],
+                "healthiness": food["healthiness"],
+                "summary": food["summary"],
+                "updated": datetime.now(timezone.utc),
+            },
+        )
+        session.execute(stmt)
+        session.commit()
+
+    from integrations.sessions.redis import bust_day_caches
+    bust_day_caches(device, date)
+    MongoClient("mongodb://localhost:27017/")["picam"]["day_summaries"].update_one(
+        {"date": date, "device": device},
+        {"$set": {"text_summary_stale": True, "updated": True}},
+        upsert=True,
+    )
+    logging.info("food_pass: stored %d items for %s/%s seg %s",
+                 len(food["items"]), device, date, segment_id)
 
 
 @celery.task(name="tasks.resync_day_task", bind=True)
@@ -1388,6 +1460,139 @@ def pipeline_catchup_task():
             "pipeline_catchup: YOLO=%d thumbnails=%d embeddings=%d segments=%d",
             queued_yolo, queued_thumbs, queued_enc, queued_seg,
         )
+
+
+@celery.task(name="tasks.backfill_unannotated_segments_task")
+def backfill_unannotated_segments_task():
+    """Re-dispatch describe_segment_task for any segment left unannotated.
+
+    A describe_segment_task can leave a segment with NULL activity when its LLM
+    call raised (safety block, reset, timeout) or when re-segmentation moved the
+    images out from under its write (rowcount 0). Those segments render grey
+    ("No activity") on the DayNav. This lightweight pass runs frequently and
+    re-queues them so they recover within minutes rather than waiting on the
+    hourly pipeline_catchup.
+
+    Grace window: only segments whose newest image is older than SETTLE_MINUTES,
+    so an in-flight first-pass task isn't raced.
+    """
+    SETTLE_MINUTES = 15
+    now = datetime.now(timezone.utc)
+    settle_cutoff = now - timedelta(minutes=SETTLE_MINUTES)
+    past_cutoff = now - timedelta(days=2)
+
+    seg_dispatch: list[tuple] = []
+    with Session(engine) as session:
+        rows = session.execute(
+            select(Image.device, Image.date, Image.segment_id)
+            .where(
+                Image.segment_id.isnot(None),
+                or_(Image.activity.is_(None), Image.activity == ""),
+                Image.timestamp > past_cutoff,
+                Image.deleted == False,
+            )
+            .group_by(Image.device, Image.date, Image.segment_id)
+            # only fire once the whole segment has settled past the grace window
+            .having(func.max(Image.timestamp) < settle_cutoff)
+            .order_by(Image.date.desc(), Image.segment_id)
+            .limit(100)
+        ).all()
+
+        # Fetch all image paths for the selected segments in one query (composite
+        # IN), then partition in Python — avoids a per-segment round-trip.
+        keys = [(r.device, r.date, r.segment_id) for r in rows]
+        if keys:
+            from collections import defaultdict as _defaultdict
+            paths_by_seg: dict[tuple, list[str]] = _defaultdict(list)
+            for device, date, segment_id, image_path in session.execute(
+                select(Image.device, Image.date, Image.segment_id, Image.image_path)
+                .where(
+                    tuple_(Image.device, Image.date, Image.segment_id).in_(keys),
+                    Image.deleted == False,
+                )
+                .order_by(Image.timestamp.asc())
+            ).all():
+                paths_by_seg[(device, date, segment_id)].append(image_path)
+
+            for device, date, segment_id in keys:
+                seg_paths = paths_by_seg.get((device, date, segment_id), [])
+                if seg_paths:
+                    thumb_paths = [
+                        f"{THUMBNAIL_DIR}/{device}/{p.rsplit('.', 1)[0]}.webp"
+                        for p in seg_paths[:20]
+                    ]
+                    seg_dispatch.append((device, date, segment_id, thumb_paths))
+
+    for device, date, segment_id, thumb_paths in seg_dispatch:
+        describe_segment_task.delay(device, date, thumb_paths, segment_id)
+
+    if seg_dispatch:
+        logging.info("backfill_unannotated_segments: re-queued %d segments", len(seg_dispatch))
+
+
+@celery.task(name="tasks.backfill_food_segments_task")
+def backfill_food_segments_task():
+    """Run the food pass on eating segments that don't yet have a SegmentFood row.
+
+    Safety net behind the describe_segment_task trigger: catches food segments
+    whose trigger was missed (annotation predating this feature, a failed pass,
+    or re-segmentation). Same 15-min settle grace as the annotation backfill.
+    """
+    from database.models import SegmentFood
+
+    SETTLE_MINUTES = 15
+    now = datetime.now(timezone.utc)
+    settle_cutoff = now - timedelta(minutes=SETTLE_MINUTES)
+    past_cutoff = now - timedelta(days=2)
+
+    seg_dispatch: list[tuple] = []
+    with Session(engine) as session:
+        have_food = select(
+            SegmentFood.device, SegmentFood.date, SegmentFood.segment_id
+        )
+        rows = session.execute(
+            select(Image.device, Image.date, Image.segment_id)
+            .where(
+                Image.segment_id.isnot(None),
+                Image.activity_group == "Food & Drink",
+                Image.timestamp > past_cutoff,
+                Image.deleted == False,
+                tuple_(Image.device, Image.date, Image.segment_id).notin_(have_food),
+            )
+            .group_by(Image.device, Image.date, Image.segment_id)
+            .having(func.max(Image.timestamp) < settle_cutoff)
+            .order_by(Image.date.desc(), Image.segment_id)
+            .limit(100)
+        ).all()
+
+        keys = [(r.device, r.date, r.segment_id) for r in rows]
+        if keys:
+            from collections import defaultdict as _defaultdict
+            paths_by_seg: dict[tuple, list[str]] = _defaultdict(list)
+            for device, date, segment_id, image_path in session.execute(
+                select(Image.device, Image.date, Image.segment_id, Image.image_path)
+                .where(
+                    tuple_(Image.device, Image.date, Image.segment_id).in_(keys),
+                    Image.deleted == False,
+                )
+                .order_by(Image.timestamp.asc())
+            ).all():
+                paths_by_seg[(device, date, segment_id)].append(image_path)
+
+            for device, date, segment_id in keys:
+                seg_paths = paths_by_seg.get((device, date, segment_id), [])
+                if seg_paths:
+                    thumb_paths = [
+                        f"{THUMBNAIL_DIR}/{device}/{p.rsplit('.', 1)[0]}.webp"
+                        for p in seg_paths[:20]
+                    ]
+                    seg_dispatch.append((device, date, segment_id, thumb_paths))
+
+    for device, date, segment_id, thumb_paths in seg_dispatch:
+        food_pass_task.delay(device, date, thumb_paths, segment_id)
+
+    if seg_dispatch:
+        logging.info("backfill_food_segments: queued %d segments", len(seg_dispatch))
 
 
 @celery.task(name="tasks.update_status_summary")

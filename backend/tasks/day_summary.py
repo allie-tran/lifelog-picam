@@ -233,6 +233,13 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
                     )
                 except Exception as _lve:
                     logger.warning("_text_summary_bg: location visits failed for %s/%s: %s", device, date, _lve)
+            # Eating focus: refresh food records (the food pass marks the text
+            # stale, so this path runs after new food data lands).
+            try:
+                from services.summary import attach_food_to_summary
+                attach_food_to_summary(session, summary)
+            except Exception as _fe:
+                logger.warning("_text_summary_bg: food attach failed for %s/%s: %s", device, date, _fe)
             summary = summarize_day_by_text(session, summary)
             summary.text_summary_stale = False
             summary.text_summary_generated_at = datetime.now(timezone.utc)
@@ -272,6 +279,12 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
                     "text_summary_generated_at": summary.text_summary_generated_at,
                     "unique_highlight": summary.unique_highlight,
                     "novelty_segments": summary.novelty_segments,
+                    "food": summary.food.model_dump() if summary.food else None,
+                    "segments": [s.model_dump() for s in summary.segments],
+                    "period_metrics": {
+                        k: [s.model_dump() for s in v]
+                        for k, v in summary.period_metrics.items()
+                    },
                     "processing": False,
                 }},
                 upsert=True,

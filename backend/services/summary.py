@@ -9,7 +9,7 @@ import os
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from schemas import ActionType, CustomTarget, DaySummary, SummarySegment
+from schemas import ActionType, CustomTarget, DayFood, DaySummary, FoodItem, MealFood, SummarySegment
 from auth.ortho import apply_transformation, get_matrix
 from core.config import DIR, GROUPED_CATEGORIES
 from core.timefmt import fmt_hm
@@ -89,6 +89,51 @@ def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
     return tgt_words <= act_words or act_words <= tgt_words
 
 
+def attach_food_to_summary(session, day_summary: DaySummary) -> None:
+    """Attach stored SegmentFood onto eating segments and build the DayFood
+    rollup. Pure aggregation of the food-pass table — no LLM. Because
+    period_metrics['Eating'] holds the same SummarySegment objects as
+    day_summary.segments, setting seg.food here also surfaces it in that tab."""
+    from database.models import SegmentFood
+
+    rows = session.execute(
+        select(SegmentFood).where(
+            SegmentFood.device == day_summary.device,
+            SegmentFood.date == day_summary.date,
+        )
+    ).scalars().all()
+    by_seg = {r.segment_id: r for r in rows}
+
+    def _to_meal(r) -> MealFood:
+        return MealFood(
+            meal_type=r.meal_type,
+            items=[FoodItem(**{k: it.get(k) for k in ("name", "portion", "calories")})
+                   for it in (r.items or []) if it.get("name")],
+            total_calories=r.total_calories,
+            healthiness=r.healthiness,
+            summary=r.summary,
+        )
+
+    for seg in day_summary.segments:
+        r = by_seg.get(seg.segment_id)
+        seg.food = _to_meal(r) if r else None
+
+    if not rows:
+        day_summary.food = None
+        return
+
+    meals = [seg.food for seg in sorted(day_summary.segments, key=lambda s: s.start_time)
+             if seg.food]
+    items = [it.name for m in meals for it in m.items]
+    cals = [m.total_calories for m in meals if m.total_calories is not None]
+    day_summary.food = DayFood(
+        meal_count=len(meals),
+        total_calories=sum(cals) if cals else None,
+        items=items,
+        meals=meals,
+    )
+
+
 def summarize_lifelog_by_day(
     session,
     summary: DaySummary,
@@ -102,6 +147,9 @@ def summarize_lifelog_by_day(
     Segment-based metrics (category_minutes, period_metrics) are always
     recomputed from the current segments list (O(segments), not O(images)).
     """
+    # Eating focus: attach stored food records + build the day food rollup.
+    attach_food_to_summary(session, summary)
+
     # ── Segment-based metrics: always fresh to avoid double-counting ──────────
     summary.total_minutes = sum(seg.duration / 60.0 for seg in summary.segments)
     summary.category_minutes = {}

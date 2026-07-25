@@ -807,6 +807,39 @@ class MealProfile(Base):
     )
 
 
+class SegmentFood(Base):
+    """
+    Structured food detail for one eating segment, produced by the food-pass
+    vision task (services/food_pass.py). One row per (device, date, segment_id).
+
+    Portions and calories are rough vision-based estimates (ballpark, not
+    medical). ``items`` is a JSON list of {name, portion, calories}.
+    """
+    __tablename__ = "segment_food"
+    __table_args__ = (
+        UniqueConstraint("device", "date", "segment_id", name="uq_segment_food_seg"),
+        Index("ix_segment_food_device_date", "device", "date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device: Mapped[str] = mapped_column(Text, nullable=False)
+    date: Mapped[str] = mapped_column(Text, nullable=False)
+    segment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    items: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)  # [{name, portion, calories}]
+    meal_type: Mapped[str | None] = mapped_column(Text)  # breakfast | lunch | dinner | snack
+    total_calories: Mapped[int | None] = mapped_column(Integer)
+    healthiness: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    created: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class BioDayStats(Base):
     """Per-day biometric aggregates, computed by the nightly Celery task."""
     __tablename__ = "bio_day_stats"

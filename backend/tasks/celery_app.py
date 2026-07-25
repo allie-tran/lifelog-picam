@@ -62,6 +62,19 @@ celery.conf.update(
             "schedule": crontab(minute="*/60"),
             "options": {"expires": 600},
         },
+        # every 15 min — re-queue segments left unannotated (grey on DayNav) by a
+        # failed/orphaned describe_segment_task, so they recover within minutes
+        "backfill-unannotated-segments": {
+            "task": "tasks.backfill_unannotated_segments_task",
+            "schedule": crontab(minute="*/15"),
+            "options": {"expires": 600},
+        },
+        # every 15 min — run the food pass on eating segments missing a food record
+        "backfill-food-segments": {
+            "task": "tasks.backfill_food_segments_task",
+            "schedule": crontab(minute="*/15"),
+            "options": {"expires": 600},
+        },
         # every 5 min — enforce 30-min TTL on non-whitelisted face embeddings
         "purge-face-embeddings": {
             "task": "tasks.purge_expired_face_embeddings_task",

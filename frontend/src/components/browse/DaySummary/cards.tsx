@@ -8,6 +8,7 @@ import {
     Button,
     Card,
     CardContent,
+    Chip,
     Grid,
     IconButton,
     LinearProgress,
@@ -18,7 +19,7 @@ import {
     Tooltip,
     Typography,
 } from '@mui/material';
-import { DaySummary, LocationVisit, SummarySegment } from '@utils/types';
+import { DaySummary, LocationVisit, MealFood, SummarySegment } from '@utils/types';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import React, { useState } from 'react';
 import dayjs from 'dayjs';
@@ -259,6 +260,37 @@ export function PeriodCard({
                     </Box>
                 )}
 
+                {/* Food detail for this segment (eating focus) */}
+                {currentSegment.food && (currentSegment.food.items?.length ?? 0) > 0 && (
+                    <Box sx={{ my: 1.5, pl: 1.5, borderLeft: `3px solid ${FOOD_COLOR}` }}>
+                        <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
+                            {currentSegment.food.mealType && (
+                                <Typography variant="body2" fontWeight="bold">
+                                    {MEAL_ICON[currentSegment.food.mealType] ?? '🍴'}{' '}
+                                    {currentSegment.food.mealType[0].toUpperCase() + currentSegment.food.mealType.slice(1)}
+                                </Typography>
+                            )}
+                            {currentSegment.food.totalCalories != null && (
+                                <Typography variant="caption" color="warning.main">
+                                    ~{currentSegment.food.totalCalories} kcal
+                                </Typography>
+                            )}
+                        </Stack>
+                        <Stack component="ul" sx={{ m: 0, mt: 0.25, pl: 2.5 }} spacing={0.1}>
+                            {currentSegment.food.items.map((it, i) => (
+                                <Typography key={i} component="li" variant="body2">
+                                    {fmtItem(it.name, it.portion, it.calories)}
+                                </Typography>
+                            ))}
+                        </Stack>
+                        {currentSegment.food.healthiness && (
+                            <Typography variant="caption" color="text.secondary" fontStyle="italic">
+                                {currentSegment.food.healthiness}
+                            </Typography>
+                        )}
+                    </Box>
+                )}
+
                 {/* 2. Interactive Segment Section */}
                 <Stack
                     direction="row"
@@ -311,7 +343,13 @@ export function PeriodCard({
     );
 }
 
-export function SummaryText({ summaryText }: { summaryText: string }) {
+export function SummaryText({
+    summaryText,
+    heading = 'Day Overview',
+}: {
+    summaryText: string;
+    heading?: string;
+}) {
     return (
         <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
@@ -320,7 +358,7 @@ export function SummaryText({ summaryText }: { summaryText: string }) {
                     color="text.secondary"
                     gutterBottom
                 >
-                    Day Overview
+                    {heading}
                 </Typography>
                 <Box
                     sx={{
@@ -403,6 +441,96 @@ export function LocationVisitsCard({ visits }: { visits?: LocationVisit[] }) {
                         </Box>
                     ))}
                 </Stack>
+            </CardContent>
+        </Card>
+    );
+}
+
+const MEAL_ICON: Record<string, string> = {
+    breakfast: '🥐',
+    lunch: '🥗',
+    dinner: '🍽️',
+    snack: '🍎',
+};
+
+const FOOD_COLOR = THEME_COLORS['Food & Drink'] || '#FF5555';
+
+function fmtItem(name: string, portion?: string, calories?: number | null): string {
+    let s = name;
+    if (portion) s += ` (${portion})`;
+    if (calories != null) s += ` · ~${calories} kcal`;
+    return s;
+}
+
+// Eating focus: the day's meals with items, rough portions + calories, plus a
+// rollup strip. Driven by segment.food (per-meal) + daySummary.food (rollup).
+export function MealsCard({ day }: { day: DaySummary }) {
+    const meals = (day.segments ?? [])
+        .filter((s) => s.food && (s.food.items?.length ?? 0) > 0)
+        .sort((a, b) => uMs(a.startTime) - uMs(b.startTime));
+    if (meals.length === 0) return null;
+    const roll = day.food;
+
+    return (
+        <Card variant="outlined" sx={{ borderLeft: `3px solid ${FOOD_COLOR}` }}>
+            <CardContent>
+                <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        🍽️ Meals
+                    </Typography>
+                    {roll && (
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                            <Chip size="small" label={`${roll.mealCount} meal${roll.mealCount === 1 ? '' : 's'}`} />
+                            {roll.totalCalories != null && (
+                                <Chip size="small" color="warning" variant="outlined"
+                                    label={`~${roll.totalCalories} kcal`} />
+                            )}
+                        </Stack>
+                    )}
+                </Stack>
+
+                <Stack spacing={1.5} mt={1}>
+                    {meals.map((seg) => {
+                        const f = seg.food as MealFood;
+                        return (
+                            <Box key={seg.segmentId ?? seg.startTime}
+                                sx={{ pl: 1.5, borderLeft: '3px solid', borderColor: 'divider' }}>
+                                <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
+                                    {f.mealType && (
+                                        <Typography variant="body2" fontWeight="bold">
+                                            {MEAL_ICON[f.mealType] ?? '🍴'} {f.mealType[0].toUpperCase() + f.mealType.slice(1)}
+                                        </Typography>
+                                    )}
+                                    <Typography variant="caption" color="text.secondary">
+                                        {hm(uMs(seg.startTime), seg.timezone)}
+                                        {seg.locationName ? ` · ${seg.locationName}` : ''}
+                                    </Typography>
+                                    {f.totalCalories != null && (
+                                        <Typography variant="caption" color="warning.main">
+                                            ~{f.totalCalories} kcal
+                                        </Typography>
+                                    )}
+                                </Stack>
+                                <Stack component="ul" sx={{ m: 0, mt: 0.25, pl: 2.5 }} spacing={0.1}>
+                                    {f.items.map((it, i) => (
+                                        <Typography key={i} component="li" variant="body2">
+                                            {fmtItem(it.name, it.portion, it.calories)}
+                                        </Typography>
+                                    ))}
+                                </Stack>
+                                {f.healthiness && (
+                                    <Typography variant="caption" color="text.secondary"
+                                        sx={{ display: 'block', mt: 0.25, fontStyle: 'italic' }}>
+                                        {f.healthiness}
+                                    </Typography>
+                                )}
+                            </Box>
+                        );
+                    })}
+                </Stack>
+                <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 1 }}>
+                    Portions &amp; calories are rough estimates.
+                </Typography>
             </CardContent>
         </Card>
     );

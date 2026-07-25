@@ -31,6 +31,7 @@ import {
     BinaryMetricsCard,
     BurstMetricsCard,
     LocationVisitsCard,
+    MealsCard,
     OverviewSummary,
     PeriodCard,
     ReprocessButton,
@@ -196,6 +197,11 @@ const DaySummaryComponent = () => {
                 </Grid>
                 <Grid size={8}>
                     <SummaryText summaryText={daySummary.summaryText} />
+                </Grid>
+
+                {/* Eating focus: the day's meals with food detail */}
+                <Grid size={12}>
+                    <MealsCard day={daySummary} />
                 </Grid>
 
                 {/* Place-by-place narrative */}
