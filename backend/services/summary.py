@@ -541,8 +541,9 @@ _DAY_TONE = (
     "VOICE: warm and lightly playful, second person ('you'). A little vivid and "
     "fun, but truthful — never exaggerate or invent detail that isn't in the "
     "notes. At most one tasteful emoji per bullet (optional, skip if unsure).\n"
-    "LEAD with the single most surprising / unusual / memorable moment of the "
-    "day as the first bullet; order the rest by how notable they are.\n"
+    "ORDER the bullets CHRONOLOGICALLY (earliest first), following the order of "
+    "the notes. Do NOT reorder by importance — let the unusual moments stand out "
+    "through vivid wording, not by moving them to the top.\n"
 )
 
 
