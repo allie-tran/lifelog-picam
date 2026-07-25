@@ -169,6 +169,13 @@ def _day_summary_bg(device: str, date: str, target_dicts: list) -> None:
 
             summary = summarize_lifelog_by_day(session, summary, targets)
 
+            # Eating focus: dispatch one food pass per meal that lacks a record.
+            try:
+                from tasks import enqueue_meal_food
+                enqueue_meal_food(session, device, date, list(summary.segments))
+            except Exception as _fe:
+                logger.warning("_day_summary_bg: meal food dispatch failed for %s/%s: %s", device, date, _fe)
+
             from database.models import BioDayStats as _BioDayStats
             bio = session.execute(
                 select(_BioDayStats).where(_BioDayStats.device_id == device, _BioDayStats.date == date)

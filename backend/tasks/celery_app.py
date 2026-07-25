@@ -69,9 +69,9 @@ celery.conf.update(
             "schedule": crontab(minute="*/15"),
             "options": {"expires": 600},
         },
-        # every 15 min — run the food pass on eating segments missing a food record
-        "backfill-food-segments": {
-            "task": "tasks.backfill_food_segments_task",
+        # every 15 min — run the per-meal food pass on meals missing a food record
+        "backfill-meal-food": {
+            "task": "tasks.backfill_meal_food_task",
             "schedule": crontab(minute="*/15"),
             "options": {"expires": 600},
         },

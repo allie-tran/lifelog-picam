@@ -183,54 +183,115 @@ def describe_segment_task(
             },
             upsert=True,
         )
-
-        # Eating focus: run the structured food pass on food segments.
-        if (activity_obj.get("activity_group") or "") == "Food & Drink":
-            food_pass_task.delay(device, date, thumbnail_paths, segment_id)
     except Exception as e:
         logging.error("Error describing segment %s for %s on %s: %s", segment_id, device, date, e)
 
 
-@celery.task(name="tasks.food_pass_task", bind=True)
-def food_pass_task(self, device, date, thumbnail_paths, segment_id):
-    """Extract structured food detail for one eating segment and upsert SegmentFood."""
+def enqueue_meal_food(session, device: str, date: str, segments: list) -> None:
+    """Group the day's eating segments into meals (services.summary.plan_meals)
+    and dispatch ONE food pass per meal that doesn't yet have a record. Cleans up
+    stale rows whose anchor is no longer a meal start. Keeps the vision cost at
+    ~one call per meal instead of one per segment."""
+    from services.summary import plan_meals
+    from services.food_pass import _sample_evenly
+    from database.models import SegmentFood
+
+    groups = plan_meals(segments)
+    existing = set(session.execute(
+        select(SegmentFood.segment_id).where(
+            SegmentFood.device == device, SegmentFood.date == date,
+        )
+    ).scalars().all())
+
+    valid_anchors: set[int] = set()
+    dispatch: list[tuple] = []
+    for group in groups:
+        anchor = group[0].segment_id
+        ids = [s.segment_id for s in group]
+        valid_anchors.add(anchor)
+        if anchor in existing:
+            continue  # meal food already computed
+        # Cover the meal: take the middle frame of up to 6 segments spread across
+        # it — a few frames from distinct moments beat many near-duplicate frames
+        # (keeps vision cost low) while still catching the plate.
+        chosen_ids = _sample_evenly(ids, 6)
+        paths_by_seg: dict[int, list[str]] = {}
+        for sid, p in session.execute(
+            select(Image.segment_id, Image.image_path)
+            .where(
+                Image.device == device, Image.date == date,
+                Image.segment_id.in_(chosen_ids), Image.deleted == False,
+            )
+            .order_by(Image.timestamp.asc())
+        ).all():
+            paths_by_seg.setdefault(sid, []).append(p)
+        thumbs = []
+        for sid in chosen_ids:
+            ps = paths_by_seg.get(sid)
+            if ps:
+                mid = ps[len(ps) // 2]
+                thumbs.append(f"{THUMBNAIL_DIR}/{device}/{mid.rsplit('.', 1)[0]}.webp")
+        if not thumbs:
+            continue
+        local_time = _local_hm(group[0].start_time, getattr(group[0], "timezone", None))
+        dispatch.append((anchor, ids, thumbs, local_time))
+
+    # Drop rows for meals that no longer exist (re-segmentation, old per-segment rows).
+    if valid_anchors:
+        session.execute(
+            delete(SegmentFood).where(
+                SegmentFood.device == device, SegmentFood.date == date,
+                SegmentFood.segment_id.notin_(valid_anchors),
+            )
+        )
+    else:
+        session.execute(
+            delete(SegmentFood).where(SegmentFood.device == device, SegmentFood.date == date)
+        )
+    session.commit()
+
+    for anchor, ids, thumbs, local_time in dispatch:
+        meal_food_pass_task.delay(device, date, anchor, ids, thumbs, local_time)
+
+
+def _local_hm(ts, tz_name) -> str:
+    if ts is None:
+        return ""
+    try:
+        t = ts
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            t = ts.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+        return t.strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+@celery.task(name="tasks.meal_food_pass_task", bind=True)
+def meal_food_pass_task(self, device, date, anchor_segment_id, segment_ids, thumbnail_paths, local_time=""):
+    """Extract structured food detail for one MEAL (spanning segment_ids) and
+    upsert a single SegmentFood row keyed by the anchor segment."""
     from database.models import SegmentFood
     from services.food_pass import describe_food_segment
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    # Local time hint so the model can pick breakfast/lunch/dinner/snack.
-    local_time = ""
-    try:
-        with Session(engine) as session:
-            row = session.execute(
-                select(Image.timestamp, Image.timezone)
-                .where(
-                    Image.device == device, Image.date == date,
-                    Image.segment_id == segment_id, Image.deleted == False,
-                )
-                .order_by(Image.timestamp.asc())
-                .limit(1)
-            ).first()
-        if row and row.timestamp:
-            ts = row.timestamp
-            if row.timezone:
-                try:
-                    from zoneinfo import ZoneInfo
-                    ts = ts.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(row.timezone))
-                except Exception:
-                    pass
-            local_time = ts.strftime("%H:%M")
-    except Exception:
-        pass
-
-    food = describe_food_segment(device, date, thumbnail_paths, segment_id, local_time)
+    food = describe_food_segment(device, date, thumbnail_paths, anchor_segment_id, local_time)
     if not food:
-        logging.info("food_pass: no food record for %s/%s seg %s", device, date, segment_id)
+        logging.info("meal_food_pass: no food for %s/%s meal@%s", device, date, anchor_segment_id)
         return
 
     with Session(engine) as session:
+        # Clear any stale per-member rows (e.g. from the old per-segment era).
+        others = [i for i in segment_ids if i != anchor_segment_id]
+        if others:
+            session.execute(
+                delete(SegmentFood).where(
+                    SegmentFood.device == device, SegmentFood.date == date,
+                    SegmentFood.segment_id.in_(others),
+                )
+            )
         stmt = pg_insert(SegmentFood).values(
-            device=device, date=date, segment_id=segment_id,
+            device=device, date=date, segment_id=anchor_segment_id,
             items=food["items"], meal_type=food["meal_type"],
             total_calories=food["total_calories"], healthiness=food["healthiness"],
             summary=food["summary"],
@@ -255,8 +316,8 @@ def food_pass_task(self, device, date, thumbnail_paths, segment_id):
         {"$set": {"text_summary_stale": True, "updated": True}},
         upsert=True,
     )
-    logging.info("food_pass: stored %d items for %s/%s seg %s",
-                 len(food["items"]), device, date, segment_id)
+    logging.info("meal_food_pass: stored %d items for %s/%s meal@%s",
+                 len(food["items"]), device, date, anchor_segment_id)
 
 
 @celery.task(name="tasks.resync_day_task", bind=True)
@@ -1530,69 +1591,38 @@ def backfill_unannotated_segments_task():
         logging.info("backfill_unannotated_segments: re-queued %d segments", len(seg_dispatch))
 
 
-@celery.task(name="tasks.backfill_food_segments_task")
-def backfill_food_segments_task():
-    """Run the food pass on eating segments that don't yet have a SegmentFood row.
-
-    Safety net behind the describe_segment_task trigger: catches food segments
-    whose trigger was missed (annotation predating this feature, a failed pass,
-    or re-segmentation). Same 15-min settle grace as the annotation backfill.
-    """
-    from database.models import SegmentFood
+@celery.task(name="tasks.backfill_meal_food_task")
+def backfill_meal_food_task():
+    """Dispatch the per-meal food pass for recent days whose meals lack a food
+    record. Safety net behind the _day_summary_bg trigger — uses each day's built
+    segments (from DaySummaryRecord) to plan meals, so cost stays at one call per
+    meal. Grace: only days whose newest eating image has settled past 15 min."""
+    from database.types import DaySummaryRecord
 
     SETTLE_MINUTES = 15
     now = datetime.now(timezone.utc)
     settle_cutoff = now - timedelta(minutes=SETTLE_MINUTES)
     past_cutoff = now - timedelta(days=2)
 
-    seg_dispatch: list[tuple] = []
     with Session(engine) as session:
-        have_food = select(
-            SegmentFood.device, SegmentFood.date, SegmentFood.segment_id
-        )
-        rows = session.execute(
-            select(Image.device, Image.date, Image.segment_id)
+        days = session.execute(
+            select(Image.device, Image.date)
             .where(
-                Image.segment_id.isnot(None),
                 Image.activity_group == "Food & Drink",
                 Image.timestamp > past_cutoff,
                 Image.deleted == False,
-                tuple_(Image.device, Image.date, Image.segment_id).notin_(have_food),
+                Image.segment_id.isnot(None),
             )
-            .group_by(Image.device, Image.date, Image.segment_id)
+            .group_by(Image.device, Image.date)
             .having(func.max(Image.timestamp) < settle_cutoff)
-            .order_by(Image.date.desc(), Image.segment_id)
-            .limit(100)
         ).all()
 
-        keys = [(r.device, r.date, r.segment_id) for r in rows]
-        if keys:
-            from collections import defaultdict as _defaultdict
-            paths_by_seg: dict[tuple, list[str]] = _defaultdict(list)
-            for device, date, segment_id, image_path in session.execute(
-                select(Image.device, Image.date, Image.segment_id, Image.image_path)
-                .where(
-                    tuple_(Image.device, Image.date, Image.segment_id).in_(keys),
-                    Image.deleted == False,
-                )
-                .order_by(Image.timestamp.asc())
-            ).all():
-                paths_by_seg[(device, date, segment_id)].append(image_path)
-
-            for device, date, segment_id in keys:
-                seg_paths = paths_by_seg.get((device, date, segment_id), [])
-                if seg_paths:
-                    thumb_paths = [
-                        f"{THUMBNAIL_DIR}/{device}/{p.rsplit('.', 1)[0]}.webp"
-                        for p in seg_paths[:20]
-                    ]
-                    seg_dispatch.append((device, date, segment_id, thumb_paths))
-
-    for device, date, segment_id, thumb_paths in seg_dispatch:
-        food_pass_task.delay(device, date, thumb_paths, segment_id)
-
-    if seg_dispatch:
-        logging.info("backfill_food_segments: queued %d segments", len(seg_dispatch))
+    for device, date in days:
+        rec = DaySummaryRecord.find_one(filter={"device": device, "date": date})
+        if not rec or not rec.segments:
+            continue  # day not built yet — the rebuild will trigger it
+        with Session(engine) as session:
+            enqueue_meal_food(session, device, date, list(rec.segments))
 
 
 @celery.task(name="tasks.update_status_summary")

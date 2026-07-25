@@ -89,12 +89,45 @@ def _period_matches(seg: "SummarySegment", target_name: str) -> bool:
     return tgt_words <= act_words or act_words <= tgt_words
 
 
+# A meal = a run of consecutive eating segments at the same place. The food pass
+# now runs ONCE per meal (not per segment), storing one SegmentFood row keyed by
+# the meal's first ("anchor") segment_id.
+_MEAL_MERGE_GAP = timedelta(minutes=30)
+
+
+def plan_meals(segments: list) -> list[list]:
+    """Group eating segments into meals: consecutive in time (gap ≤ 30 min) and
+    at the same place. Deterministic so the food-pass dispatcher and the summary
+    aggregator agree on meal boundaries (and thus the anchor segment_id key)."""
+    eating = sorted(
+        (s for s in segments if (s.activity_group or "") == "Food & Drink"
+         and s.segment_id is not None),
+        key=lambda s: s.start_time,
+    )
+    groups: list[list] = []
+    cur: list = []
+    for s in eating:
+        if cur and (
+            (s.start_time - cur[-1].end_time) > _MEAL_MERGE_GAP
+            or (s.location_name or "") != (cur[-1].location_name or "")
+        ):
+            groups.append(cur)
+            cur = []
+        cur.append(s)
+    if cur:
+        groups.append(cur)
+    return groups
+
+
 def attach_food_to_summary(session, day_summary: DaySummary) -> None:
-    """Attach stored SegmentFood onto eating segments and build the DayFood
-    rollup. Pure aggregation of the food-pass table — no LLM. Because
-    period_metrics['Eating'] holds the same SummarySegment objects as
-    day_summary.segments, setting seg.food here also surfaces it in that tab."""
+    """Attach per-meal food onto the day's eating segments and build the DayFood
+    rollup. Each SegmentFood row is one meal keyed by the meal's anchor segment;
+    we re-derive meal grouping with plan_meals and match by anchor. Setting
+    seg.food on every member also surfaces it in the Eating period tab."""
     from database.models import SegmentFood
+
+    for seg in day_summary.segments:
+        seg.food = None
 
     rows = session.execute(
         select(SegmentFood).where(
@@ -102,50 +135,34 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
             SegmentFood.date == day_summary.date,
         )
     ).scalars().all()
-    by_seg = {r.segment_id: r for r in rows}
+    if not rows:
+        day_summary.food = None
+        return
+    by_anchor = {r.segment_id: r for r in rows}
 
-    def _to_meal(r) -> MealFood:
-        return MealFood(
+    meals: list[MealFood] = []
+    for group in plan_meals(day_summary.segments):
+        r = by_anchor.get(group[0].segment_id)
+        if not r:
+            continue  # meal food not computed yet
+        mf = MealFood(
             meal_type=r.meal_type,
             items=[FoodItem(**{k: it.get(k) for k in ("name", "portion", "calories")})
                    for it in (r.items or []) if it.get("name")],
             total_calories=r.total_calories,
             healthiness=r.healthiness,
             summary=r.summary,
+            start_time=group[0].start_time,
+            end_time=group[-1].end_time,
+            timezone=next((s.timezone for s in group if s.timezone), None),
+            location_name=group[0].location_name,
+            segment_ids=[s.segment_id for s in group],
         )
+        for s in group:
+            s.food = mf
+        meals.append(mf)
 
-    for seg in day_summary.segments:
-        r = by_seg.get(seg.segment_id)
-        seg.food = _to_meal(r) if r else None
-
-    if not rows:
-        day_summary.food = None
-        return
-
-    # Consolidate: one meal spans many ~10-min eating segments, each with its own
-    # food record of the same (evolving) plate. Group food segments that are
-    # consecutive in time (gap ≤ _MEAL_MERGE_GAP) AND at the same place. Because
-    # the model paraphrases the same dish differently each segment, we do NOT sum
-    # across segments (that balloons calories); each meal is represented by its
-    # single richest segment, with calories = the largest single-segment estimate.
-    _MEAL_MERGE_GAP = timedelta(minutes=30)
-    food_segs = sorted(
-        (s for s in day_summary.segments if s.food and s.food.items),
-        key=lambda s: s.start_time,
-    )
-    meals: list[MealFood] = []
-    group: list[SummarySegment] = []
-    for seg in food_segs:
-        if group and (
-            (seg.start_time - group[-1].end_time) > _MEAL_MERGE_GAP
-            or (seg.location_name or "") != (group[-1].location_name or "")
-        ):
-            meals.append(_consolidate_meal(group))
-            group = []
-        group.append(seg)
-    if group:
-        meals.append(_consolidate_meal(group))
-
+    meals.sort(key=lambda m: m.start_time or day_summary.date)
     items = [it.name for m in meals for it in m.items]
     cals = [m.total_calories for m in meals if m.total_calories is not None]
     day_summary.food = DayFood(
@@ -153,28 +170,6 @@ def attach_food_to_summary(session, day_summary: DaySummary) -> None:
         total_calories=sum(cals) if cals else None,
         items=items,
         meals=meals,
-    )
-
-
-def _consolidate_meal(segs: list[SummarySegment]) -> MealFood:
-    """Represent a run of eating segments as one meal via its richest single
-    segment (most items; ties broken by highest calories). Summing per-segment
-    records would multiply the same dish (the model re-describes it each frame),
-    so calories are the largest single-segment estimate, not a sum."""
-    rep = max(segs, key=lambda s: (len(s.food.items), s.food.total_calories or 0))  # type: ignore[union-attr]
-    totals = [s.food.total_calories for s in segs if s.food and s.food.total_calories is not None]
-    return MealFood(
-        meal_type=rep.food.meal_type,          # type: ignore[union-attr]
-        items=[FoodItem(name=i.name, portion=i.portion, calories=i.calories)
-               for i in rep.food.items],        # type: ignore[union-attr]
-        total_calories=max(totals) if totals else None,
-        healthiness=rep.food.healthiness,       # type: ignore[union-attr]
-        summary=rep.food.summary,               # type: ignore[union-attr]
-        start_time=segs[0].start_time,
-        end_time=segs[-1].end_time,
-        timezone=next((s.timezone for s in segs if s.timezone), None),
-        location_name=rep.location_name,
-        segment_ids=[s.segment_id for s in segs if s.segment_id is not None],
     )
 
 

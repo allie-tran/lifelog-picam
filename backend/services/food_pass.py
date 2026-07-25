@@ -19,9 +19,9 @@ _parser = JSONParser()
 
 _MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack"}
 
-# Vision cost scales with images sent. A meal segment's frames are near-duplicates
-# of the same plate, so a few evenly-spaced frames are plenty — keep this small.
-_MAX_IMAGES = 3
+# Vision cost scales with images sent. The per-meal dispatcher already selects a
+# handful of spread-out frames; this caps it as a safety net.
+_MAX_IMAGES = 6
 
 _PROMPT = """These are photos from a POV lifelogging camera worn by me during an eating moment{time_hint}.
 
