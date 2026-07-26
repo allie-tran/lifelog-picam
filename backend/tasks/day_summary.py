@@ -240,8 +240,14 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
                     )
                 except Exception as _lve:
                     logger.warning("_text_summary_bg: location visits failed for %s/%s: %s", device, date, _lve)
-            # Eating focus: refresh food records (the food pass marks the text
-            # stale, so this path runs after new food data lands).
+            # Eating focus: on a live/incremental day this is the path that runs,
+            # so dispatch the per-meal food pass for any NEW meal here (not only in
+            # the full rebuild), then attach whatever food is already stored.
+            try:
+                from tasks import enqueue_meal_food
+                enqueue_meal_food(session, device, date, list(summary.segments))
+            except Exception as _me:
+                logger.warning("_text_summary_bg: meal food dispatch failed for %s/%s: %s", device, date, _me)
             try:
                 from services.summary import attach_food_to_summary
                 attach_food_to_summary(session, summary)
