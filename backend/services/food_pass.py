@@ -25,14 +25,14 @@ _MAX_IMAGES = 6
 
 _PROMPT = """These are photos from a POV lifelogging camera worn by me during an eating moment{time_hint}.
 
-Identify ONLY the food and drink that I (the camera wearer) am actually eating or
-drinking — my own plate, cup, or what's in my hands. Estimate ROUGH, ballpark
-portions and calories — approximate is fine, do not overthink.
+Identify the food and drink that are MINE — on my own plate, in my glass/cup, in my
+hands, or directly in front of me as my place setting (count it even if I'm not
+mid-bite). Estimate ROUGH, ballpark portions and calories — approximate is fine.
 
-EXCLUDE anything I'm not consuming: other people's plates and drinks, dishes merely
-sitting on the table that I don't touch, untouched/background bottles, condiments and
-jars unless I actually use them, menus, and decor. If you can't tell whether I'm
-consuming an item, leave it out. Better to list fewer, confident items.
+EXCLUDE only what is clearly NOT mine: another diner's plate/glass across the table,
+dishes plainly belonging to someone else, and background/decor. Shared dishes I'm
+eating from count. When an item is right in front of me and plausibly mine, include
+it. Don't over-prune — capture everything I'm actually having.
 
 Return ONLY valid JSON in this exact format:
 
