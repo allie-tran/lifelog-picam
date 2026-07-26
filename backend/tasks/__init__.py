@@ -197,11 +197,15 @@ def enqueue_meal_food(session, device: str, date: str, segments: list) -> None:
     from database.models import SegmentFood
 
     groups = plan_meals(segments)
-    existing = set(session.execute(
-        select(SegmentFood.segment_id).where(
-            SegmentFood.device == device, SegmentFood.date == date,
-        )
-    ).scalars().all())
+    # anchor segment_id -> the segment set its stored food covers
+    existing = {
+        sid: list(sids or [])
+        for sid, sids in session.execute(
+            select(SegmentFood.segment_id, SegmentFood.segment_ids).where(
+                SegmentFood.device == device, SegmentFood.date == date,
+            )
+        ).all()
+    }
 
     valid_anchors: set[int] = set()
     dispatch: list[tuple] = []
@@ -209,8 +213,10 @@ def enqueue_meal_food(session, device: str, date: str, segments: list) -> None:
         anchor = group[0].segment_id
         ids = [s.segment_id for s in group]
         valid_anchors.add(anchor)
-        if anchor in existing:
-            continue  # meal food already computed
+        # Skip only when a record for this anchor already covers the SAME segment
+        # set — otherwise the meal grew/shrank (re-segmentation) and must refresh.
+        if existing.get(anchor) == ids:
+            continue
         # Cover the meal: take the middle frame of up to 6 segments spread across
         # it — a few frames from distinct moments beat many near-duplicate frames
         # (keeps vision cost low) while still catching the plate.
@@ -292,12 +298,14 @@ def meal_food_pass_task(self, device, date, anchor_segment_id, segment_ids, thum
             )
         stmt = pg_insert(SegmentFood).values(
             device=device, date=date, segment_id=anchor_segment_id,
+            segment_ids=list(segment_ids),
             items=food["items"], meal_type=food["meal_type"],
             total_calories=food["total_calories"], healthiness=food["healthiness"],
             summary=food["summary"],
         ).on_conflict_do_update(
             constraint="uq_segment_food_seg",
             set_={
+                "segment_ids": list(segment_ids),
                 "items": food["items"],
                 "meal_type": food["meal_type"],
                 "total_calories": food["total_calories"],

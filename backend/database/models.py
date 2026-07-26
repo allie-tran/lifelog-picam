@@ -824,7 +824,10 @@ class SegmentFood(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[str] = mapped_column(Text, nullable=False)
-    segment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    segment_id: Mapped[int] = mapped_column(Integer, nullable=False)  # meal anchor (first segment)
+    # The segment_ids this meal covers, so a rebuild can detect when the meal's
+    # membership changed (re-segmentation) and refresh the food pass.
+    segment_ids: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
     items: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)  # [{name, portion, calories}]
     meal_type: Mapped[str | None] = mapped_column(Text)  # breakfast | lunch | dinner | snack
     total_calories: Mapped[int | None] = mapped_column(Integer)
