@@ -360,12 +360,20 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
     const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
     const ACT_MIN_PX = 4; // thin floor so an activity cell never fully vanishes
+    const GAP_PILL_PX = 58; // in-run "no recording" pill: 54 width + 2px margins each side
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
-    // A stop is at least RUN_MIN_PX, but grows to fit its activity cells so none
-    // collapse to a sliver; the bar scrolls if that overflows the viewport.
+    // Count same-location recording gaps drawn *inside* a run's activity row, so
+    // the run reserves width for their pills (activity cells don't shrink).
+    const runGapCount = (run: LocationRun) =>
+        run.segments.filter(
+            (s, i) => i > 0 && uMs(s.startTime) - uMs(run.segments[i - 1].endTime) >= BREAK_THRESHOLD_MS
+        ).length;
+    // A stop is at least RUN_MIN_PX, but grows to fit its activity cells + any
+    // in-run gap pills so none collapse; the bar scrolls if that overflows.
     const runMinPx = (run: LocationRun) =>
-        run.isMove ? MOVE_MIN_PX : Math.max(RUN_MIN_PX, run.segments.length * ACT_MIN_PX);
+        (run.isMove ? MOVE_MIN_PX : Math.max(RUN_MIN_PX, run.segments.length * ACT_MIN_PX))
+        + runGapCount(run) * GAP_PILL_PX;
     const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
     let minContentPx = 0;
     locationRuns.forEach((run, ri) => {
