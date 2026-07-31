@@ -134,10 +134,11 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
         const loc = seg.locationName ?? null;
         const mode = seg.mode ?? null;
         const last = runs[runs.length - 1];
-        // A recording break splits a run even at the same location (e.g. home →
-        // camera off over lunch → home) so the gap gets its own break marker.
-        const gapMs = last ? uMs(seg.startTime) - last.endMs : 0;
-        if (last && last.name === loc && gapMs < BREAK_THRESHOLD_MS) {
+        // Same location stays one run even across a recording break (e.g. home →
+        // camera off over lunch → home): the header spans continuously and the
+        // gap is drawn only in the activity row. A location *change* is what
+        // splits runs, so a full break marker appears there instead.
+        if (last && last.name === loc) {
             last.endMs = uMs(seg.endTime);
             last.totalSeconds += seg.duration;
             last.segments.push(seg);
@@ -450,8 +451,46 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                         viewingSegmentId != null && seg.segmentId === viewingSegmentId;
                                     const range = `${hm(uMs(seg.startTime), run.tz)}–${hm(uMs(seg.endTime), run.tz)}`;
                                     const title = `${seg.activity} · ${range}`;
+                                    // A recording break inside a same-location run: show it here
+                                    // in the activity row only (the header above stays continuous).
+                                    const prevSeg = si > 0 ? run.segments[si - 1] : null;
+                                    const gapBefore = prevSeg ? uMs(seg.startTime) - uMs(prevSeg.endTime) : 0;
+                                    const showGap = gapBefore >= BREAK_THRESHOLD_MS;
                                     return (
-                                        <Tooltip key={seg.segmentId ?? si} title={title} followCursor>
+                                      <Fragment key={seg.segmentId ?? si}>
+                                        {showGap && prevSeg && (
+                                            <Tooltip
+                                                title={`No recording · ${hm(uMs(prevSeg.endTime), run.tz)}–${hm(uMs(seg.startTime), run.tz)} · ${fmtDuration(gapBefore / 1000)}`}
+                                                followCursor
+                                            >
+                                                <Box
+                                                    sx={{
+                                                        flex: '0 0 auto',
+                                                        width: 54,
+                                                        height: '100%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        mx: '2px',
+                                                        background: (theme) =>
+                                                            `repeating-linear-gradient(45deg, transparent, transparent 4px, ${theme.palette.action.hover} 4px, ${theme.palette.action.hover} 8px)`,
+                                                        borderLeft: '1px dashed',
+                                                        borderRight: '1px dashed',
+                                                        borderColor: 'text.disabled',
+                                                        borderRadius: '4px',
+                                                    }}
+                                                >
+                                                    <Typography
+                                                        variant="caption"
+                                                        color="text.secondary"
+                                                        sx={{ fontSize: 9, lineHeight: 1, fontWeight: 600, whiteSpace: 'nowrap' }}
+                                                    >
+                                                        ┈ {fmtDuration(gapBefore / 1000)} ┈
+                                                    </Typography>
+                                                </Box>
+                                            </Tooltip>
+                                        )}
+                                        <Tooltip title={title} followCursor>
                                             <Box
                                                 onClick={() => {
                                                     if (seg.segmentId != null) onSelectSegment(seg.segmentId);
@@ -476,6 +515,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 }}
                                             />
                                         </Tooltip>
+                                      </Fragment>
                                     );
                                 })}
                             </Box>
