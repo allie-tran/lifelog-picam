@@ -168,7 +168,28 @@ function buildLocationRuns(segments: NavSegment[]): LocationRun[] {
     }
     // Fold short transfer stops into the journey so one ride reads as one run,
     // matching the day-summary visits (location_visits._merge_transit_waypoints).
-    return mergeTransitWaypoints(runs);
+    const folded = mergeTransitWaypoints(runs);
+    // Collapse consecutive GPS-only (no-photo) segments in a run into one cell,
+    // so a stay split into several imageless stops reads as a single "no photos"
+    // block rather than a row of tiny cells with gaps between.
+    return folded.map((run) => ({ ...run, segments: collapseGpsOnly(run.segments) }));
+}
+
+// Merge back-to-back image-less segments (segmentId == null) — all at the same
+// location within a run — into one spanning segment. Non-null (photo) segments
+// pass through untouched. Segments are cloned so the source array is untouched.
+function collapseGpsOnly(segs: NavSegment[]): NavSegment[] {
+    const out: NavSegment[] = [];
+    for (const seg of segs) {
+        const last = out[out.length - 1];
+        if (seg.segmentId == null && last && last.segmentId == null) {
+            last.endTime = seg.endTime;
+            last.duration += seg.duration;
+        } else {
+            out.push({ ...seg });
+        }
+    }
+    return out;
 }
 
 // ── Transit-waypoint folding (ported from location_visits.py) ────────────────
