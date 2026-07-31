@@ -185,6 +185,7 @@ function collapseGpsOnly(segs: NavSegment[]): NavSegment[] {
         if (seg.segmentId == null && last && last.segmentId == null) {
             last.endTime = seg.endTime;
             last.duration += seg.duration;
+            last.noRecording = last.noRecording || seg.noRecording;
         } else {
             out.push({ ...seg });
         }
@@ -551,9 +552,13 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     const prevSeg = si > 0 ? run.segments[si - 1] : null;
                                     const gapBefore = prevSeg ? uMs(seg.startTime) - uMs(prevSeg.endTime) : 0;
                                     const showGap = gapBefore >= BREAK_THRESHOLD_MS;
-                                    // GPS-only stay: visited (from the GPS track) but no photos taken.
+                                    // GPS-only cell: no photos taken. If it was also a GPS gap
+                                    // (interpolated stop), nothing was recorded at all.
                                     const isGpsOnly = seg.segmentId == null;
-                                    const cellTitle = isGpsOnly ? `No photos · ${range}` : title;
+                                    const gpsLabel = seg.noRecording ? 'no recording' : 'no photos';
+                                    const cellTitle = isGpsOnly
+                                        ? `${seg.noRecording ? 'No recording' : 'No photos'} · ${range}`
+                                        : title;
                                     return (
                                       <Fragment key={seg.segmentId ?? si}>
                                         {showGap && prevSeg && (
@@ -625,7 +630,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                         noWrap
                                                         sx={{ fontSize: 9, fontStyle: 'italic', px: '2px' }}
                                                     >
-                                                        no photos
+                                                        {gpsLabel}
                                                     </Typography>
                                                 )}
                                             </Box>

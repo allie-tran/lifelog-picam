@@ -97,6 +97,7 @@ export type NavSegment = {
     locationStop?: boolean | null;
     mode?: string | null;
     labelKind?: string | null;
+    noRecording?: boolean | null;  // GPS-only cell that is a GPS gap (no photos AND no GPS)
 };
 
 export const getDayNavSegments = async (device: string, date: string): Promise<NavSegment[]> => {

@@ -298,7 +298,7 @@ async def get_day_nav(
     """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
     _require_owner(access_level)
 
-    cache_key = f"day-nav:v4:{device}:{date}"
+    cache_key = f"day-nav:v5:{device}:{date}"
     cached = redis_client.get_json(cache_key)
     if cached is not None:
         return cached
@@ -370,6 +370,9 @@ async def get_day_nav(
                 continue
             name, label_kind = loc_display.get(s.location_id, (None, None))
             duration = max(int((s.end_time - s.start_time).total_seconds()), 10)
+            # A stop interpolated across a GPS gap (place_id "gap_…") is not a
+            # real stay — neither photos nor GPS during it, i.e. "no recording".
+            gps_gap = (s.place_id or "").startswith("gap")
             segments.append({
                 "segmentId": None,
                 "startTime": s.start_time.isoformat(),
@@ -382,6 +385,7 @@ async def get_day_nav(
                 "locationStop": True,
                 "mode": None,
                 "labelKind": label_kind,
+                "noRecording": gps_gap,
             })
 
     if not segments:
