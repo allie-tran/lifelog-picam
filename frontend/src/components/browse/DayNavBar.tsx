@@ -578,27 +578,15 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 <Box
                                                     sx={{
                                                         flex: '0 0 auto',
-                                                        width: 40,
+                                                        width: GPS_ONLY_PX,
                                                         height: '100%',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         justifyContent: 'center',
-                                                        mx: '2px',
-                                                        background: (theme) =>
-                                                            `repeating-linear-gradient(45deg, transparent, transparent 4px, ${theme.palette.action.hover} 4px, ${theme.palette.action.hover} 8px)`,
-                                                        borderLeft: '1px dashed',
-                                                        borderRight: '1px dashed',
-                                                        borderColor: 'text.disabled',
-                                                        borderRadius: '4px',
+                                                        background: 'transparent',
                                                     }}
                                                 >
-                                                    <Typography
-                                                        variant="caption"
-                                                        color="text.secondary"
-                                                        sx={{ fontSize: 8, lineHeight: 1, fontWeight: 600, whiteSpace: 'nowrap' }}
-                                                    >
-                                                        {fmtDuration(gapBefore / 1000)}
-                                                    </Typography>
+                                                    <NoPhotographyIcon sx={{ fontSize: 15, color: 'text.disabled', opacity: 0.6 }} />
                                                 </Box>
                                             </Tooltip>
                                         )}
