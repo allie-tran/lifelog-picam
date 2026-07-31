@@ -361,8 +361,8 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
     const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
     const ACT_MIN_PX = 4; // thin floor so an activity cell never fully vanishes
-    const GPS_ONLY_PX = 64; // a no-photo / no-recording cell is fixed at this width
-    const GAP_PILL_PX = 58; // in-run "no recording" pill: 54 width + 2px margins each side
+    const GPS_ONLY_PX = 48; // a no-photo / no-recording cell is fixed at this width
+    const GAP_PILL_PX = 44; // in-run "no recording" pill: 40 width + 2px margins each side
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
     const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
@@ -577,7 +577,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 <Box
                                                     sx={{
                                                         flex: '0 0 auto',
-                                                        width: 54,
+                                                        width: 40,
                                                         height: '100%',
                                                         display: 'flex',
                                                         alignItems: 'center',
@@ -594,9 +594,9 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                     <Typography
                                                         variant="caption"
                                                         color="text.secondary"
-                                                        sx={{ fontSize: 9, lineHeight: 1, fontWeight: 600, whiteSpace: 'nowrap' }}
+                                                        sx={{ fontSize: 8, lineHeight: 1, fontWeight: 600, whiteSpace: 'nowrap' }}
                                                     >
-                                                        ┈ {fmtDuration(gapBefore / 1000)} ┈
+                                                        {fmtDuration(gapBefore / 1000)}
                                                     </Typography>
                                                 </Box>
                                             </Tooltip>
@@ -639,7 +639,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                         variant="caption"
                                                         color="text.disabled"
                                                         noWrap
-                                                        sx={{ fontSize: 9, fontStyle: 'italic', px: '2px' }}
+                                                        sx={{ fontSize: 8, lineHeight: 1.1, fontStyle: 'italic', px: '1px', textAlign: 'center' }}
                                                     >
                                                         {gpsLabel}
                                                     </Typography>
