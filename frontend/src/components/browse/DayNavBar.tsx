@@ -306,9 +306,25 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
 
     const locationRuns = buildLocationRuns(segments);
 
+    // On busy days the runs would shrink to unreadable slivers (or clip). Give
+    // each run a readable minimum and let the whole bar scroll horizontally when
+    // the minimums don't fit. On light days the content is narrower than the
+    // viewport, so flexGrow still lays runs out time-proportionally.
+    const RUN_MIN_PX = 64;
+    const BREAK_PX = 50; // 46 width + 2px margins each side
+    const RECENT_PX = 74; // 70 width + 4px left margin
+    let minContentPx = 0;
+    locationRuns.forEach((run, ri) => {
+        minContentPx += RUN_MIN_PX;
+        const gap = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
+        if (ri > 0 && gap >= BREAK_THRESHOLD_MS) minContentPx += BREAK_PX;
+    });
+    if (hasRecent) minContentPx += RECENT_PX;
+
     return (
-        <Box sx={{ width: '100%', mb: 1 }}>
-            <Box sx={{ display: 'flex', width: '100%', overflow: 'hidden' }}>
+        <Box sx={{ width: '100%', mb: 1, overflowX: 'auto', overflowY: 'hidden' }}>
+          <Box sx={{ width: '100%', minWidth: `${minContentPx}px` }}>
+            <Box sx={{ display: 'flex', width: '100%' }}>
                 {locationRuns.map((run, ri) => {
                     const w = run.segments.reduce((sum, seg) =>
                         sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
@@ -357,6 +373,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                 flexBasis: 16,
                                 flexGrow: w,
                                 flexShrink: 0,
+                                minWidth: RUN_MIN_PX,
                                 display: 'flex',
                                 flexDirection: 'column',
                                 opacity:
@@ -602,7 +619,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     flexBasis: 16,
                                     flexGrow: w,
                                     flexShrink: 0,
-                                    minWidth: 0,
+                                    minWidth: RUN_MIN_PX,
                                     position: 'relative',
                                     height: 16,
                                 }}
@@ -631,6 +648,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                 })}
                 {hasRecent && <Box sx={{ flex: '0 0 auto', width: 70, ml: '4px' }} />}
             </Box>
+          </Box>
 
             {device && date && editRun && (
                 <StopCorrectionDialog
