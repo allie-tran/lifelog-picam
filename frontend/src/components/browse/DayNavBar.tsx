@@ -357,12 +357,14 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     // each run a readable minimum and let the whole bar scroll horizontally when
     // the minimums don't fit. On light days the content is narrower than the
     // viewport, so flexGrow still lays runs out time-proportionally.
-    const RUN_MIN_PX = 64;
+    const RUN_MIN_PX = 64; // stops only — keep a place label readable
+    const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
+    const runMinPx = (run: LocationRun) => (run.isMove ? MOVE_MIN_PX : RUN_MIN_PX);
     let minContentPx = 0;
     locationRuns.forEach((run, ri) => {
-        minContentPx += RUN_MIN_PX;
+        minContentPx += runMinPx(run);
         const gap = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
         if (ri > 0 && gap >= BREAK_THRESHOLD_MS) minContentPx += BREAK_PX;
     });
@@ -435,7 +437,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                 flexBasis: 16,
                                 flexGrow: w,
                                 flexShrink: 0,
-                                minWidth: RUN_MIN_PX,
+                                minWidth: runMinPx(run),
                                 display: 'flex',
                                 flexDirection: 'column',
                                 opacity:
@@ -680,7 +682,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     flexBasis: 16,
                                     flexGrow: w,
                                     flexShrink: 0,
-                                    minWidth: RUN_MIN_PX,
+                                    minWidth: runMinPx(run),
                                     position: 'relative',
                                     height: 16,
                                 }}
