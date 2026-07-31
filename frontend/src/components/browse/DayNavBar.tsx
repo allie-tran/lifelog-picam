@@ -359,7 +359,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     // viewport, so flexGrow still lays runs out time-proportionally.
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
     const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
-    const ACT_MIN_PX = 22; // each activity cell within a stop stays clickable/legible
+    const ACT_MIN_PX = 4; // thin floor so an activity cell never fully vanishes
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
     // A stop is at least RUN_MIN_PX, but grows to fit its activity cells so none
