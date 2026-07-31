@@ -5,7 +5,7 @@ import { colorForPlace } from 'utils/placeColors';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-import { Fragment, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { NavSegment } from 'apis/browsing';
 import StopCorrectionDialog from 'components/browse/StopCorrectionDialog';
 
@@ -294,6 +294,32 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
     const [editRun, setEditRun] = useState<{ segmentIds: number[]; name?: string | null } | null>(null);
 
+    // Scroll-fade hints: show a soft gradient on whichever edge has more bar
+    // off-screen, so a busy (horizontally scrolling) day reads as scrollable.
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+    const [fade, setFade] = useState({ left: false, right: false });
+    const updateFade = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const { scrollLeft, scrollWidth, clientWidth } = el;
+        setFade({
+            left: scrollLeft > 1,
+            right: scrollLeft + clientWidth < scrollWidth - 1,
+        });
+    }, []);
+    useEffect(() => {
+        updateFade();
+        const el = scrollRef.current;
+        if (!el) return;
+        const ro = new ResizeObserver(updateFade);
+        ro.observe(el);
+        window.addEventListener('resize', updateFade);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener('resize', updateFade);
+        };
+    }, [updateFade, navSegments]);
+
     const segments: NavSegment[] = navSegments ?? [];
     if (!segments.length) return null;
 
@@ -322,7 +348,12 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     if (hasRecent) minContentPx += RECENT_PX;
 
     return (
-        <Box sx={{ width: '100%', mb: 1, overflowX: 'auto', overflowY: 'hidden' }}>
+        <Box sx={{ position: 'relative', width: '100%', mb: 1 }}>
+          <Box
+            ref={scrollRef}
+            onScroll={updateFade}
+            sx={{ width: '100%', overflowX: 'auto', overflowY: 'hidden' }}
+          >
           <Box sx={{ width: '100%', minWidth: `${minContentPx}px` }}>
             <Box sx={{ display: 'flex', width: '100%' }}>
                 {locationRuns.map((run, ri) => {
@@ -649,6 +680,37 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                 {hasRecent && <Box sx={{ flex: '0 0 auto', width: 70, ml: '4px' }} />}
             </Box>
           </Box>
+          </Box>
+
+            {/* Scroll-fade hints — soft gradient on an edge that has more off-screen */}
+            <Box
+                sx={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 28,
+                    pointerEvents: 'none',
+                    opacity: fade.left ? 1 : 0,
+                    transition: 'opacity 0.15s',
+                    background: (theme) =>
+                        `linear-gradient(to right, ${theme.palette.background.default}, transparent)`,
+                }}
+            />
+            <Box
+                sx={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 28,
+                    pointerEvents: 'none',
+                    opacity: fade.right ? 1 : 0,
+                    transition: 'opacity 0.15s',
+                    background: (theme) =>
+                        `linear-gradient(to left, ${theme.palette.background.default}, transparent)`,
+                }}
+            />
 
             {device && date && editRun && (
                 <StopCorrectionDialog
