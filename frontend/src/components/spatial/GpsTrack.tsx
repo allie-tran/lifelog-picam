@@ -152,12 +152,14 @@ const TrackLine = ({
 
 export function GpsTrackMap({
     imageGps = [],
+    fullTrack = [],
     currentTrack = [],
     segments = [],
     activeSegmentIds,
     dayStops = [],
 }: {
     imageGps?: GPSData[];
+    fullTrack?: GPSData[];
     currentTrack?: GPSData[];
     segments?: ResultSegment[];
     activeSegmentIds?: Set<number>;
@@ -169,9 +171,13 @@ export function GpsTrackMap({
     const hasActiveFilter =
         activeSegmentIds != null && activeSegmentIds.size > 0;
 
+    // Whole-day path = the full raw GPS track (dense), falling back to the
+    // sparse image-GPS points when no raw track exists for the day.
+    const dayTrack = fullTrack.length > 1 ? fullTrack : imageGps;
+
     const allPositions = useMemo<L.LatLngExpression[]>(
-        () => imageGps.map((p) => [p.latitude, p.longitude]),
-        [imageGps]
+        () => dayTrack.map((p) => [p.latitude, p.longitude]),
+        [dayTrack]
     );
 
     const stops = useMemo<StopEntry[]>(() => {

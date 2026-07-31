@@ -301,6 +301,7 @@ function MainPage() {
             : selectedSegmentId === lastNavSegmentId);
 
     const imageGps: GPSData[] = gpsData?.imageGps ?? [];
+    const fullTrack: GPSData[] = gpsData?.rawGps ?? [];
     const segments = data?.segments || [];
     // Stable signature of the rendered segment set, to re-arm the scrollspy
     // only when the segments actually change (not on every render).
@@ -488,6 +489,7 @@ function MainPage() {
                 >
                     <GpsTrack
                         imageGps={imageGps}
+                        fullTrack={fullTrack}
                         currentTrack={data?.gps || []}
                         segments={segments}
                         activeSegmentIds={activeSegmentIds}
