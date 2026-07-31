@@ -17,6 +17,11 @@ import { useAppSelector } from 'reducers/hooks';
 import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from 'constants/urls';
 import { colorForPlace } from '@utils/placeColors';
 
+// GPS gap over this long → a track break; the path is drawn as separate
+// polylines so the gap isn't bridged by a straight line. Matches the pipeline's
+// GAP_SECONDS (5 min).
+const TRACK_GAP_MS = 5 * 60 * 1000;
+
 // ── Marker icons ────────────────────────────────────────────────────────────────
 const createLocIcon = (name: string, count: number, active: boolean) => {
     const bg = colorForPlace(name);
@@ -180,6 +185,25 @@ export function GpsTrackMap({
         [dayTrack]
     );
 
+    // Split the path wherever GPS was lost for > 5 min (mirrors the pipeline's
+    // GAP_SECONDS track split), so a signal gap isn't drawn as a straight line
+    // cutting across the map (e.g. overnight, a flight, indoors).
+    const dayPaths = useMemo<L.LatLngExpression[][]>(() => {
+        const paths: L.LatLngExpression[][] = [];
+        let cur: L.LatLngExpression[] = [];
+        for (let i = 0; i < dayTrack.length; i++) {
+            const p = dayTrack[i];
+            const prev = dayTrack[i - 1];
+            if (prev && p.timestamp - prev.timestamp > TRACK_GAP_MS) {
+                if (cur.length > 1) paths.push(cur);
+                cur = [];
+            }
+            cur.push([p.latitude, p.longitude]);
+        }
+        if (cur.length > 1) paths.push(cur);
+        return paths;
+    }, [dayTrack]);
+
     const stops = useMemo<StopEntry[]>(() => {
         const map = new Map<string, StopEntry>();
 
@@ -260,17 +284,19 @@ export function GpsTrackMap({
                     trackKey={trackKey}
                 />
 
-                {/* 1. Whole-day image GPS path */}
-                {allPositions.length > 1 && (
+                {/* 1. Whole-day GPS path — one polyline per track, so a >5 min
+                       signal gap isn't bridged by a straight line. */}
+                {dayPaths.map((positions, i) => (
                     <Polyline
-                        positions={allPositions}
+                        key={`day-${i}`}
+                        positions={positions}
                         pathOptions={{
                             color: '#64748b',
                             weight: 1.5,
                             opacity: 0.35,
                         }}
                     />
-                )}
+                ))}
 
                 {/* 2. Stop heatmap + pill labels */}
                 {stops.length > 0 && <StopLayer stops={stops} />}
