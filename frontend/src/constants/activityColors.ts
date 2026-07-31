@@ -97,7 +97,7 @@ export const THEME_COLORS : Record<string, string> = {
     "Leisure & Wellbeing": "#8BE9FD",
     "Social & Personal": "#BD93F9",
     "Sleep / Downtime": "#2c3e50",
-    "Miscellaneous": "#E1E7E7",
+    "Miscellaneous": "#9E9E9E",
 }
 
 
