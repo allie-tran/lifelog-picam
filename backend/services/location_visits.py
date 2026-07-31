@@ -15,6 +15,7 @@ description can say "watched the match at Croke Park" rather than just
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Optional
 
@@ -22,6 +23,7 @@ from partialjson.json_parser import JSONParser
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.timefmt import fmt_hm, to_local
 from database.models import Image, ImageGPS, ImagePerson, LocationLabel
 from integrations.llm import llm
 
@@ -520,23 +522,14 @@ def _lookup_events(
     """
     prompt = _events_prompt(location_name, date_human, lat, lon, scene_hint)
 
-    # 1. Active provider (OpenAI web_search when mode=openai; Gemini otherwise).
+    # Active provider only (OpenAI web_search when mode=openai; Gemini when
+    # mode=gemini). No cross-provider fallback: falling back to Gemini when the
+    # project has no Gemini quota only produced 429 spam and wasted time.
     try:
         resp = llm.generate_from_text(prompt, use_search=True)  # type: ignore[call-arg]
-        cleaned = _clean_event_text(resp)
-        if cleaned:
-            return cleaned
+        return _clean_event_text(resp)
     except Exception as e:
-        logger.debug("active-provider events lookup failed for %s: %s", location_name, e)
-
-    # 2. Fallback: Gemini google_search grounding directly.
-    try:
-        from integrations.llm.gemini import llm as gemini_llm
-        if gemini_llm is not llm:
-            resp = gemini_llm.generate_from_text(prompt, use_search=True)
-            return _clean_event_text(resp)
-    except Exception as e:
-        logger.warning("gemini events fallback failed for %s: %s", location_name, e)
+        logger.debug("events lookup failed for %s: %s", location_name, e)
     return None
 
 
@@ -644,6 +637,7 @@ def build_location_visits(
 
     visits: list = []
     outline: list[dict] = []
+    event_jobs: dict[int, Optional[tuple]] = {}
     for idx, group in enumerate(groups):
         seg_ids = [s.segment_id for s in group if s.segment_id is not None]
         start_time = group[0].start_time
@@ -653,6 +647,7 @@ def build_location_visits(
         # Journeys (bare moves, or move + platform-wait trips) are named by route
         # and marked as transit; real stops are named by their venue and marked
         # as a stop (in-venue walks don't demote a stop to transit).
+        tz_name = next((s.timezone for s in group if getattr(s, "timezone", None)), None)
         journey = _is_journey(group)
         name = _journey_name(group, name_by_seg) if journey else _representative_name(group, name_by_seg)
         stop = not journey
@@ -663,24 +658,28 @@ def build_location_visits(
         seg_descs = _segment_descriptions(session, device, date, seg_ids) if seg_ids else []
         people = _visit_people(session, device, date, seg_ids) if seg_ids else []
 
-        event_context: Optional[str] = None
+        # Defer the event web_search: each is a slow OpenAI web_search call, so
+        # collect the qualifying visits and run them concurrently below instead of
+        # serially in this loop (the main cost of a location-visit rebuild).
+        event_args: Optional[tuple] = None
         if (
             duration >= _EVENT_MIN_STOP_S
             and _is_notable_venue(name, stop, labeled)
             and _attendance_plausible(activity_groups)
         ):
-            date_human = start_time.strftime("%A, %-d %B %Y")
+            date_human = to_local(start_time, tz_name).strftime("%A, %-d %B %Y")
             scene_hint = " ".join(seg_descs[:3])[:300]
-            event_context = _lookup_events(name, date_human, lat=lat, lon=lon, scene_hint=scene_hint)
+            event_args = (name, date_human, lat, lon, scene_hint)
+        event_jobs[idx] = event_args
 
-        time_range = f"{start_time.strftime('%H:%M')}–{end_time.strftime('%H:%M')}"
+        time_range = f"{fmt_hm(start_time, tz_name)}–{fmt_hm(end_time, tz_name)}"
         outline.append({
             "index": idx,
             "place": name or "an unnamed place",
             "kind": "stop" if stop else "transit",
             "time_range": f"{time_range} ({duration_min} min)",
             "people": people,
-            "event": event_context,
+            "event": None,  # filled after the concurrent event lookups below
             "notes": seg_descs,
         })
 
@@ -699,9 +698,25 @@ def build_location_visits(
                 segment_indices=[s.segment_index for s in group if s.segment_index is not None],
                 activity_groups=activity_groups,
                 description="",  # filled by the single whole-day description call below
-                event_context=event_context,
+                event_context=None,  # filled after the concurrent event lookups below
             )
         )
+
+    # Concurrent event web_search for all qualifying visits — wall time collapses
+    # from the sum of the calls to roughly the slowest one.
+    pending = {idx: args for idx, args in event_jobs.items() if args is not None}
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(8, len(pending))) as pool:
+            results = dict(zip(
+                pending.keys(),
+                pool.map(lambda a: _lookup_events(a[0], a[1], lat=a[2], lon=a[3], scene_hint=a[4]),
+                         pending.values()),
+            ))
+        by_index = {v.visit_index: v for v in visits}
+        for idx, event_context in results.items():
+            outline[idx]["event"] = event_context
+            if idx in by_index:
+                by_index[idx].event_context = event_context
 
     # One LLM call describes every visit with the full day in view.
     descriptions = _describe_visits_global(outline)

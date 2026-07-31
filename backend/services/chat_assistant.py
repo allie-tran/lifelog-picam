@@ -369,7 +369,9 @@ def _handle_change_location(
     # OSM POI, or mint a manual venue) rather than a cosmetic per-user label —
     # this propagates to visits, events grounding and the summary.
     from location.stop_correction import correct_stop_venue
-    changed, message = correct_stop_venue(session, device, date, int(segment_id), label)
+    changed, message = correct_stop_venue(
+        session, device, date, int(segment_id), label, whole_location=True
+    )
     if not changed:
         return message
 

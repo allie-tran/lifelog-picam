@@ -58,9 +58,24 @@ Manages the PostgreSQL schema. The `batch/models.py` defines the batch-side ORM;
 ```bash
 cd backend
 uvicorn main:app --host 0.0.0.0 --port 8082 --reload
-# In a separate terminal, start the Celery worker:
-celery -A tasks.celery_app worker --loglevel=info
+
+# GPU/solo worker — consumes the default `celery` queue AND `llm` as a fallback
+# (so annotation still runs, serially, if the llm worker below is down):
+celery -A tasks.celery_app worker --loglevel=info -Q celery,llm -n gpu@%h
+
+# LLM worker — parallelizes per-segment annotation (describe_segment_task, a pure
+# Gemini API call) so a fresh day processes many segments at once instead of one
+# at a time. Threads pool (I/O-bound) + CUDA hidden so it takes no GPU memory:
+CUDA_VISIBLE_DEVICES="" celery -A tasks.celery_app worker --loglevel=info \
+    -Q llm --pool=threads --concurrency=6 -n llm@%h
+
+# In a separate terminal, start the beat scheduler (proactive rebuilds, backfills):
+celery -A tasks.celery_app beat --loglevel=info
 ```
+`describe_segment_task` is routed to the `llm` queue (see `task_routes` in
+`tasks/celery_app.py`). Running the dedicated llm worker is what makes day
+processing fast; without it the gpu worker still annotates via the `llm`
+fallback, just serially (the old behaviour).
 Requires `.env` with at minimum: `PG_URI`, `JWT_SECRET`, `GEMINI_API`, `GEMINI_MODEL_NAME`, `DIR`, `THUMBNAIL_DIR`.
 
 ### Frontend

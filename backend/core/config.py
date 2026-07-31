@@ -42,7 +42,11 @@ CATEGORIES_WITH_GROUPS = {
         "activities": [
             "Commuting",
             "Travelling (Train)",
+            "Travelling (Tram)",
+            "Travelling (Subway)",
             "Travelling (Plane)",
+            "Travelling (Ferry)",
+            "Travelling (Cable Car)",
             "Traveling (Bus)",
             "Traveling (Car)",
             "Walking on Campus",

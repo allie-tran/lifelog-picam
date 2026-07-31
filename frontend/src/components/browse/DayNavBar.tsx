@@ -1,4 +1,5 @@
-import { Box, Tooltip, Typography } from '@mui/material';
+import { Box, IconButton, Tooltip, Typography } from '@mui/material';
+import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import { colorForPlace } from 'utils/placeColors';
 import dayjs from 'dayjs';
@@ -6,6 +7,7 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { Fragment, useState } from 'react';
 import { NavSegment } from 'apis/browsing';
+import StopCorrectionDialog from 'components/browse/StopCorrectionDialog';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -30,6 +32,10 @@ interface DayNavBarProps {
     viewingSegmentId?: number | null;
     onSelectSegment: (id: SegmentSelection) => void;
     hasRecent?: boolean;
+    device?: string;
+    date?: string;
+    // Called after a manual stop-venue correction so the parent can refresh.
+    onLocationCorrected?: () => void;
 }
 
 function fmtDuration(totalSeconds: number): string {
@@ -63,7 +69,12 @@ const MODE_ICON: Record<string, string> = {
     car: '🚗',
     vehicle: '🚗',
     public_transport: '🚌',
+    bus: '🚌',
+    tram: '🚊',
     train: '🚆',
+    subway: '🚇',
+    ferry: '⛴️',
+    cable_car: '🚡',
     walk: '🚶',
     cycle: '🚴',
     stationary: '🚶',
@@ -278,8 +289,9 @@ const MOVE_BG = '#9575cd20';
 const segColor = (seg: NavSegment) =>
     THEME_COLORS[seg.activityGroup] || CATEGORIES[seg.activity] || '#e0e0e0';
 
-export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegmentId = null, onSelectSegment, hasRecent = false }: DayNavBarProps) {
+export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegmentId = null, onSelectSegment, hasRecent = false, device, date, onLocationCorrected }: DayNavBarProps) {
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
+    const [editRun, setEditRun] = useState<{ segmentIds: number[]; name?: string | null } | null>(null);
 
     const segments: NavSegment[] = navSegments ?? [];
     if (!segments.length) return null;
@@ -370,6 +382,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                         if (ids.length) onSelectSegment(ids.length === 1 ? ids[0] : ids);
                                     }}
                                     sx={{
+                                        position: 'relative',
                                         height: 44,
                                         bgcolor: bg,
                                         cursor: 'pointer',
@@ -381,6 +394,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                         p: '0 4px',
                                         border: '1px solid white',
                                         borderRadius: '4px',
+                                        '&:hover .daynav-edit-loc': { opacity: 1 },
                                     }}
                                 >
                                     <Typography variant="caption" fontWeight={700} noWrap sx={{ lineHeight: 1.2, color: '#fff' }}>
@@ -389,6 +403,35 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     <Typography variant="caption" noWrap sx={{ fontSize: '0.65rem', lineHeight: 1.2, color: 'rgba(255,255,255,0.8)' }}>
                                         {fmtDuration(run.totalSeconds)}
                                     </Typography>
+                                    {/* Manual reverse-geocode correction — stop runs only */}
+                                    {!run.isMove && device && date && (
+                                        <Tooltip title="Correct location">
+                                            <IconButton
+                                                className="daynav-edit-loc"
+                                                size="small"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const ids = run.segments
+                                                        .map((s) => s.segmentId)
+                                                        .filter((id): id is number => id != null);
+                                                    if (ids.length) setEditRun({ segmentIds: ids, name: run.name });
+                                                }}
+                                                sx={{
+                                                    position: 'absolute',
+                                                    top: 1,
+                                                    right: 1,
+                                                    p: '1px',
+                                                    color: '#fff',
+                                                    opacity: 0,
+                                                    transition: 'opacity 0.12s',
+                                                    bgcolor: 'rgba(0,0,0,0.25)',
+                                                    '&:hover': { bgcolor: 'rgba(0,0,0,0.45)' },
+                                                }}
+                                            >
+                                                <EditLocationAltIcon sx={{ fontSize: 14 }} />
+                                            </IconButton>
+                                        </Tooltip>
+                                    )}
                                 </Box>
                             </Tooltip>
 
@@ -529,6 +572,17 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                 {hasRecent && <Box sx={{ flex: '0 0 auto', width: 70, ml: '4px' }} />}
             </Box>
 
+            {device && date && editRun && (
+                <StopCorrectionDialog
+                    open
+                    device={device}
+                    date={date}
+                    segmentIds={editRun.segmentIds}
+                    currentName={editRun.name}
+                    onClose={() => setEditRun(null)}
+                    onCorrected={onLocationCorrected}
+                />
+            )}
         </Box>
     );
 }

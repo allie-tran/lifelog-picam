@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -25,6 +26,23 @@ from tasks import describe_segment_task
 logger = logging.getLogger(__name__)
 
 _LIVE_THRESHOLD_MINUTES = 20  # day is "live" if last image arrived within this window
+
+# A `processing=True` flag older than this is treated as a dead task (worker
+# killed mid-rebuild, or a queued task purged on restart) — the GET path and the
+# proactive beat re-dispatch instead of waiting forever on it. A full rebuild
+# (LLM + web-search + novelty) on the solo worker is minutes; 15 is safely past.
+_STALE_PROCESSING_MINUTES = 15
+
+
+def _is_processing_stale(started_at) -> bool:
+    """True when a processing flag is stuck (older than the watchdog window)."""
+    if started_at is None:
+        # Legacy record: flag set before we stamped a timestamp — can't tell its
+        # age, so assume dead rather than block the day forever.
+        return True
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - started_at).total_seconds() / 60 >= _STALE_PROCESSING_MINUTES
 
 DEFAULT_TARGETS = [
     CustomTarget(
@@ -95,10 +113,18 @@ def _resolve_location_visits(session, device: str, date: str, segments, existing
 def _day_summary_bg(device: str, date: str, target_dicts: list) -> None:
     """Background: full day-summary rebuild (segmentation → timeline → LLM → CLIP)."""
     from sqlalchemy.orm import Session as _Session
+    # Phase timer — logs where the wall-clock goes so a >1 min build can be traced
+    # to the actual hog (web_search? novelty? CLIP?) instead of guessing.
+    _t = [time.perf_counter()]
+    def _lap(phase: str) -> None:
+        now = time.perf_counter()
+        logger.info("_day_summary_bg[%s/%s] %s: %.1fs", device, date, phase, now - _t[0])
+        _t[0] = now
     try:
         with _Session(_db_engine) as session:
             load_all_segments(session, device, date, skip_annotations=False)
             segments = create_day_timeline(session, device, date)
+            _lap("segment+timeline")
             if not segments:
                 logger.warning("_day_summary_bg: no segments found for %s/%s", device, date)
                 DaySummaryRecord.update_one(
@@ -135,39 +161,26 @@ def _day_summary_bg(device: str, date: str, target_dicts: list) -> None:
                 )
             except Exception as _lve:
                 logger.warning("_day_summary_bg: location visits failed for %s/%s: %s", device, date, _lve)
+            _lap("location_visits (web_search)")
 
             summary = summarize_day_by_text(session, summary)
             summary.text_summary_stale = False
             summary.text_summary_generated_at = datetime.now(timezone.utc)
+            _lap("day_text")
 
             if not _is_live:
+                # Novelty highlight removed — it cost a full ~25s LLM call and was
+                # never surfaced in the UI. Keep the cheap day-ready notification.
                 try:
-                    from services.novelty import generate_unique_day_highlight
-                    from services.notify import notify_day_complete, notify_novelty
-                    highlight, novel_ids = generate_unique_day_highlight(session, device, date)
-                    summary.unique_highlight = highlight
-                    summary.novelty_segments = novel_ids
+                    from services.notify import notify_day_complete
                     notify_day_complete(session, device, date, summary.summary_text)
-                    if highlight:
-                        rep_thumb = None
-                        if novel_ids:
-                            _rep = session.execute(
-                                select(ImageModel.thumbnail)
-                                .where(
-                                    ImageModel.device == device,
-                                    ImageModel.segment_id == novel_ids[0],
-                                    ImageModel.date == date,
-                                    ImageModel.deleted == False,
-                                )
-                                .limit(1)
-                            ).scalars().first()
-                            rep_thumb = _rep
-                        notify_novelty(session, device, date, highlight, rep_thumb)
                     session.commit()
                 except Exception as _nve:
-                    logger.warning("_day_summary_bg: novelty step failed for %s/%s: %s", device, date, _nve)
+                    logger.warning("_day_summary_bg: notify failed for %s/%s: %s", device, date, _nve)
+                _lap("notify")
 
             summary = summarize_lifelog_by_day(session, summary, targets)
+            _lap("clip+periods (summarize_lifelog_by_day)")
 
             # Eating focus: dispatch one food pass per meal that lacks a record.
             try:
@@ -257,31 +270,14 @@ def _text_summary_bg(device: str, date: str, is_live: bool = False) -> None:
             summary.text_summary_stale = False
             summary.text_summary_generated_at = datetime.now(timezone.utc)
             if not is_live:
+                # Novelty highlight removed (unused in UI, ~25s LLM call). Keep the
+                # cheap day-ready notification.
                 try:
-                    from services.novelty import generate_unique_day_highlight
-                    from services.notify import notify_day_complete, notify_novelty
-                    highlight, novel_ids = generate_unique_day_highlight(session, device, date)
-                    summary.unique_highlight = highlight
-                    summary.novelty_segments = novel_ids
+                    from services.notify import notify_day_complete
                     notify_day_complete(session, device, date, summary.summary_text)
-                    if highlight:
-                        rep_thumb = None
-                        if novel_ids:
-                            _rep = session.execute(
-                                select(ImageModel.thumbnail)
-                                .where(
-                                    ImageModel.device == device,
-                                    ImageModel.segment_id == novel_ids[0],
-                                    ImageModel.date == date,
-                                    ImageModel.deleted == False,
-                                )
-                                .limit(1)
-                            ).scalars().first()
-                            rep_thumb = _rep
-                        notify_novelty(session, device, date, highlight, rep_thumb)
                     session.commit()
                 except Exception as _nve:
-                    logger.warning("_text_summary_bg: novelty step failed for %s/%s: %s", device, date, _nve)
+                    logger.warning("_text_summary_bg: notify failed for %s/%s: %s", device, date, _nve)
             DaySummaryRecord.update_one(
                 {"date": date, "device": device},
                 data={"$set": {

@@ -21,7 +21,7 @@ _MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack"}
 
 # Vision cost scales with images sent. The per-meal dispatcher already selects a
 # handful of spread-out frames; this caps it as a safety net.
-_MAX_IMAGES = 6
+_MAX_IMAGES = 20
 
 _PROMPT = """These are photos from a POV lifelogging camera worn by me during an eating moment{time_hint}.
 

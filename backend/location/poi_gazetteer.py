@@ -33,6 +33,7 @@ import numpy as np
 import requests
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from location.transport_mode import _haversine_m
 from sqlalchemy.orm import Session
 
 # ImageEmbedding is the populated CLIP/search embedding (clip_embedding table is
@@ -115,12 +116,10 @@ def _element_to_row(el: dict) -> dict | None:
     }
 
 
-def _fetch_overpass(tlat: float, tlon: float) -> list[dict] | None:
-    """Overpass query for a tile bbox with short backoff. None on give-up."""
+def _run_overpass(query: str, ctx: str) -> list[dict] | None:
+    """POST an Overpass query with rate-limit + short backoff. None on give-up.
+    ``ctx`` is a short label for logs (e.g. the tile/point being fetched)."""
     global _last_overpass
-    s, w = tlat - TILE_PAD, tlon - TILE_PAD
-    n, e = tlat + TILE_GRID + TILE_PAD, tlon + TILE_GRID + TILE_PAD
-    query = _OVERPASS_TMPL.format(t=_OVERPASS_TIMEOUT, s=s, w=w, n=n, e=e)
     delay = 3.0
     for i in range(_OVERPASS_ATTEMPTS):
         wait = _OVERPASS_RATE - (time.monotonic() - _last_overpass)
@@ -132,15 +131,21 @@ def _fetch_overpass(tlat: float, tlon: float) -> list[dict] | None:
             _last_overpass = time.monotonic()
             if r.status_code == 200:
                 return r.json().get("elements", [])
-            logger.warning("Overpass HTTP %s for tile (%.3f,%.3f) try %d",
-                           r.status_code, tlat, tlon, i + 1)
+            logger.warning("Overpass HTTP %s for %s try %d", r.status_code, ctx, i + 1)
         except Exception as exc:
             _last_overpass = time.monotonic()
-            logger.warning("Overpass error for tile (%.3f,%.3f) try %d: %s",
-                           tlat, tlon, i + 1, exc)
+            logger.warning("Overpass error for %s try %d: %s", ctx, i + 1, exc)
         time.sleep(delay)
         delay *= 2
     return None
+
+
+def _fetch_overpass(tlat: float, tlon: float) -> list[dict] | None:
+    """Overpass query for a tile bbox with short backoff. None on give-up."""
+    s, w = tlat - TILE_PAD, tlon - TILE_PAD
+    n, e = tlat + TILE_GRID + TILE_PAD, tlon + TILE_GRID + TILE_PAD
+    query = _OVERPASS_TMPL.format(t=_OVERPASS_TIMEOUT, s=s, w=w, n=n, e=e)
+    return _run_overpass(query, f"tile ({tlat:.3f},{tlon:.3f})")
 
 
 def _ensure_tile(session: Session, lat: float, lon: float) -> None:
@@ -229,6 +234,102 @@ def nearby_pois(session: Session, lat: float, lon: float,
         }
         for p, d in rows
     ]
+
+
+# ─── Transit venues (gated) ───────────────────────────────────────────────────
+# Public-transport stops (stations, tram/bus stops, airport terminals) are NOT in
+# the general gazetteer (nearby_pois only fetches amenity/shop/tourism/leisure/
+# office) — including them everywhere would flood normal stops with roadside
+# bus-stop nodes. Instead the pipeline calls this ONLY for a stop that the
+# neighbour-mode gate flags as a transit waypoint (a stationary stop bracketed by
+# a vehicle/flight leg). Results are kept out of osm_pois so the general candidate
+# pool stays clean; a small in-process TTL cache avoids re-hitting Overpass when
+# the same day reprocesses.
+_TRANSIT_RADIUS_M = 250.0
+_TRANSIT_TTL_S = 6 * 3600
+_transit_cache: dict[tuple, tuple[float, list[dict]]] = {}
+
+_TRANSIT_TMPL = """[out:json][timeout:{t}];
+(
+  nwr["name"]["railway"~"^(station|halt|tram_stop|subway_entrance)$"](around:{r},{lat},{lon});
+  nwr["name"]["public_transport"~"^(station|stop_position)$"](around:{r},{lat},{lon});
+  nwr["name"]["highway"="bus_stop"](around:{r},{lat},{lon});
+  nwr["name"]["amenity"="bus_station"](around:{r},{lat},{lon});
+  nwr["name"]["aeroway"~"^(aerodrome|terminal)$"](around:{r},{lat},{lon});
+);
+out center tags;"""
+
+# Which tag names a transit venue's type; first present wins as the category.
+_TRANSIT_CATEGORY_KEYS = ("railway", "public_transport", "highway", "aeroway", "amenity")
+
+
+def _fetch_transit_overpass(lat: float, lon: float) -> list[dict] | None:
+    """Overpass 'around' query for named transit venues near a point. None on give-up."""
+    query = _TRANSIT_TMPL.format(t=_OVERPASS_TIMEOUT, r=int(_TRANSIT_RADIUS_M), lat=lat, lon=lon)
+    return _run_overpass(query, f"transit ({lat:.5f},{lon:.5f})")
+
+
+def nearby_transit_pois(lat: float, lon: float) -> list[dict]:
+    """Named public-transport venues within ~150 m of (lat, lon), nearest first.
+
+    Same dict shape as ``nearby_pois`` so callers can merge the two candidate
+    lists. Best-effort: returns [] on any Overpass failure. Gated by the caller —
+    only meant to run for stops the neighbour-mode gate marks as transit.
+    """
+    key = (round(lat, 3), round(lon, 3))
+    hit = _transit_cache.get(key)
+    if hit and (time.monotonic() - hit[0]) < _TRANSIT_TTL_S:
+        return hit[1]
+
+    elements = _fetch_transit_overpass(lat, lon)
+    if elements is None:
+        return []  # don't cache a failure — retry next run
+
+    out: list[dict] = []
+    for el in elements:
+        tags = el.get("tags", {})
+        name = tags.get("name")
+        if not name:
+            continue
+        if el["type"] == "node":
+            elat, elon = el.get("lat"), el.get("lon")
+        else:
+            c = el.get("center", {})
+            elat, elon = c.get("lat"), c.get("lon")
+        if elat is None or elon is None:
+            continue
+        category = next((tags[k] for k in _TRANSIT_CATEGORY_KEYS if tags.get(k)), None)
+        out.append({
+            "name": name,
+            "category": category,
+            "wikidata_id": tags.get("wikidata") or "",
+            "osm_type": el["type"],
+            "osm_id": str(el["id"]),
+            "latitude": float(elat),
+            "longitude": float(elon),
+            "distance_m": _haversine_m(lat, lon, float(elat), float(elon)),
+        })
+
+    # A station explodes into dozens of near-identical platform/stop_position nodes
+    # sharing one name. Collapse by name, keeping the best-typed, nearest node, so
+    # the disambiguator (and the correction list) see one "Basel SBB", not seven.
+    def _rank(cat: str | None) -> int:
+        c = (cat or "").lower()
+        if c in ("station", "aerodrome", "bus_station"):
+            return 0
+        if c in ("halt", "tram_stop", "terminal"):
+            return 1
+        return 2  # stop / stop_position / platform / subway_entrance
+
+    best: dict[str, dict] = {}
+    for c in out:
+        prev = best.get(c["name"])
+        key_c = (_rank(c["category"]), c["distance_m"])
+        if prev is None or key_c < (_rank(prev["category"]), prev["distance_m"]):
+            best[c["name"]] = c
+    deduped = sorted(best.values(), key=lambda c: c["distance_m"])
+    _transit_cache[key] = (time.monotonic(), deduped)
+    return deduped
 
 
 def stop_visual_vector(session: Session, device: str, start_ts, end_ts) -> np.ndarray | None:

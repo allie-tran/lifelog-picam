@@ -7,6 +7,7 @@ import {
     Button,
     Card,
     CardContent,
+    Chip,
     Grid,
     LinearProgress,
     Skeleton,
@@ -165,6 +166,27 @@ const DaySummaryComponent = () => {
                     </Typography>
                 </Box>
                 <Stack direction="row" alignItems="flex-end" spacing={1}>
+                    {daySummary.processing ? (
+                        <Tooltip title="This summary is out of date — a refresh is running in the background. It will update automatically.">
+                            <Chip
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                label="Updating…"
+                                sx={{ alignSelf: 'center' }}
+                            />
+                        </Tooltip>
+                    ) : daySummary.updated ? (
+                        <Tooltip title="New activity was recorded since this summary was written — it will refresh shortly.">
+                            <Chip
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                label="Out of date"
+                                sx={{ alignSelf: 'center' }}
+                            />
+                        </Tooltip>
+                    ) : null}
                     {daySummary.processing && (
                         <Tooltip title="Generating summary…">
                             <LinearProgress sx={{ width: 80, alignSelf: 'center' }} />

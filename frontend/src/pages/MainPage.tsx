@@ -22,7 +22,7 @@ import { useSearchParams } from 'react-router';
 import { setDevice } from 'reducers/auth';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { AccessLevel } from 'types/auth';
 import '../App.css';
 import {
@@ -41,6 +41,18 @@ function MainPage() {
     const date = searchParams.get('date');
     const device = searchParams.get('device') || '';
     const segmentParam = searchParams.get('segment');
+    const { mutate: globalMutate } = useSWRConfig();
+
+    // Refresh everything a manual location correction can change (day-nav labels,
+    // GPS track colours, day-stops list, and the open segment's images).
+    const handleLocationCorrected = () => {
+        globalMutate(
+            (key) => Array.isArray(key) &&
+                ['day-nav', 'gps-track', 'day-stops', 'segment', 'day-summary'].includes(key[0] as string),
+            undefined,
+            { revalidate: true }
+        );
+    };
 
     const selectedSegmentId: SegmentSelection | null = (() => {
         if (!segmentParam) return null;
@@ -456,6 +468,9 @@ function MainPage() {
                         viewingSegmentId={viewingSegmentId}
                         onSelectSegment={setSegment}
                         hasRecent={hasRecent}
+                        device={device}
+                        date={date || undefined}
+                        onLocationCorrected={handleLocationCorrected}
                     />
                 </Box>
 

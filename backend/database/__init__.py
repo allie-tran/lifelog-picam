@@ -2,8 +2,14 @@ from mongodb_odm import connect, disconnect
 from sqlalchemy import create_engine
 # from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 import os
 
+# Load backend/.env by absolute path before reading any config. The engine is
+# built at import time, so a celery worker started from a different CWD (where a
+# bare load_dotenv() can't find .env) would otherwise fall back to the default
+# postgres:password and fail auth. Path is relative to this file, not the CWD.
+load_dotenv(os.path.join(os.path.dirname(__file__), os.pardir, ".env"))
 
 PG_URI = os.getenv("PG_URI", "postgresql://postgres:password@localhost:5432/picam")
 ASYNC_PG_URI = os.getenv("ASYNC_PG_URI", "postgresql+asyncpg://postgres:password@localhost:5432/picam")

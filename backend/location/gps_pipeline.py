@@ -1,5 +1,5 @@
 import bisect
-from collections import Counter
+from collections import Counter, defaultdict
 import logging
 import uuid
 import pandas as pd
@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sklearn.cluster import DBSCAN
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm.session import Session
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, or_, select, update
 from database.models import RawGPS, Device, ImageGPS, Image, Location
 from location.enrich_stops import enrich_stop, enrich_move
 from location import poi_gazetteer as pgaz
@@ -52,7 +52,7 @@ STAY_TIME = 60 * 5         # seconds — min dwell to count as a stop
 # reference stays the fixed anchor, a genuine walk away never returns in time and
 # the stop still closes — the bounded ~2*STAY_DIST diameter is preserved (no
 # DBSCAN-style chaining).
-EXCURSION_GRACE = 120      # seconds — max brief departure that still counts as a stop
+EXCURSION_GRACE = STAY_TIME / 2 # seconds — max brief departure that still counts as a stop
 
 # Transport-mode speed sampling — minimum time baseline for a speed sample.
 # Point-to-point speed at walk pace is dominated by GPS jitter (±5–10 m per fix
@@ -845,7 +845,28 @@ def _prior_stop_poi(session, device, start_ts, end_ts, candidates: list[dict]) -
     )
 
 
-def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts) -> dict | None:
+# Modes that mean the wearer arrived/left by a motorised vehicle: the generic
+# GPS-only VEHICLE, every resolved sub-mode (bus/tram/train/ferry/cable_car/…), and
+# FLIGHT (⇒ airport). Sub-modes must be included or a resolved "tram" leg would no
+# longer read as transit here.
+_TRANSIT_NEIGHBOUR_MODES = {tmode.VEHICLE, tmode.FLIGHT} | tmode.VEHICLE_SUBMODES
+
+
+def _is_transit_waypoint(segments: list[dict], i: int) -> bool:
+    """True when stop ``i`` is bracketed by a transit-capable move leg.
+
+    A station/platform/terminal reads as a short stationary stop whose neighbour
+    segment is a vehicle/flight leg (walking *inside* a venue has walk/stationary
+    neighbours, so it won't trip this). Either side qualifies, so the first and
+    last stop of a journey — reached on foot, left by tram, or vice-versa — count.
+    """
+    for j in (i - 1, i + 1):
+        if 0 <= j < len(segments) and segments[j].get("mode") in _TRANSIT_NEIGHBOUR_MODES:
+            return True
+    return False
+
+
+def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts, extra_candidates=None) -> dict | None:
     """
     Pick the venue a stop was actually in by matching its photos against nearby
     gazetteer candidates. Returns the chosen POI dict, or None to defer to the
@@ -858,6 +879,13 @@ def _disambiguate_stop_poi(session, device, lat, lon, start_ts, end_ts) -> dict 
     stop to a different venue.
     """
     candidates = pgaz.nearby_pois(session, lat, lon)
+    # Transit venues (stations/platforms/terminals) are fetched separately and only
+    # when the caller passes them (neighbour-mode gate), so normal stops stay clean.
+    if extra_candidates:
+        seen = {(c.get("osm_type"), str(c.get("osm_id"))) for c in candidates}
+        for c in extra_candidates:
+            if (c.get("osm_type"), str(c.get("osm_id"))) not in seen:
+                candidates.append(c)
     if not candidates:
         return None
     prior = _prior_stop_poi(session, device, start_ts, end_ts, candidates)
@@ -894,13 +922,34 @@ def enrich_and_index_segments(
             # and let the stop's own photos pick which one, correcting a centroid
             # that drifted onto the shop next door. Falls through to Nominatim
             # when there are no candidates/images or the pick is below θ.
+            # Neighbour-mode gate: if this stop sits between transit legs, also
+            # offer nearby stations/platforms/terminals (kept out of the general
+            # pool) so a tram stop / train station can win the disambiguation.
+            transit_extra = None
+            if _is_transit_waypoint(segments, i):
+                transit_extra = pgaz.nearby_transit_pois(float(lat), float(lon))
+                if transit_extra:
+                    logger.info("Stop segment %d is a transit waypoint — added %d transit candidates",
+                                i, len(transit_extra))
             poi = _disambiguate_stop_poi(
                 session, device, float(lat), float(lon),
                 seg.get("start_ts"), seg.get("end_ts"),
+                extra_candidates=transit_extra,
             )
             stop = enrich_stop(float(lat), float(lon), poi=poi)
             stop_geos[i] = stop
             logger.info("Stop segment %d enriched to %s", i, stop.get("name"))
+
+    # User-confirmed locations are stable within a run (only stop_correction sets
+    # the flag, never enrich), so fetch them once instead of a correlated subquery
+    # re-scanned on every pinned stop below.
+    confirmed_loc_ids = session.execute(
+        select(Location.id).where(Location.user_confirmed.is_(True))
+    ).scalars().all()
+
+    # Each located segment's (start_ts, end_ts, location_id), collected so a final
+    # pass can assign holes to the nearest segment in time (see gap-fill below).
+    seg_locations: list[tuple] = []
 
     for i, seg in enumerate(segments):
         lat = seg.get("centroid_lat")
@@ -929,7 +978,31 @@ def enrich_and_index_segments(
                 .limit(1)
             ).scalar()
             if pinned:
-                logger.info("Stop segment %d is user-confirmed — skipping re-resolution", i)
+                # Don't re-resolve the venue (that clobbered the edit), but DO
+                # propagate the confirmed location across the whole stop window:
+                #  - fill unassigned images, so a stay that grows past the
+                #    already-corrected span (e.g. an evening at home that keeps
+                #    extending) doesn't show newer images as "Unknown location".
+                #  - overwrite stray *non-confirmed* labels, so a single drifted
+                #    GPS fix that got a spurious "From X" move location mid-stop
+                #    doesn't split off as a zero-duration "walking" blip inside
+                #    the confirmed venue.
+                # A DIFFERENT user-confirmed correction is never touched.
+                filled = session.execute(
+                    update(Image)
+                    .where(Image.device == device)
+                    .where(Image.timestamp.between(s_dt - _SEG_IMG_PRE, e_dt + _SEG_IMG_POST))
+                    .where(or_(
+                        Image.location_id.is_(None),
+                        Image.location_id.notin_(confirmed_loc_ids),
+                    ))
+                    .values(location_id=pinned)
+                )
+                logger.info(
+                    "Stop segment %d is user-confirmed — kept venue, propagated to %d images",
+                    i, filled.rowcount,  # type: ignore
+                )
+                seg_locations.append((s_dt, e_dt, pinned))
                 continue
 
         if is_stop:
@@ -1034,8 +1107,51 @@ def enrich_and_index_segments(
                                                end_dt + _SEG_IMG_POST))
                 .values(location_id=location_id)
             )
+            seg_locations.append((start_dt, end_dt, location_id))
 
         logger.info(f"Upserted location {name} (stop={is_stop}) with key={key} and assigned to images between {start_ts} and {end_ts}")
+
+    # ── Gap-fill: assign every still-unlocated image to the nearest segment ───────
+    # The per-segment windows above (start-PRE .. end+POST) are NOT time-contiguous:
+    # ~30 s GPS sampling + stop/move boundaries + dropped outliers leave 30 s–3 min
+    # holes between segments. A photo captured in a hole matched no window and stayed
+    # "Unknown location". Assign each remaining NULL image of the day to the segment
+    # whose [start,end] interval is nearest in time, so coverage is gap-free. Only
+    # touches images that are still NULL — strict + user-confirmed assignments stand.
+    if seg_locations and len(df):
+        day_start = df["timestamp"].min()
+        day_end = df["timestamp"].max()
+        ds = day_start.to_pydatetime() if hasattr(day_start, "to_pydatetime") else day_start
+        de = day_end.to_pydatetime() if hasattr(day_end, "to_pydatetime") else day_end
+        unlocated = session.execute(
+            select(Image.id, Image.timestamp)
+            .where(
+                Image.device == device,
+                Image.location_id.is_(None),
+                Image.deleted == False,  # noqa: E712
+                Image.timestamp.between(ds - _SEG_IMG_PRE, de + _SEG_IMG_POST),
+            )
+        ).all()
+        by_loc: dict = defaultdict(list)
+        for img_id, ts in unlocated:
+            best_lid, best_gap = None, None
+            for s_dt, e_dt, lid in seg_locations:
+                if s_dt <= ts <= e_dt:
+                    gap = 0.0
+                elif ts < s_dt:
+                    gap = (s_dt - ts).total_seconds()
+                else:
+                    gap = (ts - e_dt).total_seconds()
+                if best_gap is None or gap < best_gap:
+                    best_gap, best_lid = gap, lid
+            if best_lid is not None:
+                by_loc[best_lid].append(img_id)
+        filled_total = 0
+        for lid, ids in by_loc.items():
+            session.execute(update(Image).where(Image.id.in_(ids)).values(location_id=lid))
+            filled_total += len(ids)
+        if filled_total:
+            logger.info("Gap-fill: assigned %d unlocated images to their nearest segment", filled_total)
 
     session.commit()
 
@@ -1098,6 +1214,19 @@ def _window_kinematics(
     return p85, span, straightness, n
 
 
+def _window_ascent(g_ts: np.ndarray, g_alt: np.ndarray, start_ts, end_ts) -> float:
+    """Total positive elevation gain (metres climbed) over the [start,end] window
+    of the pre-sorted track — the tell for a cable car / funicular. Sums only the
+    upward altitude steps, so a flat road trip returns ~0."""
+    lo = int(np.searchsorted(g_ts, np.datetime64(start_ts), side="left"))
+    hi = int(np.searchsorted(g_ts, np.datetime64(end_ts), side="right"))
+    alt = g_alt[lo:hi]
+    if len(alt) < 2:
+        return 0.0
+    diffs = np.diff(alt)
+    return float(diffs[diffs > 0].sum())
+
+
 def compute_segment_modes(
     session: Session,
     segments: list[dict],
@@ -1112,16 +1241,23 @@ def compute_segment_modes(
     kinematics (stationary/walk/cycle/vehicle/flight) and applied to every image
     in that segment.
 
-    Images whose ImageGPS row already has a non-null mode are left untouched:
-    they're skipped here (no recompute) and the upsert preserves the stored value
-    via COALESCE. Only first-time/unset images get classified.
+    Images whose ImageGPS row already has a *specific* stored mode are left
+    untouched: they're skipped here and the upsert preserves the stored value via
+    COALESCE. Images stored as the generic ``vehicle`` stay eligible so a later run
+    can upgrade them to a sub-mode (tram/train/ferry/…) once the trip's photos have
+    been annotated — the annotation LLM runs asynchronously, so the sub-mode is
+    often not resolvable on the first pass. First-time/unset images are classified.
     """
-    # Image ids that already carry a stored mode — skip them entirely.
+    # Skip images that already carry a *specific* mode; keep generic-"vehicle" rows
+    # eligible for a sub-mode upgrade on a later (post-annotation) run.
     already_moded: set = set(
         session.execute(
             select(ImageGPS.image_id)
             .join(Image, Image.id == ImageGPS.image_id)
-            .where(Image.device == device, Image.date == date, ImageGPS.mode.isnot(None))
+            .where(
+                Image.device == device, Image.date == date,
+                ImageGPS.mode.isnot(None), ImageGPS.mode != tmode.VEHICLE,
+            )
         ).scalars()
     )
     pending = [d for d in image_rows if d["image_id"] not in already_moded]
@@ -1179,11 +1315,31 @@ def compute_segment_modes(
         p85, span, straightness, n_pts = _window_kinematics(
             g_ts, g_lat, g_lon, g_alt, seg["start_ts"], seg["end_ts"]
         )
-        seg_mode[si] = tmode.classify_segment_gps(p85, span, flight, straightness, n_pts)
+        mode = tmode.classify_segment_gps(p85, span, flight, straightness, n_pts)
+        # Refine a generic "vehicle" into a specific sub-mode (tram/train/bus/ferry/
+        # cable_car/…) from the trip's photos — GPS speed can't tell them apart, the
+        # photos can. Mirrors the stop-POI disambiguator. Deferred to segments the
+        # GPS calls a vehicle, so a walk/cycle/flight is never second-guessed.
+        # Refine a generic "vehicle" into a specific sub-mode (tram/train/bus/ferry/
+        # cable_car/…) from the trip's photo activities — reusing the describe
+        # annotation (text), no extra vision. On the first pass activities aren't
+        # ready yet → stays generic; refine_segment_mode upgrades it post-annotation.
+        if mode == tmode.VEHICLE:
+            ascent = _window_ascent(g_ts, g_alt, seg["start_ts"], seg["end_ts"])
+            labels = pgaz.stop_activity_labels(session, device, seg.get("start_ts"), seg.get("end_ts"))
+            refined = tmode.disambiguate_vehicle_mode(labels, p85 * 3.6, ascent, straightness)
+            if refined:
+                mode = refined
+        seg_mode[si] = mode
         logger.info(
-            "Segment %d: GPS mode %s (p85 %.1f, span %.1f m, straightness %.3f, n %d)",
+            "Segment %d: mode %s (p85 %.1f, span %.1f m, straightness %.3f, n %d)",
             si, seg_mode[si], p85, span, straightness, n_pts,
         )
+
+    # Stash each segment's mode on its dict so later passes (e.g. the enrich
+    # transit-waypoint gate) can read a stop's neighbours' modes without a DB hit.
+    for si, m in seg_mode.items():
+        segments[si]["mode"] = m
 
     # Propagate each segment's mode to its images. Rows with no segment match get
     # no mode → insert NULL → reclassify next run (don't pin them to "unknown",
@@ -1194,11 +1350,151 @@ def compute_segment_modes(
             d["mode"] = seg_mode[si]
 
 
+# Need at least this many GPS-carrying frames for a segment's kinematics to mean
+# anything when refining its mode after annotation.
+_SEGMENT_MODE_REFINE_MIN_PTS = 2
+
+
+def _set_segment_mode(session, device, date, segment_id, new_mode) -> None:
+    """Overwrite ImageGPS.mode → ``new_mode`` for every *moving* image of a segment
+    (never touches a stationary/flight frame)."""
+    session.execute(
+        update(ImageGPS)
+        .where(
+            ImageGPS.image_id.in_(
+                select(Image.id).where(
+                    Image.device == device, Image.date == date,
+                    Image.segment_id == segment_id,
+                )
+            ),
+            ImageGPS.mode.in_(list(tmode.MOVE_MODES)),
+            ImageGPS.mode != new_mode,
+        )
+        .values(mode=new_mode)
+    )
+    session.commit()
+
+
+def refine_segment_mode(session: Session, device: str, date: str, segment_id: int) -> str | None:
+    """
+    Post-annotation refine of ONE segment's transport mode from its now-available
+    photo activities. Called from ``describe_segment_task`` after the segment is
+    described, so the specific mode resolves on a live day without a full re-run.
+
+    Three mechanisms:
+      1. **Explicit photo-named vehicle mode** — if the activity says ferry/train/
+         tram/… the photos are authoritative: override ANY move mode, even walk/cycle.
+         A slow ferry or tram sits in the walk/cycle GPS speed band and would otherwise
+         stick as "cycle". No kinematics / finished-gate — the label alone is decisive.
+      2. **Walk ↔ cycle correction from photos** — the GPS cycle band is narrow and
+         walk-pace jitter routinely inflates a walk into "cycle". When the segment sits
+         in the pedestrian band (walk/cycle) and the photos say the other one, trust the
+         photos. Label-driven, so it runs even for a 1-frame sliver.
+      3. **Generic vehicle → sub-mode via kinematics+LLM** — only for a segment the
+         GPS called a generic ``vehicle`` with no explicit label, and only once the
+         segment has *finished* (a later segment exists), so partial motion isn't
+         judged mid-trip.
+
+    Returns the new mode when it changed, else None.
+    """
+    rows = session.execute(
+        select(
+            Image.id, Image.timestamp,
+            ImageGPS.latitude, ImageGPS.longitude, ImageGPS.elevation, ImageGPS.mode,
+        )
+        .join(ImageGPS, ImageGPS.image_id == Image.id)
+        .where(
+            Image.device == device, Image.date == date,
+            Image.segment_id == segment_id, Image.deleted == False,
+        )
+        .order_by(Image.timestamp.asc())
+    ).all()
+    if not rows:
+        return None
+
+    modes = [r.mode for r in rows if r.mode]
+    if not modes:
+        return None
+    dominant = Counter(modes).most_common(1)[0][0]
+    if dominant not in tmode.MOVE_MODES:
+        return None  # stationary / flight — never override
+
+    seg_start, seg_end = rows[0].timestamp, rows[-1].timestamp
+    labels = pgaz.stop_activity_labels(session, device, seg_start, seg_end)
+
+    # 1. Explicit photo-named vehicle mode wins over the GPS speed class outright.
+    explicit = next((m for lbl, _ in labels if (m := tmode.mode_from_activity(lbl))), None)
+    if explicit and explicit != dominant:
+        _set_segment_mode(session, device, date, segment_id, explicit)
+        logger.info("Segment %s mode: %s → %s (from activity)", segment_id, dominant, explicit)
+        return explicit
+
+    # 2. Walk ↔ cycle correction: photos vote walk vs cycle; the majority wins over a
+    # jitter-driven GPS band call. Confined to the pedestrian band, so a walking frame
+    # on a vehicle trip can't demote the ride.
+    if dominant in (tmode.WALK, tmode.CYCLE):
+        votes: Counter = Counter()
+        for lbl, n in labels:
+            pm = tmode.pedestrian_mode_from_activity(lbl)
+            if pm:
+                votes[pm] += n
+        if votes:
+            ped = votes.most_common(1)[0][0]
+            if ped != dominant:
+                _set_segment_mode(session, device, date, segment_id, ped)
+                logger.info("Segment %s mode: %s → %s (pedestrian photos)", segment_id, dominant, ped)
+                return ped
+        return None
+
+    # 3. Generic vehicle with no explicit label → kinematics+LLM, once finished.
+    if dominant != tmode.VEHICLE:
+        return None
+    if len(rows) < _SEGMENT_MODE_REFINE_MIN_PTS:
+        return None
+    later = session.execute(
+        select(func.count()).select_from(Image).where(
+            Image.device == device, Image.date == date,
+            Image.segment_id.isnot(None), Image.segment_id != segment_id,
+            Image.timestamp > seg_end,
+        )
+    ).scalar() or 0
+    if later == 0:
+        return None  # still the open tail of the day — refine on a later pass
+
+    g_ts = np.array([np.datetime64(r.timestamp) for r in rows])
+    g_lat = np.array([r.latitude for r in rows], dtype=float)
+    g_lon = np.array([r.longitude for r in rows], dtype=float)
+    g_alt = np.array([r.elevation if r.elevation is not None else 0.0 for r in rows], dtype=float)
+
+    p85, _span, straightness, _n_pts = _window_kinematics(g_ts, g_lat, g_lon, g_alt, seg_start, seg_end)
+    ascent = _window_ascent(g_ts, g_alt, seg_start, seg_end)
+    refined = tmode.disambiguate_vehicle_mode(labels, p85 * 3.6, ascent, straightness)
+    if not refined or refined == tmode.VEHICLE:
+        return None
+    _set_segment_mode(session, device, date, segment_id, refined)
+    logger.info("Refined segment %s mode: vehicle → %s (%d frames)", segment_id, refined, len(rows))
+    return refined
+
+
 # ─── Persistence ──────────────────────────────────────────────────────────────
 
 def _upsert_image_gps(session, rows: list[dict]) -> None:
-    """Insert/update a batch of ImageGPS rows, preserving any already-stored mode."""
+    """Insert/update a batch of ImageGPS rows, preserving any already-stored mode —
+    except a generic ``vehicle``, which a newly-resolved specific sub-mode
+    (tram/train/ferry/…) is allowed to overwrite. Other stored modes stay put."""
     stmt = insert(ImageGPS).values(rows)
+    # Keep the stored mode, unless it is the generic "vehicle" and the incoming row
+    # carries a specific sub-mode — then upgrade. New rows (stored mode NULL) take
+    # the incoming value as before.
+    mode_expr = case(
+        (
+            (ImageGPS.mode == tmode.VEHICLE)
+            & stmt.excluded.mode.isnot(None)
+            & (stmt.excluded.mode != tmode.VEHICLE),
+            stmt.excluded.mode,
+        ),
+        else_=func.coalesce(ImageGPS.mode, stmt.excluded.mode),
+    )
     stmt = stmt.on_conflict_do_update(
         constraint="image_gps_image_id_key",
         set_={
@@ -1210,10 +1506,48 @@ def _upsert_image_gps(session, rows: list[dict]) -> None:
             "formatted_time": stmt.excluded.formatted_time,
             "source": stmt.excluded.source,
             "gap_s": stmt.excluded.gap_s,
-            "mode": func.coalesce(ImageGPS.mode, stmt.excluded.mode),
+            "mode": mode_expr,
         },
     )
     session.execute(stmt)
+
+
+def _apply_activity_mode_overrides(session, device: str, date: str) -> int:
+    """Photos are authoritative for the specific transport mode: where a segment's
+    activity explicitly names one (ferry/train/tram/cable_car/…), override the GPS
+    speed-derived ImageGPS.mode for that segment's moving frames — a slow ferry
+    otherwise reads as cycling, a tram as a car. Runs over the whole day each full
+    pipeline pass, so a forced re-run fixes already-annotated segments without needing
+    to re-describe them. Only touches MOVE_MODES (never stationary/flight). Returns
+    the number of ImageGPS rows changed."""
+    seg_acts = session.execute(
+        select(Image.segment_id, Image.activity).where(
+            Image.device == device, Image.date == date, Image.deleted == False,
+            Image.segment_id.isnot(None), Image.activity.isnot(None),
+        ).distinct()
+    ).all()
+    updated = 0
+    for seg_id, activity in seg_acts:
+        explicit = tmode.mode_from_activity(activity)
+        if not explicit:
+            continue
+        res = session.execute(
+            update(ImageGPS).where(
+                ImageGPS.image_id.in_(
+                    select(Image.id).where(
+                        Image.device == device, Image.date == date,
+                        Image.segment_id == seg_id,
+                    )
+                ),
+                ImageGPS.mode.in_(list(tmode.MOVE_MODES)),
+                ImageGPS.mode != explicit,
+            ).values(mode=explicit)
+        )
+        updated += res.rowcount or 0
+    if updated:
+        session.commit()
+        logger.info("Activity mode overrides: %d ImageGPS rows for %s/%s", updated, device, date)
+    return updated
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -1367,6 +1701,16 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
     # session.commit()
     # print(f"Reset segments for date {date} and device {device}.")
     load_all_segments(session, device, date, skip_annotations=False)
+
+    # Photos are authoritative for the specific mode: override the GPS speed class
+    # wherever an already-stored activity names the mode (fixes a ferry stuck as
+    # "cycle", a tram as "car"). Runs over the whole day, so a forced re-run corrects
+    # existing annotated segments without re-describing them.
+    try:
+        _apply_activity_mode_overrides(session, device, date)
+    except Exception as _e:
+        session.rollback()
+        logger.warning("activity mode overrides failed for %s/%s: %s", device, date, _e)
 
     # GPS clustering changed stops/locations, so the cached day summary (segment
     # locations + per-visit descriptions) is stale. Flag it for a full rebuild and

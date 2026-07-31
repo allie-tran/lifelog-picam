@@ -21,14 +21,13 @@ from database.models import Image as ImageModel
 from database.types import DaySummaryRecord, ImageRecord, PeriodSummaryRecord
 from schemas import CustomTarget, DaySummary, PeriodSummary
 from services.summary import summarize_lifelog_by_day, update_dirty_segments
-from tasks import describe_segment_task
+from tasks import describe_segment_task, day_summary_rebuild_task, text_summary_task
 from tasks.day_summary import (
     DEFAULT_TARGETS,
     _LIVE_THRESHOLD_MINUTES,
-    _day_summary_bg,
     _get_last_n_summaries,
+    _is_processing_stale,
     _process_date_bg,
-    _text_summary_bg,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +104,7 @@ def process_date(
 
     DaySummaryRecord.update_one(
         {"date": date, "device": device},
-        data={"$set": {"processing": True, "segments": [], "summary_text": "", "dirty_segment_ids": [], "text_summary_stale": True}},
+        data={"$set": {"processing": True, "processing_started_at": datetime.now(timezone.utc), "segments": [], "summary_text": "", "dirty_segment_ids": [], "text_summary_stale": True}},
         upsert=True,
     )
     background_tasks.add_task(_process_date_bg, device, date, reannotate)
@@ -184,16 +183,23 @@ def get_day_summary(
         return cached
 
     if getattr(day_summary, "processing", False):
-        logger.info("day-summary: background task already running for %s/%s", device, date)
-        if day_summary and day_summary.segments:
-            partial = DaySummary.model_validate(day_summary.__dict__)
-        else:
-            partial = DaySummary(device=device, date=date, segments=[], summary_text="")
-        partial.processing = True
-        partial.is_live = is_live
-        partial.number_of_images = number_of_images
-        partial.last_image_time = last_image_time  # type: ignore
-        return partial
+        # Watchdog: only trust the flag while it's fresh. A stale one means the
+        # task died (worker killed mid-rebuild, or purged on restart) — fall
+        # through and re-dispatch instead of returning this partial forever.
+        if not _is_processing_stale(getattr(day_summary, "processing_started_at", None)):
+            logger.info("day-summary: background task already running for %s/%s", device, date)
+            if day_summary and day_summary.segments:
+                partial = DaySummary.model_validate(day_summary.__dict__)
+            else:
+                partial = DaySummary(device=device, date=date, segments=[], summary_text="")
+            partial.processing = True
+            partial.is_live = is_live
+            partial.number_of_images = number_of_images
+            partial.last_image_time = last_image_time  # type: ignore
+            return partial
+        logger.warning(
+            "day-summary: stale processing flag for %s/%s — re-dispatching", device, date
+        )
 
     dirty_ids: list[int] = list(getattr(day_summary, "dirty_segment_ids", []) or [])
     text_stale: bool = bool(getattr(day_summary, "text_summary_stale", True))
@@ -210,10 +216,10 @@ def get_day_summary(
         target_dicts = [{"name": t.name, "action_type": t.action_type.value, "query_prompt": t.query_prompt} for t in my_targets]
         DaySummaryRecord.update_one(
             {"date": date, "device": device},
-            data={"$set": {"processing": True, "date": date, "device": device}},
+            data={"$set": {"processing": True, "processing_started_at": datetime.now(timezone.utc), "date": date, "device": device}},
             upsert=True,
         )
-        background_tasks.add_task(_day_summary_bg, device, date, target_dicts)
+        day_summary_rebuild_task.delay(device, date, target_dicts)
         return DaySummary(
             device=device, date=date, segments=[],
             summary_text="", processing=True, is_live=is_live,
@@ -250,10 +256,10 @@ def get_day_summary(
         summary.processing = True
         DaySummaryRecord.update_one(
             {"date": date, "device": device},
-            data={"$set": {**summary.model_dump(), "dirty_segment_ids": [], "processing": True}},
+            data={"$set": {**summary.model_dump(), "dirty_segment_ids": [], "processing": True, "processing_started_at": datetime.now(timezone.utc)}},
             upsert=True,
         )
-        background_tasks.add_task(_text_summary_bg, device, date, is_live)
+        text_summary_task.delay(device, date, is_live)
         summary.is_live = is_live
         summary.number_of_images = number_of_images
         summary.last_image_time = last_image_time  # type: ignore
@@ -347,7 +353,11 @@ def get_period_summary(
         logger.info("period-summary cache hit for %s/%s %s..%s", device, kind, start, end)
         return PeriodSummary.model_validate(existing.__dict__)
 
-    if getattr(existing, "processing", False):
+    # Watchdog: wait on an in-flight build only while its flag is fresh. A stale
+    # one means the task died (web restart mid-build) — fall through, re-dispatch.
+    if getattr(existing, "processing", False) and not _is_processing_stale(
+        getattr(existing, "processing_started_at", None)
+    ):
         return PeriodSummary.model_validate(existing.__dict__)
 
     # Schedule a background build; return the aggregated shell (metrics + top
@@ -356,7 +366,7 @@ def get_period_summary(
     shell.processing = True
     PeriodSummaryRecord.update_one(
         {"device": device, "kind": kind, "start_date": start, "end_date": end},
-        data={"$set": {**shell.model_dump(), "processing": True}},
+        data={"$set": {**shell.model_dump(), "processing": True, "processing_started_at": datetime.now(timezone.utc)}},
         upsert=True,
     )
     background_tasks.add_task(_period_summary_bg, device, kind, start, end)

@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import Depends, APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException, BackgroundTasks
 from sqlalchemy import select, func, delete
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from schemas import CamelCaseModel
 from location.gps_pipeline import run_pipeline
 from database.models import Image, RawGPS, ImageGPS, SensorDevice, Location, LocationLabel
 from datetime import datetime, timezone as py_timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import update as sa_update
 from integrations.sessions.redis import redis_client as _redis_client
 from timezonefinder import TimezoneFinder
@@ -111,12 +112,26 @@ async def upload_gps(
     # Trigger GPS pipeline (→ location enrichment → segmentation) at most every
     # _GPS_PIPELINE_GATE_MINUTES minutes per device.  The gate lives in Redis so
     # it's shared across API workers and survives restarts within the TTL window.
+    # Only auto-process the CURRENT day. A fix's day is defined in its own local
+    # timezone (so a late-evening fix isn't misfiled as UTC "tomorrow"). Back-dated
+    # or late-arriving fixes for a past day must NOT retrigger a full reprocess of
+    # that day — reprocessing already-enriched stops wastes geocoder/LLM calls and
+    # can revert a corrected stop name. Past days are re-run only on explicit demand
+    # (the /process-gps endpoint).
+    try:
+        tz = ZoneInfo(timezone) if timezone else py_timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = py_timezone.utc
+    fix_date = datetime.fromisoformat(request.timestamp).astimezone(tz).strftime("%Y-%m-%d")
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+
     gate_key = f"gps_pipeline_gate:{user.device_id}"
-    if not _redis_client.get_value(gate_key):
+    if fix_date != today:
+        logger.debug("GPS fix for past day %s (device %s) — not auto-triggering", fix_date, user.device_id)
+    elif not _redis_client.get_value(gate_key):
         _redis_client.set_with_ttl(gate_key, "1", _GPS_PIPELINE_GATE_MINUTES * 60)
-        date = timestamp.strftime("%Y-%m-%d")
-        logger.debug("Triggering GPS pipeline for device %s and date %s", user.device_id, date)
-        update_location_task.delay(user.device_id, date)
+        logger.debug("Triggering GPS pipeline for device %s and date %s", user.device_id, fix_date)
+        update_location_task.delay(user.device_id, fix_date)
     else:
         logger.debug("GPS pipeline gate active for device %s, skipping trigger", user.device_id)
         logger.debug("Gate TTL remaining: %s seconds", _redis_client.get_ttl(gate_key))
@@ -128,16 +143,19 @@ async def upload_gps(
 async def process_gps(
     device: str,
     date: str,
+    force: bool = True,
     # access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
     session: Session = Depends(get_session),
 ):
     # _require_owner(access_level)
+    # Manual endpoint defaults to force=True so an explicit call always re-geocodes,
+    # even when the day's GPS is unchanged (e.g. re-running after a code change).
     if date == "all":
         dates = session.execute(select(Image.date).where(Image.device == device, Image.timezone == None).distinct()).scalars().all()
         for d in dates:
-            if d: run_pipeline(session, device, d)
+            if d: run_pipeline(session, device, d, force=force)
     else:
-        run_pipeline(session, device, date)
+        run_pipeline(session, device, date, force=force)
 
 
 @router.get("/latest-gps", summary="Get the most recent GPS fix for a device")
@@ -454,3 +472,161 @@ def list_stops(
             label_kind=label_kind,
         ))
     return stops
+
+
+# ---------------------------------------------------------------------------
+# Manual stop-venue correction (DayNav) — reverse-geocode fix without the LLM
+# ---------------------------------------------------------------------------
+
+class StopVenueCandidate(CamelCaseModel):
+    name: str
+    category: Optional[str] = None
+    osm_type: Optional[str] = None
+    osm_id: Optional[str] = None
+    latitude: Coordinate = None
+    longitude: Coordinate = None
+    distance_m: Optional[float] = None
+    is_current: bool = False
+
+
+def _segment_centroid(session: Session, device: str, date: str, segment_ids: list[int]):
+    """Mean GPS of the given segments' images, plus the current location_id/name."""
+    rows = session.execute(
+        select(Image.location_id, ImageGPS.latitude, ImageGPS.longitude)
+        .join(ImageGPS, ImageGPS.image_id == Image.id)
+        .where(
+            Image.device == device,
+            Image.date == date,
+            Image.segment_id.in_(segment_ids),
+            Image.deleted == False,
+        )
+    ).all()
+    lats = [r.latitude for r in rows if r.latitude is not None]
+    lons = [r.longitude for r in rows if r.longitude is not None]
+    if not lats or not lons:
+        return None
+    cur_lid = next((r.location_id for r in rows if r.location_id is not None), None)
+    return sum(lats) / len(lats), sum(lons) / len(lons), cur_lid
+
+
+@router.get(
+    "/stop-candidates",
+    summary="Nearby venue options for manually correcting a stop's reverse-geocode",
+    response_model=List[StopVenueCandidate],
+)
+def stop_candidates(
+    device: str,
+    date: str,
+    segmentIds: str,  # comma-separated segment ids of the clicked run
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_any_access(access_level)
+    try:
+        seg_ids = [int(s) for s in segmentIds.split(",") if s.strip() != ""]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="segmentIds must be comma-separated integers")
+    if not seg_ids:
+        raise HTTPException(status_code=400, detail="segmentIds required")
+
+    centroid = _segment_centroid(session, device, date, seg_ids)
+    if centroid is None:
+        raise HTTPException(status_code=404, detail="No GPS for those segments")
+    lat, lon, cur_lid = centroid
+
+    from location import poi_gazetteer as pgaz
+    try:
+        pois = pgaz.nearby_pois(session, lat, lon)
+    except Exception:
+        logger.exception("nearby_pois failed for stop-candidates")
+        pois = []
+
+    cur = session.get(Location, cur_lid) if cur_lid else None
+    cur_osm = (cur.osm_type, str(cur.osm_id)) if cur and cur.osm_id is not None else None
+
+    out: list[StopVenueCandidate] = []
+    # Current venue first, flagged, so the user sees what they're replacing.
+    if cur is not None and cur.name:
+        out.append(StopVenueCandidate(
+            name=cur.name, category=cur.categories, osm_type=cur.osm_type,
+            osm_id=cur.osm_id, latitude=cur.latitude, longitude=cur.longitude,
+            distance_m=0.0, is_current=True,
+        ))
+    # The general gazetteer never lists public-transport stops (stations, tram/bus
+    # stops) — so a manual edit could never pick one. This is an explicit user
+    # action on one stop, so always offer nearby transit venues too (cheap: cached,
+    # and the user chose to open this). The auto pipeline stays neighbour-mode gated.
+    try:
+        pois.extend(pgaz.nearby_transit_pois(lat, lon))
+    except Exception:
+        logger.exception("nearby_transit_pois failed for stop-candidates")
+
+    seen_names = {c.name for c in out}
+    for p in pois:
+        # Don't list the current venue twice.
+        if cur_osm and p.get("osm_type") == cur_osm[0] and str(p.get("osm_id")) == cur_osm[1]:
+            continue
+        if p["name"] in seen_names:
+            continue
+        seen_names.add(p["name"])
+        out.append(StopVenueCandidate(
+            name=p["name"], category=p.get("category"), osm_type=p.get("osm_type"),
+            osm_id=p.get("osm_id"), latitude=p.get("latitude"), longitude=p.get("longitude"),
+            distance_m=p.get("distance_m"),
+        ))
+    return out
+
+
+class CorrectStopRequest(CamelCaseModel):
+    device: str
+    date: str
+    segment_ids: List[int]
+    name: str
+    osm_type: Optional[str] = None
+    osm_id: Optional[str] = None
+
+
+@router.post("/correct-stop", summary="Manually set a stop's venue (no LLM); reassigns only the given segments")
+def correct_stop(
+    req: CorrectStopRequest,
+    background_tasks: BackgroundTasks,
+    user=Depends(get_user),
+    access_level: Annotated[AccessLevel, Depends(auth_dependency)] = AccessLevel.NONE,
+    session: Session = Depends(get_session),
+):
+    _require_owner(access_level)
+    if not req.segment_ids:
+        raise HTTPException(status_code=400, detail="segment_ids required")
+    if not (req.name or "").strip():
+        raise HTTPException(status_code=400, detail="name required")
+
+    from location.stop_correction import correct_stop_venue
+    changed, message = correct_stop_venue(
+        session, req.device, req.date, req.segment_ids, req.name.strip(),
+        osm_type=req.osm_type, osm_id=req.osm_id, whole_location=False,
+    )
+    if not changed:
+        raise HTTPException(status_code=422, detail=message)
+    _bust_location_caches()
+
+    # Rebuild the day summary immediately (not just lazily on next fetch) so
+    # location-visits + the day text reflect the corrected name right away.
+    try:
+        from tasks.day_summary import _day_summary_bg, DEFAULT_TARGETS
+        from database.types import DaySummaryRecord
+        my_targets = (getattr(user, "goal_targets", None) or DEFAULT_TARGETS)
+        target_dicts = [
+            {"name": t.name, "action_type": t.action_type.value, "query_prompt": t.query_prompt}
+            for t in my_targets
+        ]
+        DaySummaryRecord.update_one(
+            {"date": req.date, "device": req.device},
+            data={"$set": {"processing": True}},
+            upsert=True,
+        )
+        background_tasks.add_task(_day_summary_bg, req.device, req.date, target_dicts)
+    except Exception:
+        logger.exception("failed to queue day-summary rebuild after stop correction")
+
+    return {"success": True, "message": message}

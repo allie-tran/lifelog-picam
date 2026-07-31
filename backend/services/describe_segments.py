@@ -6,7 +6,7 @@ import numpy as np
 
 from celery.utils.log import get_task_logger
 from core.config import CATEGORIES, CATEGORIES_WITH_GROUPS, THUMBNAIL_DIR
-from google.genai.errors import ClientError, ServerError
+from google.genai.errors import ClientError
 from integrations.llm import MixedContent, get_visual_content, llm
 from partialjson.json_parser import JSONParser
 from PIL import Image
@@ -64,7 +64,7 @@ Step 1 — Pick the broad group that best matches what is happening (choose exac
 
 Step 2 — Write a short activity label in gerund form (2–4 words), specific enough to be useful but consistent across similar scenes. Good examples: "writing code", "eating lunch", "commuting by train", "attending a lecture", "having a conversation", "tidying the desk".
 
-Step 3 — Write one or two short sentences describing what is visible in the scene. Use the context above (time, location, if stationary) to understand the scene, but don't repeat them.
+Step 3 — Write one or two short, factual sentences stating what the person is DOING and WHO is with them (if anyone). Report the actual activity, not a picture of the frame: do NOT describe lighting, decor, colours, camera artifacts, on-screen content, or incidental background objects, and avoid flowery or atmospheric wording. Call out anything genuinely distinctive (a specific dish, a named place/product, an unusual event); otherwise stay brief. Use the context above (time, location, if stationary) to understand the scene, but don't repeat it.
 
 Step 4 — From the list below, select every tracked activity label that accurately applies to this segment (may be empty, may be several) as Tags. Choose only from this exact list:
 {activities_list}
@@ -96,7 +96,7 @@ def describe_segment(
     )
 
     image_bytes = []
-    if len(segment) > 16:
+    if len(segment) > 20:
         segment = [segment[i] for i in sorted(random.sample(range(len(segment)), 20))]
         logger.debug(f"Segment {segment_id}: downsampled to 20 images")
 
@@ -190,8 +190,14 @@ def describe_segment(
                 f"Segment {segment_id}: ClientError, retrying in {delay}s: {e}"
             )
             time.sleep(delay)
-        except ServerError as e:
-            logger.warning(f"Segment {segment_id}: ServerError, retrying in 10s: {e}")
+        except Exception as e:
+            # ServerError plus any other error (safety block, connection reset,
+            # timeout, non-wrapped 5xx) — retry with backoff instead of letting it
+            # propagate and leave the segment permanently unannotated (grey on DayNav).
+            logger.warning(
+                f"Segment {segment_id}: transient error, retrying in 10s: {e}"
+            )
+            logger.debug(traceback.format_exc())
             time.sleep(10)
 
     return {

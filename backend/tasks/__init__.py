@@ -17,7 +17,7 @@ import uuid
 import numpy as np
 
 from services.object_detection import ModelWrapper, extract_object_from_images
-from location.gps_pipeline import run_pipeline
+from location.gps_pipeline import run_pipeline, refine_segment_mode
 from routers.explore import _FACES_CACHE
 import os
 from core.config import _FACE_CLUSTER_THRESHOLD, _FACE_SIMILARITY_THRESHOLD, DIR, THUMBNAIL_DIR
@@ -183,6 +183,20 @@ def describe_segment_task(
             },
             upsert=True,
         )
+
+        # Now that this segment is annotated, try to upgrade a generic-"vehicle"
+        # move into a specific sub-mode (tram/train/ferry/…) from its activities.
+        # No-op unless the segment is a finished vehicle move — the function gates
+        # on a later segment existing, so a still-open live segment is left for a
+        # later pass. Bust caches again only when the mode actually changed.
+        try:
+            with Session(engine) as session:
+                new_mode = refine_segment_mode(session, device, date, segment_id)
+            if new_mode:
+                from integrations.sessions.redis import bust_day_caches
+                bust_day_caches(device, date)
+        except Exception as _me:
+            logging.warning("refine_segment_mode failed for %s/%s seg %s: %s", device, date, segment_id, _me)
     except Exception as e:
         logging.error("Error describing segment %s for %s on %s: %s", segment_id, device, date, e)
 
@@ -441,7 +455,7 @@ def resync_day_task(self, device: str, date: str):
 
     mongo_client["picam"]["day_summaries"].update_one(
         {"date": date, "device": device},
-        {"$set": {"processing": True, "dirty_segment_ids": [], "text_summary_stale": True}},
+        {"$set": {"processing": True, "processing_started_at": datetime.now(timezone.utc), "dirty_segment_ids": [], "text_summary_stale": True}},
         upsert=True,
     )
     mongo_client.close()
@@ -452,6 +466,83 @@ def resync_day_task(self, device: str, date: str):
         for t in DEFAULT_TARGETS
     ]
     _day_summary_bg(device, date, target_dicts)
+
+
+@celery.task(name="tasks.day_summary_rebuild_task", bind=True)
+def day_summary_rebuild_task(self, device: str, date: str, target_dicts: list):
+    """Full day-summary rebuild in the celery worker (off the web process).
+
+    Dispatched by GET /day-summary instead of a FastAPI BackgroundTask so the
+    heavy LLM/web-search/novelty work survives web restarts and doesn't block
+    request handling.
+    """
+    from tasks.day_summary import _day_summary_bg
+    _day_summary_bg(device, date, target_dicts)
+
+
+@celery.task(name="tasks.text_summary_task", bind=True)
+def text_summary_task(self, device: str, date: str, is_live: bool = False):
+    """LLM text-summary refresh in the celery worker (off the web process)."""
+    from tasks.day_summary import _text_summary_bg
+    _text_summary_bg(device, date, is_live)
+
+
+@celery.task(name="tasks.rebuild_stale_day_summaries_task")
+def rebuild_stale_day_summaries_task():
+    """Proactively rebuild PAST day summaries left stale by segment annotation.
+
+    describe_segment_task marks a day ``updated``/``text_summary_stale`` (and
+    appends dirty_segment_ids) when it finishes, but nothing rebuilds the summary
+    until a user opens the day — so yesterday's summary is cold on first view.
+    This beat task full-rebuilds any recent *past* day flagged stale, so it's
+    ready before the user looks.
+
+    Full rebuild (not the lighter text refresh) on purpose: _day_summary_bg
+    re-runs create_day_timeline (picks up new annotations) AND clears
+    updated/dirty/text_summary_stale — the text refresh leaves ``updated`` set,
+    which would make this task re-fire every run. Today is excluded: the live day
+    churns constantly and the GET path already refreshes it hourly.
+    """
+    from tasks.day_summary import DEFAULT_TARGETS, _is_processing_stale
+    from database.types import DaySummaryRecord
+
+    # Recent PAST window only — old days rarely change; today handled on-GET.
+    today = datetime.now(timezone.utc).date()
+    recent_cutoff = (today - timedelta(days=3)).isoformat()
+    stale = list(DaySummaryRecord.find(filter={
+        "date": {"$gte": recent_cutoff, "$lt": today.isoformat()},
+        "$or": [
+            {"updated": True},
+            {"text_summary_stale": True},
+            {"dirty_segment_ids": {"$exists": True, "$ne": []}},
+        ],
+    }))
+    if not stale:
+        return
+
+    target_dicts = [
+        {"name": t.name, "action_type": t.action_type.value, "query_prompt": t.query_prompt}
+        for t in DEFAULT_TARGETS
+    ]
+    queued = 0
+    for rec in stale:
+        device, date = rec.device, rec.date
+        # Skip a day whose rebuild is genuinely in flight; a stale processing
+        # flag (dead worker) is NOT skipped — this is the watchdog recovery path.
+        if getattr(rec, "processing", False) and not _is_processing_stale(
+            getattr(rec, "processing_started_at", None)
+        ):
+            continue
+        # Mark processing (stamped) so a concurrent GET doesn't also dispatch.
+        DaySummaryRecord.update_one(
+            {"date": date, "device": device},
+            data={"$set": {"processing": True, "processing_started_at": datetime.now(timezone.utc)}},
+        )
+        day_summary_rebuild_task.delay(device, date, target_dicts)
+        queued += 1
+    if queued:
+        logging.info("rebuild_stale_day_summaries: queued %d stale day summaries", queued)
+
 
 @celery.task(name="tasks.check_meal_times_all_devices")
 def check_meal_times_all_devices():
@@ -1675,9 +1766,10 @@ def update_status_summary():
         return
 
     # --- LLM phase (no DB connection) ---
+    # Use the active provider (OpenAI when mode=openai) — a hard-coded Gemini
+    # client here 429'd on projects without Gemini quota.
     try:
-        from integrations.llm.gemini import LLM
-        llm = LLM()
+        from integrations.llm import llm
     except Exception as e:
         logging.warning("Status summary: LLM init failed: %s", e)
         return

@@ -56,10 +56,15 @@ def _load_day_records(device: str, start: str, end: str) -> list[DaySummaryRecor
     return recs
 
 
+# Bump when the period-summary generation logic changes (prompt, formatting,
+# ordering) — invalidates every cached period so it rebuilds once.
+_SIG_VERSION = "6"
+
+
 def period_source_sig(day_records: list[DaySummaryRecord]) -> str:
     """Hash of the child days' identity+freshness, so a period can be reused
     from cache unless an underlying day actually changed."""
-    parts = []
+    parts = [f"v{_SIG_VERSION}"]
     for r in sorted(day_records, key=lambda x: x.date):
         gen = getattr(r, "text_summary_generated_at", None)
         parts.append(f"{r.date}|{gen.isoformat() if gen else ''}|{int(bool(getattr(r, 'updated', False)))}")
@@ -214,16 +219,33 @@ def summarize_period_by_text(period: PeriodSummary, child_texts: list[str]) -> s
     try:
         return str(llm.generate_from_text(
             f"Below are the per-day highlight notes for a lifelogger's {period.kind} "
-            f"— {span}. Each block is one day.\n\n"
+            f"— {span}. Each block is one day, headed by its date (## YYYY-MM-DD), "
+            "given in chronological order.\n\n"
             "Write a recap of the WHOLE period as Markdown, in two parts:\n"
-            "1. A short narrative (3-5 sentences) capturing the shape of the "
-            "period — the main places and how the days went overall.\n"
+            "1. A narrative of 2-3 short paragraphs (each 2-4 sentences), separated "
+            "by a blank line. Write plainly and factually — clear, everyday prose, "
+            "like a person telling a friend what they did. Do NOT be flowery or "
+            "literary: no metaphors, no mood-painting, no adjective piling ('easy "
+            "domesticity', 'concentrated cultural bursts', 'lively public spaces'). "
+            "Just say what happened in a way that reads coherently.\n"
+            "Do NOT write a day-by-day ledger and do NOT open sentences with 'On Jul "
+            "20 you… On Jul 21 you…'. Group related days and move forward in time, "
+            "connecting events with light transitions ('early in the week', 'later', "
+            "'at the weekend') instead of bare dates. Lead with the main thing that "
+            "happened, then the rest.\n"
             "2. A '**Highlights**' line, then 3-6 Markdown bullets ('- ') for the "
-            "most notable, memorable, or unusual moments ACROSS the whole period.\n\n"
+            "most notable, memorable, or unusual moments ACROSS the whole period. "
+            "Keep each bullet to one line.\n\n"
             "SKIP everyday routine that recurs on most days (grooming, commuting, "
             "checking the phone, generic 'having food'/'coffee'). Mention a meal only "
             "when the specific dish or venue is distinctive. Prefer moments that stood "
-            "out over the span. Ground every detail in the notes — do NOT invent. "
+            "out over the span. Ground every detail in the notes — do NOT invent.\n"
+            "Stay at the level of meaningful activities and places. Do NOT report "
+            "trivial incidental snapshots or micro-details — e.g. taking selfies, "
+            "posing in a mirror, a backpack on the floor, a cat wandering by, the "
+            "printer, a glass-walled corridor, a specific hallway or lobby. Describe "
+            "WHAT you did and WHERE it mattered, not every object in view. Summarize "
+            "a work stretch as 'work' or 'a meeting', not the furniture around it.\n"
             "Address the person as 'you'. No top-level title.\n\n"
             f"Main places this period: {places}\n\n"
             + "\n\n".join(notes)
@@ -335,7 +357,13 @@ def build_period_summary(session: Session, device: str, kind: str,
         return PeriodSummary.model_validate(existing.__dict__)
 
     period = aggregate_period(session, device, start, end, kind=kind, label=label)
-    child_texts = [r.summary_text for r in recs if getattr(r, "summary_text", "")]
+    # Label each block with its date and keep chronological order, so the LLM
+    # can narrate the period in order instead of jumbling days.
+    child_texts = [
+        f"## {r.date}\n{r.summary_text}"
+        for r in recs
+        if getattr(r, "summary_text", "")
+    ]
     period.summary_text = summarize_period_by_text(period, child_texts)
     period.highlights = _extract_highlights(period.summary_text)
     try:

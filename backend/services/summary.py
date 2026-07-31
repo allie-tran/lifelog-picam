@@ -625,12 +625,15 @@ def update_dirty_segments(
 # Shared voice for the day-summary bullets: warm, lightly playful, and led by
 # the single most unusual moment — while staying strictly grounded in the notes.
 _DAY_TONE = (
-    "VOICE: warm and lightly playful, second person ('you'). A little vivid and "
-    "fun, but truthful — never exaggerate or invent detail that isn't in the "
-    "notes. At most one tasteful emoji per bullet (optional, skip if unsure).\n"
-    "ORDER the bullets CHRONOLOGICALLY (earliest first), following the order of "
-    "the notes. Do NOT reorder by importance — let the unusual moments stand out "
-    "through vivid wording, not by moving them to the top.\n"
+    "VOICE: warm and first person ('I'), but plain and factual — clear "
+    "everyday prose, like telling a friend how your day went. Do NOT be flowery "
+    "or literary: no metaphors, no mood-painting, no adjective piling. Never "
+    "exaggerate or invent detail that isn't in the notes.\n"
+    "START at the beginning of the day and move FORWARD chronologically, following "
+    "the order of the notes; do not jump around in time. Can skip unimportant details or group things together.\n"
+    "CONNECT the facts into a coherent story: use light transitions ('first', "
+    "'then', 'after that', 'later', 'in the evening') so each place or activity "
+    "follows from the last. Do NOT emit a list of disconnected facts.\n"
 )
 
 
@@ -653,20 +656,20 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
                 visit_lines.append(line)
             if visit_lines:
                 day_summary_text = llm.generate_from_text(
-                    "From the place-by-place notes below (each line is one place someone "
-                    "visited, in order), pick what made THIS day different from a normal "
-                    "day.\n\n"
+                    "Below are the place-by-place notes for one day — each line is one "
+                    "place someone visited, in chronological order, with its time.\n\n"
+                    "Write a short narrative of the day as Markdown: 2-3 short paragraphs "
+                    "(each 2-4 sentences), separated by a blank line. Walk through the "
+                    "day from the start, tying the events together so it reads as one "
+                    "connected story. Bold the key place names with "
+                    "**double asterisks**.\n\n"
                     + _DAY_TONE +
-                    "\nOutput ONLY a Markdown bullet list: 3-5 bullets ('- '), one short "
-                    "line each, for the most notable, memorable, or unusual moments. Bold "
-                    "the key place name in each bullet with **double asterisks**. No "
-                    "intro line, no narrative paragraph, no title.\n\n"
-                    "SKIP ordinary everyday routine that happens on most days — grooming "
-                    "(e.g. styling hair), checking the phone, commuting, generic 'having "
-                    "food' or 'having coffee'. Mention a meal ONLY when the specific dish "
-                    "or venue is distinctive and worth remembering (e.g. 'pho at Phở Cô "
-                    "Út'), never just that they ate.\n\n"
-                    "Ground every bullet in the notes — do NOT invent.\n\n"
+                    "\nDON'T dwell on ordinary everyday routine (grooming, checking the "
+                    "phone, commuting, generic 'having food' or 'coffee') — keep it to a "
+                    "few words in passing. Mention a meal in detail ONLY when the specific "
+                    "dish or venue is distinctive. Do NOT report "
+                    "trivial incidental snapshots (selfies, a backpack, a cat, a printer, "
+                    "a corridor). Ground every detail in the notes — do NOT invent.\n\n"
                     + "\n".join(visit_lines)
                 )
                 day_summary.summary_text = str(day_summary_text).strip()
@@ -722,17 +725,17 @@ def summarize_day_by_text(session, day_summary: DaySummary) -> DaySummary:
             activity_lines.append(line)
 
         day_summary_text = llm.generate_from_text(
-            "From the timestamped activities below, pick what made THIS day different "
-            "from a normal day. Ignore unclear activities.\n\n"
+            "Below are the timestamped activities for one day, in chronological order. "
+            "Ignore unclear activities.\n\n"
+            "Write a short narrative of the day as Markdown: 2-3 short paragraphs (each "
+            "2-4 sentences), separated by a blank line. Walk through the day from the "
+            "start, tying the activities together so it reads as one connected account, "
+            "not a list. No title, no bullet list.\n\n"
             + _DAY_TONE +
-            "\nOutput ONLY a Markdown bullet list: 3-5 bullets ('- '), one short line each, "
-            "for the most notable, memorable, or unusual moments. No intro, no narrative "
-            "paragraph, no title.\n\n"
-            "SKIP ordinary everyday routine that happens on most days — grooming, "
-            "checking the phone, commuting, generic 'having food' or 'having coffee'. "
-            "Mention a meal ONLY when the specific dish or venue is distinctive and worth "
-            "remembering, never just that they ate.\n\n"
-            "Ground every bullet in the activities — do not invent.\n\n"
+            "\nDON'T dwell on ordinary everyday routine (grooming, checking the phone, "
+            "commuting, generic 'having food' or 'coffee') — keep it to a few words in "
+            "passing. Mention a meal in detail ONLY when the specific dish or venue is "
+            "distinctive. Ground every detail in the activities — do not invent.\n\n"
             + "\n".join(activity_lines)
         )
         day_summary.summary_text = str(day_summary_text).strip()

@@ -380,6 +380,7 @@ class DaySummary(CamelCaseModel):
     total_minutes: float = 0.0
     analysis_checkpoint: Optional[str] = None  # image_path of last CLIP-analyzed image
     processing: bool = False  # True while a background rebuild task is running
+    processing_started_at: Optional[datetime] = None  # when processing was set — watchdog treats a stale flag as a dead task
     text_summary_generated_at: Optional[datetime] = None  # last time LLM text was generated
 
 
@@ -457,6 +458,7 @@ class PeriodSummary(CamelCaseModel):
     # Bookkeeping
     updated: bool = False
     processing: bool = False
+    processing_started_at: Optional[datetime] = None  # when processing was set — watchdog treats a stale flag as a dead task
     generated_at: Optional[datetime] = None
     # Hash of the child days' (date, text_summary_generated_at, updated). Lets a
     # fetch reuse the cached period unless an underlying day actually changed.

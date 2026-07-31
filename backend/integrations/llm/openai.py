@@ -60,19 +60,32 @@ class OpenAILLM(LLM):
         self.client = OpenAI(api_key=API_KEY)
         self.model_name = OPENAI_MODEL
 
-    def generate(self, contents: Any, parse_json=False, use_search: bool = False):
+    def _supports_reasoning(self) -> bool:
+        """gpt-5 family / o-series accept ``reasoning_effort``; gpt-4o etc. don't
+        (passing it there 400s). Cheap prefix check on the configured model."""
+        m = (self.model_name or "").lower()
+        return m.startswith(("gpt-5", "o1", "o3", "o4"))
+
+    def generate(self, contents: Any, parse_json=False, use_search: bool = False,
+                 reasoning_effort: str = "minimal"):
         """
         Generate completions from a list of messages.
         ``use_search`` is accepted for interface parity; chat.completions has no
         grounding, so grounded lookups must go through ``web_search`` instead.
+
+        ``reasoning_effort`` defaults to "minimal": the summary/description calls
+        are one-shot summarization, not hard reasoning, and gpt-5-mini's default
+        (medium) reasoning added ~20-30s per call. Minimal cuts that to a few
+        seconds. Bump to "low"/"medium" per-call if quality drops. Ignored for
+        non-reasoning models (gpt-4o).
         """
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[{
-                "role": "user",
-                "content": contents
-            }],
-        )
+        kwargs: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": contents}],
+        }
+        if reasoning_effort and self._supports_reasoning():
+            kwargs["reasoning_effort"] = reasoning_effort
+        response = self.client.chat.completions.create(**kwargs)
         completion = response.choices[0].message.content
         print("OpenAI Response:", completion)
         if DEBUG:

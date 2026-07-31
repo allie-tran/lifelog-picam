@@ -8,6 +8,7 @@ import {
     LinearProgress,
     Skeleton,
     Stack,
+    Tooltip,
     Typography,
 } from '@mui/material';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
@@ -167,9 +168,20 @@ const PeriodSummaryView = ({
                         {minutesToHM(period.totalMinutes)} tracked · {period.totalImages} photos
                     </Typography>
                 </Box>
-                {period.processing && (
-                    <LinearProgress sx={{ width: 120, alignSelf: 'center' }} />
-                )}
+                <Stack direction="row" alignItems="center" spacing={1}>
+                    {period.processing ? (
+                        <Tooltip title="This recap is out of date — a refresh is running in the background. It will update automatically.">
+                            <Chip size="small" color="warning" variant="outlined" label="Updating…" />
+                        </Tooltip>
+                    ) : period.updated ? (
+                        <Tooltip title="An underlying day changed since this recap was written — it will refresh shortly.">
+                            <Chip size="small" color="warning" variant="outlined" label="Out of date" />
+                        </Tooltip>
+                    ) : null}
+                    {period.processing && (
+                        <LinearProgress sx={{ width: 120, alignSelf: 'center' }} />
+                    )}
+                </Stack>
             </Stack>
 
             {/* Day chips — drill down into any day of the period */}
@@ -201,7 +213,16 @@ const PeriodSummaryView = ({
                             </CardContent>
                         </Card>
                     ) : (
-                        <SummaryText summaryText={period.summaryText} />
+                        <SummaryText
+                            summaryText={period.summaryText}
+                            heading={
+                                {
+                                    week: 'Week Overview',
+                                    month: 'Month Overview',
+                                    trip: 'Trip Overview',
+                                }[period.kind] ?? 'Period Overview'
+                            }
+                        />
                     )}
                 </Grid>
                 <Grid size={{ xs: 12, md: 5 }}>
