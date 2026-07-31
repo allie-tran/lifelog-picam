@@ -1,5 +1,7 @@
 import { Box, IconButton, Tooltip, Typography } from '@mui/material';
 import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
+import NoPhotographyIcon from '@mui/icons-material/NoPhotography';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { CATEGORIES, THEME_COLORS } from 'constants/activityColors';
 import { colorForPlace } from 'utils/placeColors';
 import dayjs from 'dayjs';
@@ -45,9 +47,9 @@ function fmtDuration(totalSeconds: number): string {
     return `${m}m`;
 }
 
-// Clock-aligned 3-hour ticks (…, 09:00, 12:00, …) inside one run's time span,
+// Clock-aligned 2-hour ticks inside one run's time span,
 // positioned as a percentage. Time is linear within a run, so pct is exact.
-const TICK_STEP_H = 3;
+const TICK_STEP_H = 2;
 function runTicks(startMs: number, endMs: number, tz?: string | null): { pct: number; label: string }[] {
     const spanMs = endMs - startMs;
     if (spanMs <= 0) return [];
@@ -359,10 +361,10 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     // the minimums don't fit. On light days the content is narrower than the
     // viewport, so flexGrow still lays runs out time-proportionally.
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
-    const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
+    const MOVE_MIN_PX = 32; // moves stay thin (just a mode icon), width ∝ duration
     const ACT_MIN_PX = 4; // thin floor so an activity cell never fully vanishes
-    const GPS_ONLY_PX = 48; // a no-photo / no-recording cell is fixed at this width
-    const GAP_PILL_PX = 44; // in-run "no recording" pill: 40 width + 2px margins each side
+    const GPS_ONLY_PX = 24; // a no-photo / no-recording cell is fixed at this width
+    const GAP_PILL_PX = 26; // in-run "no recording" pill: 40 width + 2px margins each side
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
     const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
@@ -563,7 +565,6 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     // GPS-only cell: no photos taken. If it was also a GPS gap
                                     // (interpolated stop), nothing was recorded at all.
                                     const isGpsOnly = seg.segmentId == null;
-                                    const gpsLabel = seg.noRecording ? 'no recording' : 'no photos';
                                     const cellTitle = isGpsOnly
                                         ? `${seg.noRecording ? 'No recording' : 'No photos'} · ${range}`
                                         : title;
@@ -618,10 +619,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
-                                                    background: isGpsOnly
-                                                        ? (theme) =>
-                                                              `repeating-linear-gradient(45deg, ${theme.palette.action.disabledBackground}, ${theme.palette.action.disabledBackground} 5px, transparent 5px, transparent 10px)`
-                                                        : background,
+                                                    background: isGpsOnly ? 'transparent' : background,
                                                     cursor: clickable ? 'pointer' : 'default',
                                                     boxShadow: isViewing
                                                         ? 'inset 0 0 0 3px #1565c0'
@@ -635,14 +633,9 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 }}
                                             >
                                                 {isGpsOnly && (
-                                                    <Typography
-                                                        variant="caption"
-                                                        color="text.disabled"
-                                                        noWrap
-                                                        sx={{ fontSize: 8, lineHeight: 1.1, fontStyle: 'italic', px: '1px', textAlign: 'center' }}
-                                                    >
-                                                        {gpsLabel}
-                                                    </Typography>
+                                                    seg.noRecording
+                                                        ? <VisibilityOffIcon sx={{ fontSize: 15, color: 'text.disabled', opacity: 0.6 }} />
+                                                        : <NoPhotographyIcon sx={{ fontSize: 15, color: 'text.disabled', opacity: 0.6 }} />
                                                 )}
                                             </Box>
                                         </Tooltip>
