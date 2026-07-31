@@ -347,6 +347,17 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     });
     if (hasRecent) minContentPx += RECENT_PX;
 
+    // flexGrow for a run = its share of the day (duration %), EXCEPT a GPS-only
+    // stay (no photos) is capped small so a long imageless stretch — e.g. a 6 h
+    // overnight at home — sits near its min width instead of hogging the bar.
+    const GPS_ONLY_GROW = 3;
+    const runGrow = (run: LocationRun) => {
+        const raw = run.segments.reduce(
+            (sum, seg) => sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
+        const gpsOnly = run.segments.every((s) => s.segmentId == null);
+        return gpsOnly ? Math.min(raw, GPS_ONLY_GROW) : raw;
+    };
+
     return (
         <Box sx={{ position: 'relative', width: '100%', mb: 1 }}>
           <Box
@@ -357,8 +368,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
           <Box sx={{ width: '100%', minWidth: `${minContentPx}px` }}>
             <Box sx={{ display: 'flex', width: '100%' }}>
                 {locationRuns.map((run, ri) => {
-                    const w = run.segments.reduce((sum, seg) =>
-                        sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
+                    const w = runGrow(run);
                     const isActive = activeRunIdx === ri;
                     const bg = run.isMove ? MOVE_BG : colorForPlace(run.name);
 
@@ -635,8 +645,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                 layout (incl. break spacers) so ticks sit under their location. */}
             <Box sx={{ display: 'flex', width: '100%', mt: '3px', userSelect: 'none' }}>
                 {locationRuns.map((run, ri) => {
-                    const w = run.segments.reduce((sum, seg) =>
-                        sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
+                    const w = runGrow(run);
                     const gapBefore = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
                     const showBreak = ri > 0 && gapBefore >= BREAK_THRESHOLD_MS;
                     const gapAfter = ri < locationRuns.length - 1 ? locationRuns[ri + 1].startMs - run.endMs : 0;
