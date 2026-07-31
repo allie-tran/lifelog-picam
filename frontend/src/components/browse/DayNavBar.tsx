@@ -359,9 +359,13 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     // viewport, so flexGrow still lays runs out time-proportionally.
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
     const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
+    const ACT_MIN_PX = 22; // each activity cell within a stop stays clickable/legible
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
-    const runMinPx = (run: LocationRun) => (run.isMove ? MOVE_MIN_PX : RUN_MIN_PX);
+    // A stop is at least RUN_MIN_PX, but grows to fit its activity cells so none
+    // collapse to a sliver; the bar scrolls if that overflows the viewport.
+    const runMinPx = (run: LocationRun) =>
+        run.isMove ? MOVE_MIN_PX : Math.max(RUN_MIN_PX, run.segments.length * ACT_MIN_PX);
     let minContentPx = 0;
     locationRuns.forEach((run, ri) => {
         minContentPx += runMinPx(run);
@@ -582,8 +586,8 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 sx={{
                                                     flexBasis: `${segRelW}%`,
                                                     flexGrow: isLastSeg ? 1 : 0,
-                                                    flexShrink: 1,
-                                                    minWidth: 0,
+                                                    flexShrink: 0,
+                                                    minWidth: ACT_MIN_PX,
                                                     height: '100%',
                                                     display: 'flex',
                                                     alignItems: 'center',
