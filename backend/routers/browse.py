@@ -298,7 +298,7 @@ async def get_day_nav(
     """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
     _require_owner(access_level)
 
-    cache_key = f"day-nav:v5:{device}:{date}"
+    cache_key = f"day-nav:v6:{device}:{date}"
     cached = redis_client.get_json(cache_key)
     if cached is not None:
         return cached
@@ -364,29 +364,60 @@ async def get_day_nav(
         loc_display = _fetch_location_display(
             session, [s.location_id for s in stop_rows], user.username
         )
+        # Only the image-FREE parts of a stop become "no photos" cells. A stop
+        # that partially overlaps photos (e.g. a morning at home whose photos
+        # start mid-stay) must still surface its uncovered head/tail — skipping
+        # the whole stop left that stretch looking like "no recording".
+        img = sorted(image_windows)
+
+        def _image_free(a, b):
+            """[a, b] minus the union of image windows → list of (start, end)."""
+            out = []
+            cur = a
+            for ws, we in img:
+                if we <= cur:
+                    continue
+                if ws >= b:
+                    break
+                if ws > cur:
+                    out.append((cur, min(ws, b)))
+                cur = max(cur, we)
+                if cur >= b:
+                    break
+            if cur < b:
+                out.append((cur, b))
+            return out
+
+        # Ignore slivers: only a gap this long reads as its own no-photo block
+        # (matches the frontend's 15-min recording-break threshold).
+        MIN_GPS_ONLY_S = 15 * 60
         for s in stop_rows:
-            has_images = any(s.start_time < e and s.end_time > st for st, e in image_windows)
-            if has_images:
+            # Skip GPS-gap-interpolated stops (place_id "gap_…") — they bridge a
+            # brief GPS dropout inside a real stay, not a separate place. Their
+            # window is absorbed into the surrounding same-location "no photos"
+            # cell (frontend collapse). Genuinely stop-less time is left uncovered
+            # and shows as a "no recording" gap pill instead.
+            if (s.place_id or "").startswith("gap"):
                 continue
             name, label_kind = loc_display.get(s.location_id, (None, None))
-            duration = max(int((s.end_time - s.start_time).total_seconds()), 10)
-            # A stop interpolated across a GPS gap (place_id "gap_…") is not a
-            # real stay — neither photos nor GPS during it, i.e. "no recording".
-            gps_gap = (s.place_id or "").startswith("gap")
-            segments.append({
-                "segmentId": None,
-                "startTime": s.start_time.isoformat(),
-                "endTime": s.end_time.isoformat(),
-                "timezone": s.timezone,
-                "duration": duration,
-                "activity": "",
-                "activityGroup": "",
-                "locationName": name,
-                "locationStop": True,
-                "mode": None,
-                "labelKind": label_kind,
-                "noRecording": gps_gap,
-            })
+            for seg_start, seg_end in _image_free(s.start_time, s.end_time):
+                secs = int((seg_end - seg_start).total_seconds())
+                if secs < MIN_GPS_ONLY_S:
+                    continue
+                segments.append({
+                    "segmentId": None,
+                    "startTime": seg_start.isoformat(),
+                    "endTime": seg_end.isoformat(),
+                    "timezone": s.timezone,
+                    "duration": secs,
+                    "activity": "",
+                    "activityGroup": "",
+                    "locationName": name,
+                    "locationStop": True,
+                    "mode": None,
+                    "labelKind": label_kind,
+                    "noRecording": False,
+                })
 
     if not segments:
         return []
