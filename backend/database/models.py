@@ -474,6 +474,34 @@ class ImageGPS(Base):
     image = relationship("Image", back_populates="gps")
 
 
+class GpsStopSegment(Base):
+    """A GPS-detected stay (stop segment) for a device/day, persisted straight
+    from the GPS pipeline so the timeline can show a place even when no photo was
+    captured there (A→B→C with no images in B). One row per stop segment; the
+    resolved venue lives in the linked Location."""
+
+    __tablename__ = "gps_stop_segments"
+    __table_args__ = (
+        Index("ix_gps_stop_seg_device_date", "device", "date"),
+        UniqueConstraint("device", "start_time", name="uq_gps_stop_seg_device_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device: Mapped[str] = mapped_column(Text, nullable=False)
+    date: Mapped[str] = mapped_column(Text, nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    place_id: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str | None] = mapped_column(Text)
+    location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("locations.id", ondelete="SET NULL")
+    )
+
+    location = relationship("Location")
+
+
 class PeopleCluster(Base):
     __tablename__ = "people_clusters"
     __table_args__ = (

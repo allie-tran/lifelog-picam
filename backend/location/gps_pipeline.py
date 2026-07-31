@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sklearn.cluster import DBSCAN
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm.session import Session
-from sqlalchemy import case, func, or_, select, update
-from database.models import RawGPS, Device, ImageGPS, Image, Location
+from sqlalchemy import case, delete, func, or_, select, update
+from database.models import RawGPS, Device, ImageGPS, Image, Location, GpsStopSegment
 from location.enrich_stops import enrich_stop, enrich_move
 from location import poi_gazetteer as pgaz
 from location.utils import find_timezone
@@ -900,6 +900,7 @@ def enrich_and_index_segments(
     segments: list[dict],
     df: pd.DataFrame,
     device: str,
+    date: str | None = None,
 ) -> None:
     """
     For every segment:
@@ -950,6 +951,11 @@ def enrich_and_index_segments(
     # Each located segment's (start_ts, end_ts, location_id), collected so a final
     # pass can assign holes to the nearest segment in time (see gap-fill below).
     seg_locations: list[tuple] = []
+
+    # Every resolved stop segment (start, end, centroid, place_id, location_id),
+    # persisted to gps_stop_segments so the timeline can show a stay even when no
+    # photo was taken there. Only collected when `date` is known.
+    stop_rows: list[dict] = []
 
     for i, seg in enumerate(segments):
         lat = seg.get("centroid_lat")
@@ -1003,6 +1009,15 @@ def enrich_and_index_segments(
                     i, filled.rowcount,  # type: ignore
                 )
                 seg_locations.append((s_dt, e_dt, pinned))
+                if date:
+                    stop_rows.append({
+                        "device": device, "date": date,
+                        "start_time": s_dt, "end_time": e_dt,
+                        "latitude": float(lat), "longitude": float(lon),
+                        "place_id": seg.get("place_id"),
+                        "timezone": find_timezone(float(lon), float(lat)),
+                        "location_id": pinned,
+                    })
                 continue
 
         if is_stop:
@@ -1108,6 +1123,15 @@ def enrich_and_index_segments(
                 .values(location_id=location_id)
             )
             seg_locations.append((start_dt, end_dt, location_id))
+            if date and is_stop:
+                stop_rows.append({
+                    "device": device, "date": date,
+                    "start_time": start_dt, "end_time": end_dt,
+                    "latitude": float(lat), "longitude": float(lon),
+                    "place_id": seg.get("place_id"),
+                    "timezone": tz,
+                    "location_id": location_id,
+                })
 
         logger.info(f"Upserted location {name} (stop={is_stop}) with key={key} and assigned to images between {start_ts} and {end_ts}")
 
@@ -1152,6 +1176,23 @@ def enrich_and_index_segments(
             filled_total += len(ids)
         if filled_total:
             logger.info("Gap-fill: assigned %d unlocated images to their nearest segment", filled_total)
+
+    # Persist stop segments for the day (replace-all so a re-run is idempotent),
+    # so the timeline can render places with no photos. Deduped on (device,
+    # start_time); collisions keep the last-seen window.
+    if date:
+        session.execute(
+            delete(GpsStopSegment).where(
+                GpsStopSegment.device == device,
+                GpsStopSegment.date == date,
+            )
+        )
+        seen: dict = {}
+        for r in stop_rows:
+            seen[(r["device"], r["start_time"])] = r
+        if seen:
+            session.execute(insert(GpsStopSegment), list(seen.values()))
+        logger.info("Persisted %d GPS stop segments for %s/%s", len(seen), device, date)
 
     session.commit()
 
@@ -1688,7 +1729,7 @@ def run_pipeline(session: Session, device: str, date: str, modes_only: bool = Fa
         return
 
     # 8. Enriching segments with place info and indexing them for search.
-    enrich_and_index_segments(session, segments, df, device)
+    enrich_and_index_segments(session, segments, df, device, date=date)
     session.commit()
     # session.execute(
     #     update(Image)

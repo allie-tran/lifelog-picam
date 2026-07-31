@@ -86,7 +86,7 @@ export const getDayStops = async (device: string, date: string): Promise<DayStop
 };
 
 export type NavSegment = {
-    segmentId: number;
+    segmentId: number | null;  // null = GPS-only stay (visited, no photos)
     startTime: string;
     endTime: string;
     timezone?: string | null;

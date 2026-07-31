@@ -404,8 +404,8 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     <Typography variant="caption" noWrap sx={{ fontSize: '0.65rem', lineHeight: 1.2, color: 'rgba(255,255,255,0.8)' }}>
                                         {fmtDuration(run.totalSeconds)}
                                     </Typography>
-                                    {/* Manual reverse-geocode correction — stop runs only */}
-                                    {!run.isMove && device && date && (
+                                    {/* Manual reverse-geocode correction — stop runs with real photos only */}
+                                    {!run.isMove && device && date && run.segments.some((s) => s.segmentId != null) && (
                                         <Tooltip title="Correct location">
                                             <IconButton
                                                 className="daynav-edit-loc"
@@ -456,6 +456,9 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     const prevSeg = si > 0 ? run.segments[si - 1] : null;
                                     const gapBefore = prevSeg ? uMs(seg.startTime) - uMs(prevSeg.endTime) : 0;
                                     const showGap = gapBefore >= BREAK_THRESHOLD_MS;
+                                    // GPS-only stay: visited (from the GPS track) but no photos taken.
+                                    const isGpsOnly = seg.segmentId == null;
+                                    const cellTitle = isGpsOnly ? `No photos · ${range}` : title;
                                     return (
                                       <Fragment key={seg.segmentId ?? si}>
                                         {showGap && prevSeg && (
@@ -490,7 +493,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                 </Box>
                                             </Tooltip>
                                         )}
-                                        <Tooltip title={title} followCursor>
+                                        <Tooltip title={cellTitle} followCursor>
                                             <Box
                                                 onClick={() => {
                                                     if (seg.segmentId != null) onSelectSegment(seg.segmentId);
@@ -501,7 +504,13 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                     flexShrink: 1,
                                                     minWidth: 0,
                                                     height: '100%',
-                                                    background,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    background: isGpsOnly
+                                                        ? (theme) =>
+                                                              `repeating-linear-gradient(45deg, ${theme.palette.action.disabledBackground}, ${theme.palette.action.disabledBackground} 5px, transparent 5px, transparent 10px)`
+                                                        : background,
                                                     cursor: clickable ? 'pointer' : 'default',
                                                     boxShadow: isViewing
                                                         ? 'inset 0 0 0 3px #1565c0'
@@ -513,7 +522,18 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                     '&:hover': clickable ? { filter: 'brightness(0.88)' } : {},
                                                     borderLeft: si > 0 ? '1px solid #fff' : 'none',
                                                 }}
-                                            />
+                                            >
+                                                {isGpsOnly && (
+                                                    <Typography
+                                                        variant="caption"
+                                                        color="text.disabled"
+                                                        noWrap
+                                                        sx={{ fontSize: 9, fontStyle: 'italic', px: '2px' }}
+                                                    >
+                                                        no photos
+                                                    </Typography>
+                                                )}
+                                            </Box>
                                         </Tooltip>
                                       </Fragment>
                                     );

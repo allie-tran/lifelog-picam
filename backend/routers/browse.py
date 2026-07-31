@@ -264,6 +264,29 @@ def _fetch_segment_label_kinds(session, device: str, date: str, username: str | 
     return _modal_by_segment(rows)
 
 
+def _fetch_location_display(session, location_ids, username: str | None) -> dict:
+    """{location_id: (display_name, label_kind)} for a set of Location ids, with
+    the user's label overriding the geocoded name (mirrors _fetch_segment_locations)."""
+    from database.models import LocationLabel
+    ids = [lid for lid in set(location_ids) if lid is not None]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(Location.id, Location.name, Location.address, LocationLabel.label, LocationLabel.label_kind)
+        .outerjoin(
+            LocationLabel,
+            (LocationLabel.location_id == Location.id)
+            & (LocationLabel.username == username),
+        )
+        .where(Location.id.in_(ids))
+    ).all()
+    out: dict = {}
+    for lid, name, address, label, label_kind in rows:
+        display = label or (name if name and name not in ("---", "Unknown Place", "") else (address or "Unknown"))
+        out[lid] = (display, label_kind)
+    return out
+
+
 @router.get("/day-nav")
 async def get_day_nav(
     device: str,
@@ -275,7 +298,7 @@ async def get_day_nav(
     """Lightweight segment metadata for DayNavBar — no LLM, no day-summary dependency."""
     _require_owner(access_level)
 
-    cache_key = f"day-nav:v3:{device}:{date}"
+    cache_key = f"day-nav:v4:{device}:{date}"
     cached = redis_client.get_json(cache_key)
     if cached is not None:
         return cached
@@ -301,17 +324,17 @@ async def get_day_nav(
         .order_by(func.min(Image.timestamp).asc())
     ).all()
 
-    if not rows:
-        return []
-
     seg_to_location = _fetch_segment_locations(session, device, date, username=user.username)
     seg_mode = _fetch_segment_modes(session, device, date)
     seg_label_kind = _fetch_segment_label_kinds(session, device, date, username=user.username)
 
     segments = []
+    image_windows: list[tuple] = []  # (start_dt, end_dt) of image segments, for gap-detection
     for row in rows:
         start_ts = row.start_time
         end_ts = row.end_time
+        if start_ts and end_ts:
+            image_windows.append((start_ts, end_ts))
         duration = max(int((end_ts - start_ts).total_seconds()), 10) if start_ts and end_ts else 10
         loc = seg_to_location.get(row.segment_id)
         segments.append({
@@ -327,6 +350,44 @@ async def get_day_nav(
             "mode": seg_mode.get(row.segment_id),
             "labelKind": seg_label_kind.get(row.segment_id),
         })
+
+    # Inject GPS-only stays: places the user visited that produced no photos
+    # (A→B→C with no images in B). A persisted stop with no image segment
+    # overlapping its window becomes a synthetic, image-less nav segment.
+    from database.models import GpsStopSegment
+    stop_rows = session.execute(
+        select(GpsStopSegment)
+        .where(GpsStopSegment.device == device, GpsStopSegment.date == date)
+        .order_by(GpsStopSegment.start_time.asc())
+    ).scalars().all()
+    if stop_rows:
+        loc_display = _fetch_location_display(
+            session, [s.location_id for s in stop_rows], user.username
+        )
+        for s in stop_rows:
+            has_images = any(s.start_time < e and s.end_time > st for st, e in image_windows)
+            if has_images:
+                continue
+            name, label_kind = loc_display.get(s.location_id, (None, None))
+            duration = max(int((s.end_time - s.start_time).total_seconds()), 10)
+            segments.append({
+                "segmentId": None,
+                "startTime": s.start_time.isoformat(),
+                "endTime": s.end_time.isoformat(),
+                "timezone": s.timezone,
+                "duration": duration,
+                "activity": "",
+                "activityGroup": "",
+                "locationName": name,
+                "locationStop": True,
+                "mode": None,
+                "labelKind": label_kind,
+            })
+
+    if not segments:
+        return []
+
+    segments.sort(key=lambda s: s["startTime"] or "")
 
     today = datetime.now().strftime("%Y-%m-%d")
     ttl = _BROWSE_CACHE_TTL_TODAY if date == today else _BROWSE_CACHE_TTL_PAST
