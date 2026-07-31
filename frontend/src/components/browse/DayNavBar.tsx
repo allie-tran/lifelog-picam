@@ -361,21 +361,29 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const RUN_MIN_PX = 64; // stops only — keep a place label readable
     const MOVE_MIN_PX = 16; // moves stay thin (just a mode icon), width ∝ duration
     const ACT_MIN_PX = 4; // thin floor so an activity cell never fully vanishes
+    const GPS_ONLY_PX = 64; // a no-photo / no-recording cell is fixed at this width
     const GAP_PILL_PX = 58; // in-run "no recording" pill: 54 width + 2px margins each side
     const BREAK_PX = 50; // 46 width + 2px margins each side
     const RECENT_PX = 74; // 70 width + 4px left margin
+    const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
     // Count same-location recording gaps drawn *inside* a run's activity row, so
     // the run reserves width for their pills (activity cells don't shrink).
     const runGapCount = (run: LocationRun) =>
         run.segments.filter(
             (s, i) => i > 0 && uMs(s.startTime) - uMs(run.segments[i - 1].endTime) >= BREAK_THRESHOLD_MS
         ).length;
-    // A stop is at least RUN_MIN_PX, but grows to fit its activity cells + any
-    // in-run gap pills so none collapse; the bar scrolls if that overflows.
-    const runMinPx = (run: LocationRun) =>
-        (run.isMove ? MOVE_MIN_PX : Math.max(RUN_MIN_PX, run.segments.length * ACT_MIN_PX))
-        + runGapCount(run) * GAP_PILL_PX;
-    const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
+    // Min width reserves: photo cells (>= ACT_MIN each, but a labelled stop >=
+    // RUN_MIN), each GPS-only cell fixed at GPS_ONLY_PX, and each in-run gap pill.
+    const runMinPx = (run: LocationRun) => {
+        const nGps = run.segments.filter((s) => s.segmentId == null).length;
+        const nPhoto = run.segments.length - nGps;
+        const base = run.isMove
+            ? MOVE_MIN_PX
+            : nPhoto
+              ? Math.max(RUN_MIN_PX, nPhoto * ACT_MIN_PX)
+              : 0; // a pure GPS-only run's width comes entirely from its fixed cell
+        return base + nGps * GPS_ONLY_PX + runGapCount(run) * GAP_PILL_PX;
+    };
     let minContentPx = 0;
     locationRuns.forEach((run, ri) => {
         minContentPx += runMinPx(run);
@@ -384,15 +392,20 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     });
     if (hasRecent) minContentPx += RECENT_PX;
 
-    // flexGrow for a run = its share of the day (duration %), EXCEPT a GPS-only
-    // stay (no photos) is capped small so a long imageless stretch — e.g. a 6 h
-    // overnight at home — sits near its min width instead of hogging the bar.
+    // flexGrow for a run = its photo time share of the day. GPS-only (no-photo)
+    // time is excluded so a long imageless stretch can't stretch the run — those
+    // cells are fixed-width. A pure GPS-only run gets a tiny cap so it stays near
+    // its fixed min width instead of hogging the bar.
     const GPS_ONLY_GROW = 3;
     const runGrow = (run: LocationRun) => {
-        const raw = run.segments.reduce(
+        const photo = run.segments.filter((s) => s.segmentId != null);
+        if (!photo.length) {
+            const raw = run.segments.reduce(
+                (sum, seg) => sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
+            return Math.min(raw, GPS_ONLY_GROW);
+        }
+        return photo.reduce(
             (sum, seg) => sum + widthPct(uMs(seg.startTime), uMs(seg.endTime)), 0);
-        const gpsOnly = run.segments.every((s) => s.segmentId == null);
-        return gpsOnly ? Math.min(raw, GPS_ONLY_GROW) : raw;
     };
 
     return (
@@ -409,9 +422,6 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                     const isActive = activeRunIdx === ri;
                     const bg = run.isMove ? MOVE_BG : colorForPlace(run.name);
 
-                    // Relative widths of segments within this run (normalize to fill the cell)
-                    const runTotalMs = run.segments.reduce((sum, seg) =>
-                        sum + (uMs(seg.endTime) - uMs(seg.startTime)), 0) || 1;
                     const header = runHeader(run);
                     const gapMs = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
                     const showBreak = ri > 0 && gapMs >= BREAK_THRESHOLD_MS;
@@ -536,8 +546,6 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                             <Box sx={{ display: 'flex', height: 36, border: '1px solid #fff', borderRadius: '4px', overflow: 'hidden' }}>
                                 {run.segments.map((seg, si) => {
                                     const segMs = uMs(seg.endTime) - uMs(seg.startTime);
-                                    const segRelW = (segMs / runTotalMs) * 100;
-                                    const isLastSeg = si === run.segments.length - 1;
                                     const background = segColor(seg);
                                     const clickable = seg.segmentId != null;
                                     const isSelected = Array.isArray(selectedSegmentId)
@@ -599,10 +607,13 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                                     if (seg.segmentId != null) onSelectSegment(seg.segmentId);
                                                 }}
                                                 sx={{
-                                                    flexBasis: `${segRelW}%`,
-                                                    flexGrow: isLastSeg ? 1 : 0,
+                                                    // Photo cells fill the run ∝ their duration; a GPS-only
+                                                    // (no-photo / no-recording) cell is fixed-width, capped.
+                                                    flexBasis: isGpsOnly ? GPS_ONLY_PX : 0,
+                                                    flexGrow: isGpsOnly ? 0 : Math.max(segMs, 1),
                                                     flexShrink: 0,
-                                                    minWidth: ACT_MIN_PX,
+                                                    minWidth: isGpsOnly ? undefined : ACT_MIN_PX,
+                                                    maxWidth: isGpsOnly ? GPS_ONLY_PX : undefined,
                                                     height: '100%',
                                                     display: 'flex',
                                                     alignItems: 'center',
