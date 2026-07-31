@@ -366,6 +366,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     // collapse to a sliver; the bar scrolls if that overflows the viewport.
     const runMinPx = (run: LocationRun) =>
         run.isMove ? MOVE_MIN_PX : Math.max(RUN_MIN_PX, run.segments.length * ACT_MIN_PX);
+    const isGpsOnlyRun = (run: LocationRun) => run.segments.every((s) => s.segmentId == null);
     let minContentPx = 0;
     locationRuns.forEach((run, ri) => {
         minContentPx += runMinPx(run);
@@ -442,6 +443,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                 flexGrow: w,
                                 flexShrink: 0,
                                 minWidth: runMinPx(run),
+                                maxWidth: isGpsOnlyRun(run) ? RUN_MIN_PX : undefined,
                                 display: 'flex',
                                 flexDirection: 'column',
                                 opacity:
@@ -687,6 +689,7 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
                                     flexGrow: w,
                                     flexShrink: 0,
                                     minWidth: runMinPx(run),
+                                    maxWidth: isGpsOnlyRun(run) ? RUN_MIN_PX : undefined,
                                     position: 'relative',
                                     height: 16,
                                 }}
