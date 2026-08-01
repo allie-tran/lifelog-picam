@@ -239,11 +239,22 @@ def remove_device_access(
     return {"success": True}
 
 
-def _owns_sensor(user: User, device_id: str, sensor_type: str) -> bool:
-    return any(
-        s.device_id == device_id and s.sensor_type == sensor_type
-        for s in (user.sensors or [])
-    )
+def _sensor_owner_username(db_session: session.Session, device_id: str, sensor_type: str) -> str | None:
+    """
+    Username the sensor row is associated with, or None if the sensor is unclaimed or unknown.
+
+    The `sensor_devices` row is the authority: it is what upload auth reads, and what a take-over
+    rewrites. The user document's `sensors` list is a denormalised copy that can lag behind it.
+    """
+    return db_session.execute(
+        select(Device.device_id)
+        .join(SensorDevice, SensorDevice.associated_user == Device.id)
+        .where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == sensor_type)
+    ).scalar_one_or_none()
+
+
+def _owns_sensor(db_session: session.Session, user: User, device_id: str, sensor_type: str) -> bool:
+    return _sensor_owner_username(db_session, device_id, sensor_type) == user.username
 
 
 @router.delete("/remove-sensor", dependencies=[Depends(get_user)])
@@ -256,7 +267,7 @@ def remove_sensor_access(
 ):
     # Admin can remove any sensor; a user may remove a sensor they own.
     if not admin_user.is_admin and not (
-        username == admin_user.username and _owns_sensor(admin_user, device_id, sensor_type)
+        username == admin_user.username and _owns_sensor(db_session, admin_user, device_id, sensor_type)
     ):
         raise HTTPException(status_code=403, detail="Not authorized")
 
@@ -268,8 +279,10 @@ def remove_sensor_access(
     )
     db_session.commit()
 
-    User.update_one(
-        {"username": username},
+    # Pulled from every user document, not just `username`: the row is gone, so any document still
+    # listing this sensor — a previous owner's, after a take-over — is now stale too.
+    User.update_many(
+        {},
         {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}},
     )
     return {"success": True}
@@ -357,11 +370,7 @@ async def sensor_registration(
     # Ownership is the association itself, never the caller's role: an admin asking about a device
     # that belongs to somebody else must be told so, otherwise a client signed in as admin reports
     # every device on the system as its own.
-    owned_by_me = (
-        user is not None
-        and row.associated_user is not None
-        and row.associated_user == _user_device_id(db_session, user.username)
-    )
+    owned_by_me = user is not None and _owns_sensor(db_session, user, device_id, sensor_type)
     # Admins may see the details of any sensor; everyone else only their own.
     show_details = owned_by_me or (user is not None and user.is_admin)
     return SensorRegistrationResponse(
@@ -403,15 +412,7 @@ def generate_sensor_key(
     device_id = request.device_id
     sensor_type = request.sensor_type
 
-    # Checked against sensor_devices rather than the user document's sensor list: the row is what
-    # upload auth reads, and the two can drift if a sensor is reassigned directly in Postgres.
-    owner = db_session.execute(
-        select(SensorDevice.associated_user).where(
-            SensorDevice.device_id == device_id,
-            SensorDevice.sensor_type == sensor_type,
-        )
-    ).scalar_one_or_none()
-    if not user.is_admin and (owner is None or owner != _user_device_id(db_session, user.username)):
+    if not user.is_admin and not _owns_sensor(db_session, user, device_id, sensor_type):
         raise HTTPException(status_code=403, detail="Register the sensor to your account first")
 
     server_secret_key = os.getenv("SERVER_SECRET_KEY", "")
@@ -446,7 +447,8 @@ def rename_sensor(
     db_session: session.Session = Depends(get_session),
 ):
     """Rename a sensor device. Admin can rename any; a user may rename a sensor they own."""
-    if not user.is_admin and not _owns_sensor(user, device_id, sensor_type):
+    owner_username = _sensor_owner_username(db_session, device_id, sensor_type)
+    if not user.is_admin and owner_username != user.username:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     db_session.execute(
@@ -456,8 +458,14 @@ def rename_sensor(
     )
     db_session.commit()
 
+    # Written to the owner's document rather than the caller's: an admin renaming somebody else's
+    # sensor was previously updating an entry in their own document that does not exist.
     User.update_one(
-        {"username": user.username, "sensors.device_id": device_id, "sensors.sensor_type": sensor_type},
+        {
+            "username": owner_username or user.username,
+            "sensors.device_id": device_id,
+            "sensors.sensor_type": sensor_type,
+        },
         {"$set": {"sensors.$.device_nickname": nickname}},
     )
     return {"success": True, "deviceNickname": nickname}
