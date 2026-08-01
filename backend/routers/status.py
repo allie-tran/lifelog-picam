@@ -89,7 +89,12 @@ def get_current_status(
             online=s_online,
         ))
         if str(s.sensor_type) == "camera":
-            camera_last_seen                = max(camera_last_seen, s_last_seen) if camera_last_seen else s_last_seen  # type: ignore
+            if camera_last_seen is None:
+                camera_last_seen = s_last_seen
+            elif s_last_seen is None:
+                camera_last_seen = camera_last_seen
+            else:
+                camera_last_seen = max(camera_last_seen, s_last_seen)  # type: ignore
             camera_online = camera_online or s_online
 
     current_activity = None
