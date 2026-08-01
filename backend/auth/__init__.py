@@ -138,6 +138,10 @@ class SensorDeviceRequest(CamelCaseModel):
     sensor_type: str
     secret: str | None = None
     associated_username: str
+    # Reassign a sensor that another user currently holds. Deliberately opt-in: a device id is
+    # just a serial, so taking one over redirects somebody else's uploads to this account, and
+    # that should never happen as a side effect of an ordinary register.
+    force: bool = False
 
 
 def _user_device_id(db_session: session.Session, username: str):
@@ -157,9 +161,9 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
     secret = request.secret
     associated_username = request.associated_username
 
-    # Admins register sensors for anyone; everyone else may only claim a sensor for themselves,
-    # and only one nobody else already holds. This is what lets a phone/glasses client register
-    # itself after signing in, instead of needing an admin to do it out of band.
+    # Admins register sensors for anyone; everyone else may only claim a sensor for themselves.
+    # This is what lets a phone/glasses client register itself after signing in, instead of
+    # needing an admin to do it out of band.
     if not user.is_admin:
         if associated_username != user.username:
             raise HTTPException(status_code=403, detail="Not authorized to register a sensor for another user")
@@ -170,8 +174,15 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
                 SensorDevice.sensor_type == sensor_type,
             )
         ).scalar_one_or_none()
+        # Taking a sensor off another account is allowed, but only when asked for explicitly: the
+        # 409 is what makes an ordinary register safe, and `force` is the deliberate override.
+        if existing_owner is not None and existing_owner != owner_id and not request.force:
+            raise HTTPException(
+                status_code=409,
+                detail="Sensor is already registered to another user. Retry with force to take it over.",
+            )
         if existing_owner is not None and existing_owner != owner_id:
-            raise HTTPException(status_code=409, detail="Sensor is already registered to another user")
+            print(f"Sensor {device_id}/{sensor_type} taken over by {user.username}")
 
     user_obj = session.execute(select(Device).where(Device.device_id == associated_username)).scalar_one_or_none()
     stmt = insert(SensorDevice).values(
