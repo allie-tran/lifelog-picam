@@ -3,7 +3,11 @@ from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
 
-from sqlalchemy import delete, select, update as sa_update
+import os
+from datetime import datetime
+
+from nacl.public import PrivateKey
+from sqlalchemy import delete, func, select, update as sa_update
 from database import get_session
 
 from sqlalchemy.dialects.postgresql import insert
@@ -135,6 +139,13 @@ class SensorDeviceRequest(CamelCaseModel):
     secret: str | None = None
     associated_username: str
 
+
+def _user_device_id(db_session: session.Session, username: str):
+    """Row id of the `devices` entry that stands for a user, which is what SensorDevice points at."""
+    return db_session.execute(
+        select(Device.id).where(Device.device_id == username)
+    ).scalar_one_or_none()
+
 @router.put("/add-sensor", dependencies=[Depends(get_user)])
 def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_user)], session: session.Session = Depends(get_session)):
     """
@@ -146,8 +157,21 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
     secret = request.secret
     associated_username = request.associated_username
 
+    # Admins register sensors for anyone; everyone else may only claim a sensor for themselves,
+    # and only one nobody else already holds. This is what lets a phone/glasses client register
+    # itself after signing in, instead of needing an admin to do it out of band.
     if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Not authorized")
+        if associated_username != user.username:
+            raise HTTPException(status_code=403, detail="Not authorized to register a sensor for another user")
+        owner_id = _user_device_id(session, user.username)
+        existing_owner = session.execute(
+            select(SensorDevice.associated_user).where(
+                SensorDevice.device_id == device_id,
+                SensorDevice.sensor_type == sensor_type,
+            )
+        ).scalar_one_or_none()
+        if existing_owner is not None and existing_owner != owner_id:
+            raise HTTPException(status_code=409, detail="Sensor is already registered to another user")
 
     user_obj = session.execute(select(Device).where(Device.device_id == associated_username)).scalar_one_or_none()
     stmt = insert(SensorDevice).values(
@@ -156,9 +180,12 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
         sensor_type=sensor_type,
         secret=secret,
         associated_user=user_obj.id if user_obj else None,
-    ).on_conflict_do_update(constraint="uq_sensor_device_id_type", set_={
+    )
+    stmt = stmt.on_conflict_do_update(constraint="uq_sensor_device_id_type", set_={
         "device_nickname": device_nickname,
-        "secret": secret,
+        # Re-registering must not wipe a provisioned encryption key: only an explicit secret in
+        # the request replaces the stored one.
+        "secret": func.coalesce(stmt.excluded.secret, SensorDevice.secret),
         "associated_user": user_obj.id if user_obj else None,
     })
     session.execute(stmt)
@@ -261,6 +288,111 @@ def my_sensors(
         )
         for s in sensors
     ]
+
+
+class SensorRegistrationResponse(CamelCaseModel):
+    device_id: str
+    sensor_type: str
+    registered: bool
+    owned_by_me: bool
+    device_nickname: str | None = None
+    last_seen: datetime | None = None
+    has_secret: bool = False
+
+
+@router.get("/sensor-registration", response_model=SensorRegistrationResponse, dependencies=[Depends(get_user)])
+def sensor_registration(
+    device_id: str = Query(...),
+    sensor_type: str = Query(...),
+    user: User = Depends(get_user),
+    db_session: session.Session = Depends(get_session),
+):
+    """
+    Whether a device id is registered for a sensor type, and whether it belongs to the caller.
+
+    Uploads from an unregistered device are rejected (see auth.devices.verify_device_and_user), so
+    a client needs this to tell "nothing is being ingested" apart from "capture is broken". A
+    sensor owned by somebody else reports registered=True, ownedByMe=False and nothing more.
+    """
+    row = db_session.execute(
+        select(SensorDevice).where(
+            SensorDevice.device_id == device_id,
+            SensorDevice.sensor_type == sensor_type,
+        )
+    ).scalar_one_or_none()
+
+    if row is None:
+        return SensorRegistrationResponse(
+            device_id=device_id, sensor_type=sensor_type, registered=False, owned_by_me=False
+        )
+
+    owned_by_me = user.is_admin or (
+        row.associated_user is not None
+        and row.associated_user == _user_device_id(db_session, user.username)
+    )
+    return SensorRegistrationResponse(
+        device_id=device_id,
+        sensor_type=sensor_type,
+        registered=row.associated_user is not None,
+        owned_by_me=owned_by_me,
+        device_nickname=row.device_nickname if owned_by_me else None,
+        last_seen=row.last_seen if owned_by_me else None,
+        has_secret=bool(row.secret) if owned_by_me else False,
+    )
+
+
+class SensorKeyRequest(CamelCaseModel):
+    device_id: str
+    sensor_type: str = "camera"
+
+
+class SensorKeyResponse(CamelCaseModel):
+    device_id: str
+    sensor_type: str
+    device_secret_key: str
+    server_public_key: str
+
+
+@router.post("/sensor-key", response_model=SensorKeyResponse, dependencies=[Depends(get_user)])
+def generate_sensor_key(
+    request: SensorKeyRequest,
+    user: User = Depends(get_user),
+    db_session: session.Session = Depends(get_session),
+):
+    """
+    Mint a NaCl box keypair for a sensor: the device keeps the secret key, the server stores the
+    public key on the sensor row and decrypts uploads with it (see routers/images.py).
+
+    The secret key is returned exactly once and never stored server-side, so calling this again
+    rotates the key and invalidates whatever the device held before.
+    """
+    device_id = request.device_id
+    sensor_type = request.sensor_type
+
+    if not user.is_admin and not _owns_sensor(user, device_id, sensor_type):
+        raise HTTPException(status_code=403, detail="Register the sensor to your account first")
+
+    server_secret_key = os.getenv("SERVER_SECRET_KEY", "")
+    if not server_secret_key:
+        raise HTTPException(status_code=500, detail="Server encryption key is not configured")
+
+    device_key = PrivateKey.generate()
+    result = db_session.execute(
+        sa_update(SensorDevice)
+        .where(SensorDevice.device_id == device_id, SensorDevice.sensor_type == sensor_type)
+        .values(secret=bytes(device_key.public_key).hex())
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    db_session.commit()
+
+    server_public_key = bytes(PrivateKey(bytes.fromhex(server_secret_key)).public_key).hex()
+    return SensorKeyResponse(
+        device_id=device_id,
+        sensor_type=sensor_type,
+        device_secret_key=bytes(device_key).hex(),
+        server_public_key=server_public_key,
+    )
 
 
 @router.put("/rename-sensor", dependencies=[Depends(get_user)])
