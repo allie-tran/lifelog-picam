@@ -329,7 +329,7 @@ async def sensor_registration(
     question has to be answerable before signing in — a device that was never registered is
     exactly the case where nobody is signed in yet — so an anonymous caller gets the bare
     registered yes/no and nothing else. Ownership, nickname, last-seen and key state need a token,
-    and a sensor belonging to somebody else never names them.
+    and no caller is ever told which account holds a sensor that is not theirs.
     """
     row = db_session.execute(
         select(SensorDevice).where(
@@ -343,20 +343,24 @@ async def sensor_registration(
             device_id=device_id, sensor_type=sensor_type, registered=False, owned_by_me=False
         )
 
-    owned_by_me = user is not None and (
-        user.is_admin or (
-            row.associated_user is not None
-            and row.associated_user == _user_device_id(db_session, user.username)
-        )
+    # Ownership is the association itself, never the caller's role: an admin asking about a device
+    # that belongs to somebody else must be told so, otherwise a client signed in as admin reports
+    # every device on the system as its own.
+    owned_by_me = (
+        user is not None
+        and row.associated_user is not None
+        and row.associated_user == _user_device_id(db_session, user.username)
     )
+    # Admins may see the details of any sensor; everyone else only their own.
+    show_details = owned_by_me or (user is not None and user.is_admin)
     return SensorRegistrationResponse(
         device_id=device_id,
         sensor_type=sensor_type,
         registered=row.associated_user is not None,
         owned_by_me=owned_by_me,
-        device_nickname=row.device_nickname if owned_by_me else None,
-        last_seen=row.last_seen if owned_by_me else None,
-        has_secret=bool(row.secret) if owned_by_me else False,
+        device_nickname=row.device_nickname if show_details else None,
+        last_seen=row.last_seen if show_details else None,
+        has_secret=bool(row.secret) if show_details else False,
     )
 
 
@@ -388,7 +392,15 @@ def generate_sensor_key(
     device_id = request.device_id
     sensor_type = request.sensor_type
 
-    if not user.is_admin and not _owns_sensor(user, device_id, sensor_type):
+    # Checked against sensor_devices rather than the user document's sensor list: the row is what
+    # upload auth reads, and the two can drift if a sensor is reassigned directly in Postgres.
+    owner = db_session.execute(
+        select(SensorDevice.associated_user).where(
+            SensorDevice.device_id == device_id,
+            SensorDevice.sensor_type == sensor_type,
+        )
+    ).scalar_one_or_none()
+    if not user.is_admin and (owner is None or owner != _user_device_id(db_session, user.username)):
         raise HTTPException(status_code=403, detail="Register the sensor to your account first")
 
     server_secret_key = os.getenv("SERVER_SECRET_KEY", "")
