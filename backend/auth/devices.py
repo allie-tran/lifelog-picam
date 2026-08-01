@@ -11,6 +11,38 @@ from database.models import Device, SensorDevice
 SECRET = os.getenv("JWT_SECRET", "")
 assert SECRET, "JWT_SECRET is not set"
 
+
+def list_user_sensors(session, username: str) -> list:
+    """
+    Sensors associated with a user, read from `sensor_devices`.
+
+    Lives here rather than in the auth router so the login response and /auth/verify can share it
+    with /auth/my-sensors without importing the router. The row is the authority — it decides
+    whose uploads are accepted — and the user document's `sensors` array is a copy that drifts
+    whenever a sensor is reassigned outside add-sensor.
+    """
+    from auth.types import SensorDeviceWithDate, SensorType
+
+    known_types = {t.value for t in SensorType}
+    rows = session.execute(
+        select(SensorDevice.device_id, SensorDevice.device_nickname, SensorDevice.sensor_type)
+        .join(Device, SensorDevice.associated_user == Device.id)
+        .where(Device.device_id == username)
+        .order_by(SensorDevice.sensor_type, SensorDevice.device_id)
+    ).all()
+    return [
+        SensorDeviceWithDate(
+            device_id=device_id,
+            device_nickname=device_nickname,
+            sensor_type=sensor_type,
+        )
+        # A row carrying a sensor_type this build does not know about would fail validation, and
+        # signing in is not the place to discover that.
+        for device_id, device_nickname, sensor_type in rows
+        if sensor_type in known_types
+    ]
+
+
 def generate_token_for_device(device_id: str):
     """
     Generate a token for the device

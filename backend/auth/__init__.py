@@ -21,6 +21,7 @@ from auth.auth_models import (
     verify_token,
     verify_user,
 )
+from auth.devices import list_user_sensors
 from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, SensorStatus, User, UserResponse
 from database.models import Device, SensorDevice
 from core.dependencies import CamelCaseModel
@@ -69,14 +70,14 @@ def register(request: CreateUserRequest, session: Annotated[session.Session, Dep
             raise e
 
 @router.post("/login", response_model=LoginResponse)
-def login(request: LoginRequest):
+def login(request: LoginRequest, db_session: session.Session = Depends(get_session)):
     """
     Endpoint to verify user credentials and return an access token
     """
-    return verify_user(request)
+    return verify_user(request, db_session)
 
 @router.get("/verify", response_model=dict)
-def verify(token: str):
+def verify(token: str, db_session: session.Session = Depends(get_session)):
     """
     Endpoint to verify the token and return the user
     """
@@ -85,7 +86,12 @@ def verify(token: str):
     user = find_user_by_username(data["username"])
     if not user:
         raise HTTPException(status_code=401, detail="User does not exist")
-    return { "success": True, "username": user.username, "devices": user.devices, "sensors": user.sensors }
+    return {
+        "success": True,
+        "username": user.username,
+        "devices": user.devices,
+        "sensors": list_user_sensors(db_session, user.username),
+    }
 
 
 # -----------------------------------------------------------------------

@@ -9,6 +9,7 @@ from rich import print
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
+from auth.devices import list_user_sensors
 from auth.types import CreateUserRequest, LoginRequest, LoginResponse, User, AccessLevel
 from configs import REDIS_HOST, REDIS_PORT
 from settings.utils import create_device
@@ -71,7 +72,7 @@ def find_user_by_username(username: str) -> User:
     return user
 
 
-def verify_user(request: LoginRequest) -> LoginResponse:
+def verify_user(request: LoginRequest, db_session: Session) -> LoginResponse:
     """
     Verify user credentials and return an access token
     """
@@ -85,7 +86,9 @@ def verify_user(request: LoginRequest) -> LoginResponse:
             token_type="bearer",
             username=request.username,
             devices=user.devices or [],
-            sensors=user.sensors or [],
+            # From sensor_devices, not the user document: the row is what upload auth reads, so a
+            # sensor reassigned elsewhere must not keep showing up in this user's session.
+            sensors=list_user_sensors(db_session, request.username),
         )
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
