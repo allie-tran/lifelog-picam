@@ -57,15 +57,20 @@ def test_engine():
 
 @pytest.fixture
 def db_session(test_engine):
-    """A session wrapped in an outer transaction that is always rolled back.
+    """A session wrapped in an outer transaction that is always rolled back, so
+    tests stay isolated even from one another's writes.
 
-    Seed rows with `db_session.flush()` (not commit): they become visible to the
-    endpoint — which shares this same session via the override — without
-    escaping the rollback.
+    `join_transaction_mode="create_savepoint"` makes the endpoint's own
+    `session.commit()` land on a SAVEPOINT instead of the real transaction, so
+    committing endpoints (notifications, etc.) still can't escape the rollback.
+    Seeded rows are visible to the endpoint because it shares this same session
+    via the `get_session` override.
     """
     conn = test_engine.connect()
     trans = conn.begin()
-    session = sessionmaker(bind=conn)()
+    session = sessionmaker(
+        bind=conn, join_transaction_mode="create_savepoint"
+    )()
     try:
         yield session
     finally:
