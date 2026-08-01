@@ -293,24 +293,32 @@ def my_sensors(
     user: User = Depends(get_user),
     db_session: session.Session = Depends(get_session),
 ):
-    """List the logged-in user's sensor devices, enriched with last-seen from Postgres."""
-    sensors = user.sensors or []
-    if not sensors:
-        return []
-    device_ids = [s.device_id for s in sensors]
+    """
+    List the sensor devices associated with the logged-in user.
+
+    Driven by `sensor_devices` rather than the user document's `sensors` list: the row decides
+    whose uploads are accepted, so listing anything else shows sensors that no longer work and
+    hides ones that do — a sensor reassigned straight in Postgres stayed on the old owner's list.
+    """
     rows = db_session.execute(
-        select(SensorDevice.device_id, SensorDevice.sensor_type, SensorDevice.last_seen)
-        .where(SensorDevice.device_id.in_(device_ids))
+        select(
+            SensorDevice.device_id,
+            SensorDevice.device_nickname,
+            SensorDevice.sensor_type,
+            SensorDevice.last_seen,
+        )
+        .join(Device, SensorDevice.associated_user == Device.id)
+        .where(Device.device_id == user.username)
+        .order_by(SensorDevice.sensor_type, SensorDevice.device_id)
     ).all()
-    last_seen_map = {(d, t): ls for d, t, ls in rows}
     return [
         SensorStatus(
-            device_id=s.device_id,
-            device_nickname=s.device_nickname,
-            sensor_type=s.sensor_type,
-            last_seen=last_seen_map.get((s.device_id, s.sensor_type)),
+            device_id=device_id,
+            device_nickname=device_nickname,
+            sensor_type=sensor_type,
+            last_seen=last_seen,
         )
-        for s in sensors
+        for device_id, device_nickname, sensor_type, last_seen in rows
     ]
 
 
