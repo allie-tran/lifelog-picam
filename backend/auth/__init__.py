@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi_limiter.depends import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from typing import Annotated
@@ -300,19 +300,36 @@ class SensorRegistrationResponse(CamelCaseModel):
     has_secret: bool = False
 
 
-@router.get("/sensor-registration", response_model=SensorRegistrationResponse, dependencies=[Depends(get_user)])
-def sensor_registration(
+async def _optional_user(request: Request) -> User | None:
+    """The caller's account if they sent a usable token, otherwise None — never raises."""
+    if not request.headers.get("Authorization"):
+        return None
+    try:
+        return await get_user(request)
+    except HTTPException:
+        return None
+
+
+@router.get(
+    "/sensor-registration",
+    response_model=SensorRegistrationResponse,
+    dependencies=[Depends(RateLimiter(limiter=Limiter(Rate(60, Duration.MINUTE))))],
+)
+async def sensor_registration(
     device_id: str = Query(...),
     sensor_type: str = Query(...),
-    user: User = Depends(get_user),
+    user: User | None = Depends(_optional_user),
     db_session: session.Session = Depends(get_session),
 ):
     """
     Whether a device id is registered for a sensor type, and whether it belongs to the caller.
 
     Uploads from an unregistered device are rejected (see auth.devices.verify_device_and_user), so
-    a client needs this to tell "nothing is being ingested" apart from "capture is broken". A
-    sensor owned by somebody else reports registered=True, ownedByMe=False and nothing more.
+    a client needs this to tell "nothing is being ingested" apart from "capture is broken". That
+    question has to be answerable before signing in — a device that was never registered is
+    exactly the case where nobody is signed in yet — so an anonymous caller gets the bare
+    registered yes/no and nothing else. Ownership, nickname, last-seen and key state need a token,
+    and a sensor belonging to somebody else never names them.
     """
     row = db_session.execute(
         select(SensorDevice).where(
@@ -326,9 +343,11 @@ def sensor_registration(
             device_id=device_id, sensor_type=sensor_type, registered=False, owned_by_me=False
         )
 
-    owned_by_me = user.is_admin or (
-        row.associated_user is not None
-        and row.associated_user == _user_device_id(db_session, user.username)
+    owned_by_me = user is not None and (
+        user.is_admin or (
+            row.associated_user is not None
+            and row.associated_user == _user_device_id(db_session, user.username)
+        )
     )
     return SensorRegistrationResponse(
         device_id=device_id,
