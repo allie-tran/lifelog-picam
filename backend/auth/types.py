@@ -64,7 +64,8 @@ class User(Document):
     password: str # hashed password
     is_admin: bool = False
     devices: list[DeviceAccess] | None = None
-    sensors: list[SensorDeviceWithDate] | None = None
+    # No `sensors` here: sensor ownership lives in the `sensor_devices` table, which is what
+    # upload auth reads. Documents written before that may still carry the key; it is ignored.
     goal_targets: list[CustomTarget] = []
 
     class ODMConfig(Document.ODMConfig):

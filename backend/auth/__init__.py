@@ -21,7 +21,7 @@ from auth.auth_models import (
     verify_token,
     verify_user,
 )
-from auth.devices import list_user_sensors
+from auth.devices import list_user_sensors, sensors_by_username
 from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, SensorStatus, User, UserResponse
 from database.models import Device, SensorDevice
 from core.dependencies import CamelCaseModel
@@ -98,14 +98,22 @@ def verify(token: str, db_session: session.Session = Depends(get_session)):
 # ADMIN
 # -----------------------------------------------------------------------
 @router.get("/users", response_model=list[UserResponse], dependencies=[Depends(auth_dependency)])
-def get_users(user: Annotated[User, Depends(get_user)]):
+def get_users(
+    user: Annotated[User, Depends(get_user)],
+    db_session: session.Session = Depends(get_session),
+):
     """
     Endpoint to get all users
     """
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized")
     users = list(User.find({}))
-    return [UserResponse.model_validate(u.model_dump()) for u in users]
+    # One query for every user's sensors rather than one per user.
+    sensors = sensors_by_username(db_session)
+    return [
+        UserResponse.model_validate({**u.model_dump(), "sensors": sensors.get(u.username, [])})
+        for u in users
+    ]
 
 @router.post("/change-access", dependencies=[Depends(get_user)])
 def change_user_access(request: AccessChangeRequest, admin_user: Annotated[User, Depends(get_user)]):
@@ -208,19 +216,6 @@ def add_sensor(request: SensorDeviceRequest, user: Annotated[User, Depends(get_u
     session.execute(stmt)
     session.commit()
     print(f"Added/Updated device {device_id} for user {associated_username}")
-
-    # MongoDB
-    # Remove all existing access for this device
-    User.update_many(
-        {},
-        {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}}
-    )
-
-    # Add owner access for the associated user
-    User.update_one(
-        {"username": associated_username},
-        {"$push": {"sensors": {"device_id": device_id, "device_nickname": device_nickname, "sensor_type": sensor_type}}}
-    )
     return {"success": True, "message": f"Device {device_id} added/updated and access granted to user {associated_username}"}
 
 
@@ -284,13 +279,6 @@ def remove_sensor_access(
         )
     )
     db_session.commit()
-
-    # Pulled from every user document, not just `username`: the row is gone, so any document still
-    # listing this sensor — a previous owner's, after a take-over — is now stale too.
-    User.update_many(
-        {},
-        {"$pull": {"sensors": {"device_id": device_id, "sensor_type": sensor_type}}},
-    )
     return {"success": True}
 
 
@@ -471,15 +459,4 @@ def rename_sensor(
         .values(device_nickname=nickname)
     )
     db_session.commit()
-
-    # Written to the owner's document rather than the caller's: an admin renaming somebody else's
-    # sensor was previously updating an entry in their own document that does not exist.
-    User.update_one(
-        {
-            "username": owner_username or user.username,
-            "sensors.device_id": device_id,
-            "sensors.sensor_type": sensor_type,
-        },
-        {"$set": {"sensors.$.device_nickname": nickname}},
-    )
     return {"success": True, "deviceNickname": nickname}

@@ -12,35 +12,52 @@ SECRET = os.getenv("JWT_SECRET", "")
 assert SECRET, "JWT_SECRET is not set"
 
 
-def list_user_sensors(session, username: str) -> list:
+def sensors_by_username(session, usernames: list[str] | None = None) -> dict[str, list]:
     """
-    Sensors associated with a user, read from `sensor_devices`.
+    Sensors grouped by the username that owns them, read from `sensor_devices`.
 
     Lives here rather than in the auth router so the login response and /auth/verify can share it
-    with /auth/my-sensors without importing the router. The row is the authority — it decides
-    whose uploads are accepted — and the user document's `sensors` array is a copy that drifts
-    whenever a sensor is reassigned outside add-sensor.
+    with /auth/my-sensors and /auth/users without importing the router. The row is the sole
+    authority on sensor ownership — it decides whose uploads are accepted.
+
+    Pass [usernames] to restrict the query; omit it for every user, which is what listing users
+    needs and is one query rather than one per user.
     """
     from auth.types import SensorDeviceWithDate, SensorType
 
     known_types = {t.value for t in SensorType}
-    rows = session.execute(
-        select(SensorDevice.device_id, SensorDevice.device_nickname, SensorDevice.sensor_type)
-        .join(Device, SensorDevice.associated_user == Device.id)
-        .where(Device.device_id == username)
-        .order_by(SensorDevice.sensor_type, SensorDevice.device_id)
-    ).all()
-    return [
-        SensorDeviceWithDate(
-            device_id=device_id,
-            device_nickname=device_nickname,
-            sensor_type=sensor_type,
+    query = (
+        select(
+            Device.device_id,
+            SensorDevice.device_id,
+            SensorDevice.device_nickname,
+            SensorDevice.sensor_type,
         )
+        .join(SensorDevice, SensorDevice.associated_user == Device.id)
+        .order_by(SensorDevice.sensor_type, SensorDevice.device_id)
+    )
+    if usernames is not None:
+        query = query.where(Device.device_id.in_(usernames))
+
+    grouped: dict[str, list] = {}
+    for owner, device_id, device_nickname, sensor_type in session.execute(query).all():
         # A row carrying a sensor_type this build does not know about would fail validation, and
         # signing in is not the place to discover that.
-        for device_id, device_nickname, sensor_type in rows
-        if sensor_type in known_types
-    ]
+        if sensor_type not in known_types:
+            continue
+        grouped.setdefault(owner, []).append(
+            SensorDeviceWithDate(
+                device_id=device_id,
+                device_nickname=device_nickname,
+                sensor_type=sensor_type,
+            )
+        )
+    return grouped
+
+
+def list_user_sensors(session, username: str) -> list:
+    """Sensors owned by one user. See [sensors_by_username]."""
+    return sensors_by_username(session, [username]).get(username, [])
 
 
 def generate_token_for_device(device_id: str):
