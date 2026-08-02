@@ -35,12 +35,3 @@ frontend/build/
 # Camera client local logs/state
 synced.txt
 note_for_claude.md
-
-# Android — ignore build artifacts, track source only
-android/node_modules/
-android/android/
-android/.gradle/
-android/build/
-android/.expo/
-android/*.keystore
-android/local.properties
