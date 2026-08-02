@@ -258,8 +258,11 @@ export function GpsTrackMap({
     return (
         <Box
             sx={{
-                height: '100%',
-                width: 400,
+                // Fixed side panel on desktop; on mobile the map stacks above the
+                // photo list, so it takes the full width and a capped height.
+                height: { xs: 260, md: '100%' },
+                width: { xs: '100%', md: 400 },
+                flexShrink: 0,
                 border: '1px solid #ccc',
                 borderRadius: 1,
                 overflow: 'hidden',

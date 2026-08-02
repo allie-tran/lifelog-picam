@@ -31,6 +31,8 @@ import {
     Tooltip,
     Typography,
     styled,
+    useMediaQuery,
+    useTheme,
 } from '@mui/material';
 import {
     CountItem,
@@ -80,6 +82,12 @@ const SearchPage = () => {
     const device = searchParams.get('device') || '';
     const searchQuery = useMemo(() => parseSearchParams(searchParams), [searchParams]);
     const searchHistory = useAppSelector((state) => state.search.history);
+
+    // The query panel and the map panel are side rails on desktop but overlays on
+    // a phone, where 325px + 340px of chrome would leave nothing for results.
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const [queryDrawerOpen, setQueryDrawerOpen] = useState(false);
 
     // View Settings
     const [sortBy, setSortBy] = useState<'time' | 'relevance'>('relevance');
@@ -339,6 +347,9 @@ const SearchPage = () => {
         const text = textQueryRef.current;
         const full = { ...searchQuery, text };
         dispatch(pushToHistory(full));
+        // On mobile the query panel is an overlay covering the results it just
+        // produced, so get out of the way once a search is fired.
+        setQueryDrawerOpen(false);
         setSearchParams((prev) => {
             const p = new URLSearchParams(prev);
             if (text) p.set('q', text); else p.delete('q');
@@ -565,14 +576,17 @@ const SearchPage = () => {
         <>
             <Drawer
                 anchor="left"
-                open={true}
-                variant="permanent"
+                open={isMobile ? queryDrawerOpen : true}
+                onClose={() => setQueryDrawerOpen(false)}
+                variant={isMobile ? 'temporary' : 'permanent'}
+                ModalProps={{ keepMounted: true }}
                 slotProps={{
                     paper: {
                         sx: {
-                            width: 325,
+                            width: { xs: '88vw', sm: 360, md: 325 },
+                            maxWidth: 360,
                             padding: 2,
-                            ml: 6,
+                            ml: { xs: 0, md: 6 },
                             backgroundColor: '#f4f6e8',
                             zIndex: 1300,
                         },
@@ -831,11 +845,12 @@ const SearchPage = () => {
             <Drawer
                 anchor="right"
                 open={filterShown === 'location'}
-                variant="persistent"
+                onClose={() => setFilterShown(null)}
+                variant={isMobile ? 'temporary' : 'persistent'}
                 slotProps={{
                     paper: {
                         sx: {
-                            width: 340,
+                            width: { xs: '100%', md: 340 },
                             p: 2,
                             paddingTop: 8,
                             zIndex: 1200,
@@ -846,7 +861,26 @@ const SearchPage = () => {
                 {renderMap()}
             </Drawer>
 
-            <Box sx={{ paddingLeft: '325px', paddingRight: filterShown === 'location' ? '340px' : 0 }}>
+            <Box
+                sx={{
+                    paddingLeft: { xs: 0, md: '325px' },
+                    paddingRight: {
+                        xs: 0,
+                        md: filterShown === 'location' ? '340px' : 0,
+                    },
+                }}
+            >
+                {isMobile && (
+                    <Button
+                        variant="outlined"
+                        color="secondary"
+                        startIcon={<SortRounded />}
+                        onClick={() => setQueryDrawerOpen(true)}
+                        sx={{ textTransform: 'none', mb: 1 }}
+                    >
+                        Query & filters
+                    </Button>
+                )}
                 <Box id="app" sx={{ width: '100%' }} />
                     <Stack
                         id="result-summary"

@@ -389,7 +389,7 @@ const Admin = () => {
                 onClose={() => setOpen(false)}
                 fitContent
             >
-                <Stack spacing={2} sx={{ width: 400, p: 3 }}>
+                <Stack spacing={2} sx={{ width: { xs: 'min(400px, 78vw)', sm: 400 }, p: { xs: 1, sm: 3 } }}>
                     <Typography variant="h6" align="center" marginY={2}>
                         <VerifiedUserRounded
                             sx={{ mr: 1, verticalAlign: 'middle' }}
@@ -469,7 +469,7 @@ const Admin = () => {
                 onClose={() => setOpenSensor(false)}
                 fitContent
             >
-                <Stack spacing={2} sx={{ width: 400, p: 3 }}>
+                <Stack spacing={2} sx={{ width: { xs: 'min(400px, 78vw)', sm: 400 }, p: { xs: 1, sm: 3 } }}>
                     <Typography variant="h6" align="center" marginY={2}>
                         <VerifiedUserRounded
                             sx={{ mr: 1, verticalAlign: 'middle' }}

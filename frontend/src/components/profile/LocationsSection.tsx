@@ -319,7 +319,7 @@ const LocationsSection = () => {
 
             <Stack direction="row" flexWrap="wrap" spacing={2} useFlexGap>
                 {locations?.map((loc) => (
-                    <Card key={loc.locationId} variant="outlined" sx={{ width: 240 }}>
+                    <Card key={loc.locationId} variant="outlined" sx={{ width: { xs: '100%', sm: 240 } }}>
                         <CardContent>
                             <Stack direction="row" alignItems="center" justifyContent="space-between">
                                 <Stack direction="row" alignItems="center" spacing={1}>

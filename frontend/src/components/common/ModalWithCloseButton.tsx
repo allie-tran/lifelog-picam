@@ -32,9 +32,13 @@ const ModalWithCloseButton = ({
                     transform: 'translate(-50%, -50%)',
                     bgcolor: 'background.paper',
                     boxShadow: 24,
-                    p: 4,
+                    p: { xs: 2, sm: 4 },
                     height: fitContent ? 'fit-content' : '90dvh',
                     width: fitContent ? 'fit-content' : '90dvw',
+                    // fit-content can still overflow a phone once its children
+                    // have an intrinsic width, so cap it against the viewport.
+                    maxWidth: '95dvw',
+                    maxHeight: '90dvh',
                     overflowY: 'auto',
                     borderRadius: '8px',
                     alignItems: 'center',

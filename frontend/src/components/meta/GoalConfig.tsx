@@ -61,7 +61,7 @@ const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
                 Configure Custom Tracking Goals
             </Typography>
 
-            <Stack direction="row" spacing={2}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 {newType === ActionType.PERIOD ? (
                     <Select
                         value={newName}
@@ -70,7 +70,7 @@ const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
                             setNewName(e.target.value as string);
                         }}
                         size="small"
-                        sx={{ minWidth: 200 }}
+                        sx={{ minWidth: { xs: 0, sm: 200 } }}
                     >
                         {Object.keys(CATEGORIES).map((category) => (
                             <MenuItem key={category} value={category}>
@@ -84,10 +84,10 @@ const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
                         label="Goal Name (e.g., 'Drinking Water')"
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
-                        sx={{ minWidth: 200 }}
+                        sx={{ minWidth: { xs: 0, sm: 200 } }}
                     />
                 )}
-                <FormControl size="small" sx={{ minWidth: 120 }}>
+                <FormControl size="small" sx={{ minWidth: { xs: 0, sm: 120 } }}>
                     <InputLabel>Type</InputLabel>
                     <Select
                         value={newType}
@@ -95,7 +95,7 @@ const GoalConfig = ({ onSave }: { onSave: (goals: CustomGoal[]) => void }) => {
                         onChange={(e) =>
                             setNewType(e.target.value as ActionType)
                         }
-                        sx={{ width: 200 }}
+                        sx={{ width: { xs: '100%', sm: 200 } }}
                     >
                         <MenuItem value={ActionType.BURST}>
                             Burst (Count)

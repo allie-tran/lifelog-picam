@@ -25,7 +25,18 @@ import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
 
 const IMAGES_PER_PAGE = 20;
 
-const DeletedImages = () => {
+/**
+ * `label` switches the trigger from an icon-only rail button to a labelled
+ * full-width row, which is what the mobile nav drawer wants. `onOpen` lets that
+ * drawer close itself when the modal takes over.
+ */
+const DeletedImages = ({
+    label,
+    onOpen,
+}: {
+    label?: string;
+    onOpen?: () => void;
+} = {}) => {
     const [open, setOpen] = React.useState(false);
     const [searchParams] = useSearchParams();
     const device = searchParams.get('device') || '';
@@ -48,21 +59,31 @@ const DeletedImages = () => {
     const paginatedData = data ? data.slice((page - 1) * IMAGES_PER_PAGE, page * IMAGES_PER_PAGE) : [];
     const totalDeleted = data ? data.length : 0;
 
+    const openModal = () => {
+        mutate().then(() => {
+            setOpen(true);
+            onOpen?.();
+        });
+    };
+
     return (
         <>
-            <Tooltip title="Deleted Images">
-                <IconButton
-                    size="large"
+            {label ? (
+                <Button
                     color="secondary"
-                    onClick={() => {
-                        mutate().then(() => {
-                            setOpen(true);
-                        });
-                    }}
+                    startIcon={<ArchiveRounded />}
+                    onClick={openModal}
+                    sx={{ justifyContent: 'flex-start', width: '100%', px: 2, py: 1 }}
                 >
-                    <ArchiveRounded />
-                </IconButton>
-            </Tooltip>
+                    {label}
+                </Button>
+            ) : (
+                <Tooltip title="Deleted Images">
+                    <IconButton size="large" color="secondary" onClick={openModal}>
+                        <ArchiveRounded />
+                    </IconButton>
+                </Tooltip>
+            )}
             <ModalWithCloseButton open={open} onClose={() => setOpen(false)}>
                 {isLoading ? <CircularProgress /> : null}
                 {!isLoading && data && data.length === 0 && (

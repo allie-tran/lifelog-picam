@@ -1,6 +1,7 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "SelfHealth",
+  "name": "SelfHealth Lifelog",
+  "description": "Browse, search and annotate your lifelog.",
   "icons": [
     {
       "src": "favicon.ico",
@@ -16,10 +17,18 @@
       "src": "logo512.png",
       "type": "image/png",
       "sizes": "512x512"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/selfhealth/",
+  "scope": "/selfhealth/",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "orientation": "portrait-primary",
+  "theme_color": "#FDFCF0",
+  "background_color": "#FDFCF0"
 }

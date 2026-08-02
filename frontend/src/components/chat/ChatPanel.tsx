@@ -152,7 +152,7 @@ export default function ChatPanel() {
             </Tooltip>
 
             <Drawer anchor="right" open={open} onClose={() => dispatch(closePanel())}>
-                <Box sx={{ width: 400, display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Box sx={{ width: { xs: '100vw', sm: 400 }, maxWidth: '100vw', display: 'flex', flexDirection: 'column', height: '100%' }}>
                     {/* Spacer so the header clears the sticky AppBar. */}
                     <Toolbar disableGutters sx={{ minHeight: { xs: 56, sm: 64 } }} />
                     <Stack

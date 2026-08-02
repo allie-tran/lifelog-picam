@@ -139,7 +139,7 @@ function Insights() {
                     <IconButton size="small" onClick={() => step(-1)} disabled={prevDisabled}>
                         <ChevronLeftIcon />
                     </IconButton>
-                    <Typography variant="subtitle1" fontWeight="medium" sx={{ minWidth: 220, textAlign: 'center' }}>
+                    <Typography variant="subtitle1" fontWeight="medium" sx={{ minWidth: { xs: 150, sm: 220 }, textAlign: 'center' }}>
                         {navLabel || '—'}
                     </Typography>
                     <IconButton size="small" onClick={() => step(1)} disabled={nextDisabled}>

@@ -1,12 +1,17 @@
 import {
     Alert,
     Box,
+    Button,
+    Collapse,
     Container,
     IconButton,
     Snackbar,
     Stack,
     Tooltip,
+    useMediaQuery,
+    useTheme,
 } from '@mui/material';
+import MapRounded from '@mui/icons-material/MapRounded';
 import SyncIcon from '@mui/icons-material/Sync';
 import { GPSData, ImageObject, ResultSegment } from '@utils/types';
 import { getGPSByDate, GpsTrackData } from 'apis/process';
@@ -82,6 +87,12 @@ function MainPage() {
         number | null
     >(null);
     const listRef = React.useRef<HTMLDivElement | null>(null);
+
+    // On a phone the map stacks above the photo list, so it starts collapsed —
+    // a permanently visible map would cost a third of the screen the photos need.
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const [mapOpen, setMapOpen] = React.useState(false);
 
     // Forward paging: a single pick renders that segment then loads later ones
     // as you scroll; a location (array) pages through its own segments.
@@ -421,6 +432,17 @@ function MainPage() {
         }
     };
 
+    const gpsTrack = (
+        <GpsTrack
+            imageGps={imageGps}
+            fullTrack={fullTrack}
+            currentTrack={data?.gps || []}
+            segments={segments}
+            activeSegmentIds={activeSegmentIds}
+            dayStops={dayStops}
+        />
+    );
+
     return (
         <>
             <Stack spacing={2} alignItems="center" sx={{ padding: 2 }} id="app">
@@ -482,24 +504,41 @@ function MainPage() {
                         <div>No images found for this segment.</div>
                     )}
 
+                {isMobile && (
+                    <Box sx={{ width: '100%' }}>
+                        <Button
+                            size="small"
+                            color="secondary"
+                            startIcon={<MapRounded />}
+                            onClick={() => setMapOpen((open) => !open)}
+                        >
+                            {mapOpen ? 'Hide map' : 'Show map'}
+                        </Button>
+                    </Box>
+                )}
+
                 <Stack
-                    sx={{ width: '100%', height: 'calc(100dvh - 200px)' }}
-                    direction="row"
+                    sx={{
+                        width: '100%',
+                        height: { xs: 'auto', md: 'calc(100dvh - 200px)' },
+                    }}
+                    direction={{ xs: 'column', md: 'row' }}
                     spacing={2}
                 >
-                    <GpsTrack
-                        imageGps={imageGps}
-                        fullTrack={fullTrack}
-                        currentTrack={data?.gps || []}
-                        segments={segments}
-                        activeSegmentIds={activeSegmentIds}
-                        dayStops={dayStops}
-                    />
+                    {/* Leaflet measures its container on mount, so the map must
+                        not be mounted while collapsed or it renders 0-height. */}
+                    {isMobile ? (
+                        <Collapse in={mapOpen} unmountOnExit sx={{ width: '100%' }}>
+                            {gpsTrack}
+                        </Collapse>
+                    ) : (
+                        gpsTrack
+                    )}
                     <Stack
                         ref={listRef}
                         sx={{
-                            width: 'calc(100% - 400px)',
-                            height: '100%',
+                            width: { xs: '100%', md: 'calc(100% - 400px)' },
+                            height: { xs: 'calc(100dvh - 260px)', md: '100%' },
                             overflowY: 'auto',
                             pr: 1,
                             justifyContent: 'flex-start',

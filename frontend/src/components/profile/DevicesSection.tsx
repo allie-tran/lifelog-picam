@@ -79,7 +79,7 @@ const DeviceCard = ({
     };
 
     return (
-        <Card variant="outlined" sx={{ width: 300 }}>
+        <Card variant="outlined" sx={{ width: { xs: '100%', sm: 300 } }}>
             <CardContent>
                 <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                     {editing ? (

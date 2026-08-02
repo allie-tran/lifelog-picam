@@ -159,7 +159,7 @@ export default function NotificationsPanel() {
             </Tooltip>
 
             <Drawer anchor="right" open={open} onClose={() => setOpen(false)}>
-                <Box sx={{ width: 360, display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <Box sx={{ width: { xs: '100vw', sm: 360 }, maxWidth: '100vw', display: 'flex', flexDirection: 'column', height: '100%' }}>
                     {/* Spacer so the header clears the sticky AppBar (zIndex drawer+1). */}
                     <Toolbar disableGutters sx={{ minHeight: { xs: 56, sm: 64 } }} />
                     <Stack

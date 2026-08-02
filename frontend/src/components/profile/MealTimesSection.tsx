@@ -90,7 +90,7 @@ const MealCard = ({
     };
 
     return (
-        <Card variant="outlined" sx={{ width: 280 }}>
+        <Card variant="outlined" sx={{ width: { xs: '100%', sm: 280 } }}>
             <CardContent>
                 <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                     <Typography variant="subtitle1" fontWeight={700} textTransform="capitalize">
