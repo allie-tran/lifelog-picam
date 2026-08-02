@@ -9,6 +9,46 @@ export interface ImageObject {
   hour?: number;
   description?: string;
   location?: string;
+  activity?: string;
+  activityGroup?: string;
+  activityConfidence?: string;
+  activityDescription?: string;
+  new?: boolean;
+}
+
+export interface LocationData {
+  id?: string;
+  name?: string;
+  stop?: boolean;
+  suburb?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  postcode?: string;
+  address?: string;
+  categories?: string;
+  description?: string;
+  count?: number;
+}
+
+export interface SensorStatus {
+  deviceId: string;
+  sensorType: string;
+  nickname?: string;
+  lastSeen?: string;
+  online: boolean;
+}
+
+export interface CurrentStatus {
+  cameraLastSeen?: string;
+  cameraOnline: boolean;
+  currentActivity?: string;
+  currentActivityDescription?: string;
+  currentLocation?: LocationData;
+  currentThumbnail?: string;
+  segmentSince?: string;
+  sensors: SensorStatus[];
+  summary?: string;
 }
 
 export interface SearchQuery {
@@ -45,7 +85,7 @@ export interface CountItem {
 
 export interface BrowseSegment {
   images: ImageObject[];
-  location?: { name?: string; address?: string; country?: string };
+  location?: LocationData;
   gps?: { latitude: number; longitude: number }[];
 }
 

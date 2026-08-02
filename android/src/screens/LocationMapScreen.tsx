@@ -10,7 +10,7 @@ import {
 import WebView from 'react-native-webview';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import dayjs from 'dayjs';
-import { getAllDates, getGpsByDate, GpsPoint } from '../api/browsing';
+import { getAllDates, getGpsByDate, GpsPoint, GpsTrackData } from '../api/browsing';
 import { useAppSelector } from '../store';
 import { COLORS } from '../constants';
 import type { RootStackParamList } from '../types';
@@ -108,7 +108,8 @@ const LocationMapScreen = ({ route }: Props) => {
     setPoints([]);
     try {
       const res = await getGpsByDate(deviceId, date);
-      setPoints(res.data ?? []);
+      const data = res.data as GpsTrackData;
+      setPoints(data.rawGps?.length ? data.rawGps : (data.imageGps ?? []));
     } catch {
       setPoints([]);
     } finally {

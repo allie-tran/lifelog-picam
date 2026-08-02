@@ -16,7 +16,7 @@ import Geolocation from 'react-native-geolocation-service';
 import WebView from 'react-native-webview';
 import { COLORS } from '../constants';
 import { useAppSelector } from '../store';
-import { GPSPoint, getGPSByDate, processGPS } from '../api/gps';
+import { GPSPoint, GpsTrackData, getGPSByDate } from '../api/gps';
 import { getAllDates } from '../api/browsing';
 import { startBackgroundGPS, stopBackgroundGPS, isBackgroundGPSRunning } from '../services/backgroundGPS';
 import dayjs from 'dayjs';
@@ -140,18 +140,29 @@ const GPSScreen = () => {
   // ── GPS track for selected date ───────────────────────────────────────────
   useEffect(() => {
     if (!selectedDate || !deviceId) { return; }
-    setLoadingTrack(true);
-    getGPSByDate(selectedDate, deviceId)
-      .then(points => {
-        setTrack(points);
-        postToMap({ type: 'track', data: points });
-      })
-      .catch(() => {
-        processGPS(deviceId, selectedDate).catch(() => {});
-        setTrack([]);
-        postToMap({ type: 'track', data: [] });
-      })
-      .finally(() => setLoadingTrack(false));
+    const todayStr = dayjs().format('YYYY-MM-DD');
+
+    const loadTrack = () => {
+      setLoadingTrack(true);
+      getGPSByDate(selectedDate, deviceId)
+        .then((data: GpsTrackData) => {
+          const points = data.rawGps?.length ? data.rawGps : (data.imageGps ?? []);
+          setTrack(points);
+          postToMap({ type: 'track', data: points });
+        })
+        .catch(() => {
+          setTrack([]);
+          postToMap({ type: 'track', data: [] });
+        })
+        .finally(() => setLoadingTrack(false));
+    };
+
+    loadTrack();
+
+    if (selectedDate === todayStr) {
+      const interval = setInterval(loadTrack, 30 * 1000);
+      return () => clearInterval(interval);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, deviceId]);
 

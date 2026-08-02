@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { getNotifications, getUnreadCount, markAllRead, markRead } from '../../api/notifications';
+import { clearAllNotifications, getNotifications, getUnreadCount, markAllRead, markRead } from '../../api/notifications';
 import { Notification } from '../../types';
 
 interface NotificationState {
@@ -47,6 +47,13 @@ export const markAllNotificationsRead = createAsyncThunk(
   },
 );
 
+export const clearAllNotificationsThunk = createAsyncThunk(
+  'notifications/clearAll',
+  async (device: string) => {
+    await clearAllNotifications(device).catch(() => {});
+  },
+);
+
 const notificationSlice = createSlice({
   name: 'notifications',
   initialState,
@@ -76,6 +83,10 @@ const notificationSlice = createSlice({
       })
       .addCase(markAllNotificationsRead.fulfilled, state => {
         state.items = state.items.map(n => ({ ...n, read: true }));
+        state.unreadCount = 0;
+      })
+      .addCase(clearAllNotificationsThunk.fulfilled, state => {
+        state.items = [];
         state.unreadCount = 0;
       });
   },

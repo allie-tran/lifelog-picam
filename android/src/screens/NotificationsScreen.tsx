@@ -10,6 +10,7 @@ import {
 import { COLORS } from '../constants';
 import { useAppDispatch, useAppSelector } from '../store';
 import {
+  clearAllNotificationsThunk,
   fetchNotifications,
   markAllNotificationsRead,
   markNotificationsRead,
@@ -77,17 +78,28 @@ const NotificationsScreen = () => {
     dispatch(markAllNotificationsRead(device));
   }, [dispatch, device]);
 
+  const handleClearAll = useCallback(() => {
+    dispatch(clearAllNotificationsThunk(device));
+  }, [dispatch, device]);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>
-          Notifications{unreadCount > 0 ? `  (${unreadCount} new)` : ''}
+          Notifications{unreadCount > 0 ? ` (${unreadCount} new)` : ''}
         </Text>
-        {unreadCount > 0 && (
-          <TouchableOpacity onPress={handleMarkAll} style={styles.markAllBtn}>
-            <Text style={styles.markAllText}>Mark all read</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.headerActions}>
+          {unreadCount > 0 && (
+            <TouchableOpacity onPress={handleMarkAll} style={styles.markAllBtn}>
+              <Text style={styles.markAllText}>Mark read</Text>
+            </TouchableOpacity>
+          )}
+          {items.length > 0 && (
+            <TouchableOpacity onPress={handleClearAll} style={styles.clearAllBtn}>
+              <Text style={styles.clearAllText}>Clear all</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loading && items.length === 0 ? (
@@ -125,14 +137,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.divider,
   },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, flex: 1 },
+  headerActions: { flexDirection: 'row', gap: 8 },
   markAllBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: COLORS.primary + '22',
-    borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+    backgroundColor: COLORS.primary + '22', borderRadius: 8,
   },
-  markAllText: { fontSize: 13, color: COLORS.primary, fontWeight: '600' },
+  markAllText: { fontSize: 12, color: COLORS.primary, fontWeight: '600' },
+  clearAllBtn: {
+    paddingHorizontal: 10, paddingVertical: 6,
+    backgroundColor: COLORS.error + '22', borderRadius: 8,
+  },
+  clearAllText: { fontSize: 12, color: COLORS.error, fontWeight: '600' },
   list: { padding: 12 },
   card: {
     backgroundColor: COLORS.surface,

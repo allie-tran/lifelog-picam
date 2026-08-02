@@ -1,5 +1,5 @@
 import { axiosInstance } from '../constants';
-import { DaySummary, ImageObject, SearchQuery, SearchResult } from '../types';
+import { CurrentStatus, DaySummary, ImageObject, SearchQuery, SearchResult } from '../types';
 
 export const getAllDates = (deviceId: string) =>
   axiosInstance.get<string[]>(`/get-all-dates?device=${encodeURIComponent(deviceId)}`);
@@ -94,9 +94,18 @@ export interface GpsPoint {
   latitude: number;
   longitude: number;
   elevation?: number;
+  timestamp?: number;  // milliseconds UTC
+}
+
+export interface GpsTrackData {
+  rawGps: GpsPoint[];
+  imageGps: GpsPoint[];
 }
 
 export const getGpsByDate = (deviceId: string, date: string) =>
-  axiosInstance.get<GpsPoint[]>(
+  axiosInstance.get<GpsTrackData>(
     `/location/get-gps-by-date?date=${encodeURIComponent(date)}&device=${encodeURIComponent(deviceId)}`,
   );
+
+export const getCurrentStatus = (deviceId: string) =>
+  axiosInstance.get<CurrentStatus>(`/status/current?device=${encodeURIComponent(deviceId)}`);

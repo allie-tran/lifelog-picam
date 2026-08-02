@@ -16,14 +16,16 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import relativeTime from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
-import { getAllDates, getDaySummary, getImagesByHour, processDate } from '../api/browsing';
+dayjs.extend(relativeTime);
+import { getAllDates, getCurrentStatus, getDaySummary, getImagesByHour, processDate } from '../api/browsing';
 import ImageCard from '../components/ImageCard';
 import { useAppSelector } from '../store';
 import { COLORS, config, formatTimeTz } from '../constants';
-import { BrowseSegment, DaySummary, RootStackParamList } from '../types';
+import { BrowseSegment, CurrentStatus, DaySummary, RootStackParamList } from '../types';
 import useSWRNative from '@nandorojo/swr-react-native'
 
 // ── Category colors (subset matching web app) ────────────────────────────────
@@ -37,6 +39,108 @@ const CAT_COLORS: Record<string, string> = {
   Reading: '#BD93F9', Sleeping: '#6272A4',
 };
 const catColor = (name: string) => CAT_COLORS[name] ?? COLORS.divider;
+
+const GROUP_COLORS: Record<string, string> = {
+  'Work – Research & Writing': '#C8E9A0',
+  'Meetings & Collaboration': '#50FA7B',
+  'Teaching & Outreach': '#FFB86C',
+  'Travel': '#6DD3CE',
+  'Food & Drink': '#FF5555',
+  'Leisure & Wellbeing': '#8BE9FD',
+  'Social & Personal': '#BD93F9',
+  'Sleep / Downtime': '#2c3e50',
+  'Miscellaneous': '#E1E7E7',
+};
+
+const CONFIDENCE_COLORS: Record<string, string> = {
+  High: COLORS.success,
+  Medium: '#FFB86C',
+  Low: COLORS.error,
+};
+
+const SENSOR_LABELS: Record<string, string> = {
+  camera: 'Camera', location: 'GPS', heart_rate: 'Heart',
+  accelerometer: 'Motion', ppg: 'PPG',
+};
+
+// ── Current status card ───────────────────────────────────────────────────────
+const CurrentStatusCard = ({ status, deviceId }: { status: CurrentStatus; deviceId: string }) => {
+  const thumbnailUri = status.currentThumbnail
+    ? `${config.imageUrl}/${deviceId}/${status.currentThumbnail}`
+    : null;
+
+  const lastSeenText = status.cameraLastSeen
+    ? dayjs.utc(status.cameraLastSeen).fromNow()
+    : 'never';
+
+  const sinceText = status.segmentSince
+    ? dayjs.utc(status.segmentSince).fromNow()
+    : null;
+
+  const loc = status.currentLocation;
+  const locLabel = loc
+    ? (loc.name && loc.name !== loc.city ? loc.name : null) ?? loc.suburb ?? loc.city ?? 'Unknown location'
+    : null;
+  const locSub = loc?.city && loc.name !== loc.city ? loc.city : null;
+  const isMoving = loc?.stop === false;
+
+  return (
+    <View style={cs.card}>
+      {/* Header */}
+      <View style={cs.header}>
+        <View style={cs.headerLeft}>
+          <View style={[cs.dot, { backgroundColor: status.cameraOnline ? '#2ecc71' : COLORS.divider }]} />
+          <Text style={cs.title}>Current Status</Text>
+          {status.cameraOnline
+            ? <View style={cs.liveChip}><Text style={cs.liveChipText}>Live</Text></View>
+            : <Text style={cs.offlineText}>Last seen {lastSeenText}</Text>
+          }
+        </View>
+        {/* Sensor dots */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={cs.sensorRow} contentContainerStyle={cs.sensorRowContent}>
+          {status.sensors.map(s => (
+            <View key={`${s.deviceId}-${s.sensorType}`} style={cs.sensorItem}>
+              <View style={[cs.dot, { backgroundColor: s.online ? '#2ecc71' : COLORS.divider }]} />
+              <Text style={cs.sensorLabel}>{s.nickname || SENSOR_LABELS[s.sensorType] || s.sensorType}</Text>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+
+      <View style={cs.divider} />
+
+      {/* Body */}
+      <View style={cs.body}>
+        {thumbnailUri && (
+          <Image source={{ uri: thumbnailUri }} style={cs.thumbnail} resizeMode="cover" />
+        )}
+        <View style={cs.bodyText}>
+          {status.currentActivity && (
+            <Text style={cs.activityText}>{status.currentActivity}</Text>
+          )}
+          {status.currentActivityDescription && (
+            <Text style={cs.activityDesc} numberOfLines={2}>{status.currentActivityDescription}</Text>
+          )}
+          {locLabel && (
+            <Text style={cs.locationText}>
+              {isMoving ? '🚶 ' : '📍 '}{locLabel}{locSub ? `, ${locSub}` : ''}
+            </Text>
+          )}
+          {sinceText && (
+            <Text style={cs.sinceText}>⏱ Since {sinceText}</Text>
+          )}
+        </View>
+      </View>
+
+      {status.summary && (
+        <>
+          <View style={cs.divider} />
+          <Text style={cs.summaryText}>{status.summary}</Text>
+        </>
+      )}
+    </View>
+  );
+};
 
 // ── Calendar picker modal ─────────────────────────────────────────────────────
 const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -340,38 +444,83 @@ const DaySummaryCard = ({ summary, deviceId }: { summary: DaySummary; deviceId: 
 // ── Segment block ─────────────────────────────────────────────────────────────
 const BORING_NAMES = new Set(['---', 'Unknown Place', 'Unknown', '']);
 
-const buildLocationLabel = (loc?: BrowseSegment['location']): string | null => {
-  if (!loc) { return null; }
-  const parts: string[] = [];
-  if (loc.name && !BORING_NAMES.has(loc.name)) { parts.push(loc.name); }
-  if (loc.address && loc.address !== loc.name) { parts.push(loc.address); }
-  const main = parts.join(', ');
-  if (!main && !loc.country) { return null; }
-  return loc.country ? (main ? `${main} · ${loc.country}` : loc.country) : main;
-};
-
 const SegmentBlock = ({ segment, deviceId, index }: { segment: BrowseSegment; deviceId: string; index: number }) => {
   const firstImage = segment.images[0];
-  const time = firstImage?.timestamp ? formatTimeTz(firstImage.timestamp, firstImage.timezone || config.defaultTimezone) : null;
-  const locationLabel = buildLocationLabel(segment.location);
+  const lastImage = segment.images[segment.images.length - 1];
+  const tz = firstImage?.timezone || config.defaultTimezone;
+
+  const startTime = firstImage?.timestamp ? formatTimeTz(firstImage.timestamp, tz) : null;
+  const endTime = lastImage?.timestamp ? formatTimeTz(lastImage.timestamp, tz) : null;
+
+  const durationMs = firstImage?.timestamp && lastImage?.timestamp
+    ? new Date(lastImage.timestamp.endsWith('Z') ? lastImage.timestamp : lastImage.timestamp + 'Z').getTime()
+      - new Date(firstImage.timestamp.endsWith('Z') ? firstImage.timestamp : firstImage.timestamp + 'Z').getTime()
+    : 0;
+  const durationMins = Math.round(durationMs / 60000);
+  const durationText = durationMins < 1 ? '<1 min'
+    : durationMins < 60 ? `${durationMins} min`
+    : `${Math.floor(durationMins / 60)}h ${durationMins % 60}m`;
+
+  const loc = segment.location;
+  const isMove = loc?.stop === false;
+  const locName = loc?.name && !BORING_NAMES.has(loc.name) ? loc.name : null;
+  const locLine1 = locName ?? loc?.suburb ?? loc?.city ?? null;
+  const locLine2 = [loc?.suburb !== locLine1 ? loc?.suburb : null, loc?.city !== locLine1 ? loc?.city : null, loc?.country]
+    .filter(Boolean).join(', ') || null;
+
+  const activity = firstImage?.activity;
+  const group = firstImage?.activityGroup;
+  const confidence = firstImage?.activityConfidence;
+  const description = firstImage?.activityDescription;
 
   return (
     <View style={sg.block}>
-      <View style={sg.header}>
-        <View style={sg.headerRow}>
-          <Text style={sg.index}>#{index + 1}</Text>
-          {time && <Text style={sg.time}>{time}</Text>}
-          <Text style={sg.count}>{segment.images.length} photos</Text>
+      {/* Location row */}
+      {locLine1 && (
+        <View style={sg.locationRow}>
+          <Text style={sg.locationIcon}>{isMove ? '🚶' : '📍'}</Text>
+          <View style={sg.locationText}>
+            <Text style={sg.locationName}>{locLine1}</Text>
+            {locLine2 ? <Text style={sg.locationSub}>{locLine2}</Text> : null}
+          </View>
         </View>
-        {locationLabel ? (
-          <Text style={sg.location} numberOfLines={2}>📍 {locationLabel}</Text>
-        ) : null}
+      )}
+
+      <View style={sg.infoRow}>
+        {/* Activity + meta */}
+        <View style={sg.infoLeft}>
+          <View style={sg.activityRow}>
+            <Text style={sg.activity}>{activity || 'No Activity'}</Text>
+            {group && (
+              <View style={[sg.groupChip, { backgroundColor: GROUP_COLORS[group] ?? COLORS.divider }]}>
+                <Text style={sg.groupChipText}>{group}</Text>
+              </View>
+            )}
+            {confidence && (
+              <Text style={[sg.confidence, { color: CONFIDENCE_COLORS[confidence] ?? COLORS.textSecondary }]}>
+                {confidence}
+              </Text>
+            )}
+          </View>
+          <Text style={sg.meta}>
+            {durationText} · {segment.images.length} image{segment.images.length !== 1 ? 's' : ''}
+          </Text>
+          {description ? <Text style={sg.description} numberOfLines={3}>{description}</Text> : null}
+        </View>
+
+        {/* Timestamp */}
+        <View style={sg.timeCol}>
+          {startTime && <Text style={sg.time}>{startTime}</Text>}
+          {endTime && endTime !== startTime && <Text style={sg.time}>{endTime}</Text>}
+        </View>
       </View>
-      <View style={sg.grid}>
+
+      {/* Image strip */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={sg.imageStrip} contentContainerStyle={sg.imageStripContent}>
         {segment.images.map((img, i) => (
-          <ImageCard key={`${i}-${img.imagePath}`} image={img} deviceId={deviceId} size={114} />
+          <ImageCard key={`${i}-${img.imagePath}`} image={img} deviceId={deviceId} size={120} />
         ))}
-      </View>
+      </ScrollView>
     </View>
   );
 };
@@ -382,6 +531,7 @@ const BrowseScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [dates, setDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(dayjs().format('YYYY-MM-DD'));
+  const [initialDateSet, setInitialDateSet] = useState(false);
   const [availableHours, setAvailableHours] = useState<number[]>([]);
   const [selectedHour, setSelectedHour] = useState<number>(0);
   const [segments, setSegments] = useState<BrowseSegment[]>([]);
@@ -395,16 +545,20 @@ const BrowseScreen = () => {
 
   const totalImages = useMemo(() => segments.reduce((n, s) => n + s.images.length, 0), [segments]);
 
-  useEffect(() => {
-    if (!deviceId) { return; }
-    getAllDates(deviceId)
-      .then(res => {
-        const d = res.data as string[];
+  useSWRNative(
+    deviceId ? ['all-dates', deviceId] : null,
+    () => getAllDates(deviceId).then(r => r.data as string[]),
+    {
+      refreshInterval: 5 * 60 * 1000,
+      onSuccess: (d: string[]) => {
         setDates(d);
-        if (d.length > 0) { setSelectedDate(d[d.length - 1]); }
-      })
-      .catch(() => {});
-  }, [deviceId]);
+        if (!initialDateSet && d.length > 0) {
+          setSelectedDate(d[d.length - 1]);
+          setInitialDateSet(true);
+        }
+      },
+    }
+  );
 
   useEffect(() => {
     if (!deviceId || !selectedDate) { return; }
@@ -437,16 +591,22 @@ const BrowseScreen = () => {
   }, [selectedDate, selectedHour, deviceId]);
 
 
+  const isToday = selectedDate === today;
+
   const {} = useSWRNative(
-      [selectedDate, selectedHour, deviceId],
-      () => {
-              setPage(1);
-              loadSegments(selectedDate, selectedHour, 1);
-      }, {
-              // refresh only if the date is today
-              refreshInterval: selectedDate === today ? 3 * 60 * 1000 : 0,
-          }
-      )
+    [selectedDate, selectedHour, deviceId],
+    () => {
+      setPage(1);
+      loadSegments(selectedDate, selectedHour, 1);
+    },
+    { refreshInterval: isToday ? 30 * 1000 : 0 }
+  );
+
+  const { data: currentStatus } = useSWRNative(
+    isToday && deviceId ? ['current-status', deviceId] : null,
+    () => getCurrentStatus(deviceId).then(r => r.data),
+    { refreshInterval: 30 * 1000 }
+  );
 
 
   const loadMore = () => {
@@ -549,6 +709,11 @@ const BrowseScreen = () => {
           </View>
         </View>
 
+        {/* Current status (today only) */}
+        {currentStatus && isToday && (
+          <CurrentStatusCard status={currentStatus} deviceId={deviceId} />
+        )}
+
         {/* Day summary */}
         {summary && <DaySummaryCard summary={summary} deviceId={deviceId} />}
 
@@ -617,16 +782,68 @@ const sg = StyleSheet.create({
     marginHorizontal: 8, marginTop: 10,
     backgroundColor: COLORS.surface, borderRadius: 12, overflow: 'hidden', elevation: 1,
   },
-  header: {
-    paddingHorizontal: 12, paddingVertical: 8,
-    borderBottomWidth: 1, borderColor: COLORS.divider, gap: 3,
+  locationRow: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4, gap: 6,
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  index: { fontSize: 11, fontWeight: '700', color: COLORS.primary, minWidth: 24 },
+  locationIcon: { fontSize: 13, marginTop: 1 },
+  locationText: { flex: 1 },
+  locationName: { fontSize: 13, fontWeight: '600', color: COLORS.secondary },
+  locationSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 1 },
+  infoRow: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 12, paddingVertical: 6, gap: 8,
+    borderTopWidth: 1, borderColor: COLORS.divider,
+  },
+  infoLeft: { flex: 1 },
+  activityRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 3 },
+  activity: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, textTransform: 'capitalize' },
+  groupChip: {
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+  },
+  groupChipText: { fontSize: 10, fontWeight: '600', color: 'rgba(0,0,0,0.65)' },
+  confidence: { fontSize: 11 },
+  meta: { fontSize: 11, color: COLORS.textSecondary, marginBottom: 3 },
+  description: { fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic', lineHeight: 17 },
+  timeCol: { alignItems: 'flex-end', minWidth: 52 },
   time: { fontSize: 11, color: COLORS.textSecondary },
-  location: { fontSize: 11, color: COLORS.secondary },
-  count: { fontSize: 11, color: COLORS.textSecondary, marginLeft: 'auto' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  imageStrip: { borderTopWidth: 1, borderColor: COLORS.divider },
+  imageStripContent: { paddingHorizontal: 8, paddingVertical: 8, gap: 6 },
+});
+
+// Current status card styles
+const cs = StyleSheet.create({
+  card: {
+    marginHorizontal: 10, marginTop: 8, marginBottom: 4,
+    backgroundColor: COLORS.surface, borderRadius: 12, elevation: 2, overflow: 'hidden',
+    borderWidth: 1, borderColor: COLORS.divider,
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 10, gap: 8,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  title: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
+  liveChip: {
+    backgroundColor: COLORS.success, borderRadius: 8,
+    paddingHorizontal: 7, paddingVertical: 2,
+  },
+  liveChipText: { fontSize: 10, fontWeight: '700', color: '#1a5c3a' },
+  offlineText: { fontSize: 11, color: COLORS.textSecondary },
+  sensorRow: { maxHeight: 22, flexShrink: 1 },
+  sensorRowContent: { gap: 10, paddingHorizontal: 4 },
+  sensorItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sensorLabel: { fontSize: 10, color: COLORS.textSecondary },
+  divider: { height: 1, backgroundColor: COLORS.divider },
+  body: { flexDirection: 'row', padding: 12, gap: 10 },
+  thumbnail: { width: 64, height: 64, borderRadius: 8, flexShrink: 0 },
+  bodyText: { flex: 1, gap: 3 },
+  activityText: { fontSize: 13, fontWeight: '600', color: COLORS.textPrimary },
+  activityDesc: { fontSize: 11, color: COLORS.textSecondary, lineHeight: 16 },
+  locationText: { fontSize: 11, color: COLORS.textSecondary },
+  sinceText: { fontSize: 11, color: COLORS.textSecondary },
+  summaryText: { fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic', padding: 12, lineHeight: 18 },
 });
 
 // Day summary card styles

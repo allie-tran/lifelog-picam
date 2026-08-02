@@ -20,10 +20,10 @@ const gpsTask = async (taskData: any) => {
           try {
             await sendGPS(latitude, longitude, altitude ?? 0, sensorDeviceId, new Date().toISOString());
           } catch {}
-          if (now - lastProcessTime > PROCESS_INTERVAL_MS) {
-            lastProcessTime = now;
-            processGPS(deviceId, new Date().toISOString().split('T')[0]).catch(() => {});
-          }
+//           if (now - lastProcessTime > PROCESS_INTERVAL_MS) {
+//             lastProcessTime = now;
+//             processGPS(deviceId, new Date().toISOString().split('T')[0]).catch(() => {});
+//           }
           resolve();
         },
         () => resolve(),

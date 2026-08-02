@@ -4,8 +4,13 @@ export interface GPSPoint {
   latitude: number;
   longitude: number;
   elevation?: number;
-  timestamp: string;
+  timestamp?: number;  // milliseconds UTC
   timezone?: string;
+}
+
+export interface GpsTrackData {
+  rawGps: GPSPoint[];
+  imageGps: GPSPoint[];
 }
 
 export const sendGPS = async (
@@ -35,9 +40,9 @@ export const processGPS = async (device: string, date: string) => {
 export const getGPSByDate = async (
   date: string,
   device: string,
-): Promise<GPSPoint[]> => {
-  const res = await axiosInstance.get(
-    `/location/get-gps-by-date?date=${date}&device=${device}`,
+): Promise<GpsTrackData> => {
+  const res = await axiosInstance.get<GpsTrackData>(
+    `/location/get-gps-by-date?date=${encodeURIComponent(date)}&device=${encodeURIComponent(device)}`,
   );
   return res.data;
 };

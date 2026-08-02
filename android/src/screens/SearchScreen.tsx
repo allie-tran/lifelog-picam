@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
+  Image,
   Keyboard,
-  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,12 +17,19 @@ import WebView from 'react-native-webview';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import customParseFormat from 'dayjs/plugin/customParseFormat';
 import {
-  changeSegmentActivity,
   getAllDates,
+  getAllFaces,
+  getAvailableValues,
   parseQueryFilters,
   searchImages,
 } from '../api/browsing';
+import {
+  getLocations,
+  getMovingPeriods,
+  searchLocations,
+} from '../api/searchFilters';
 import ImageCard from '../components/ImageCard';
 import ResultSummaryBar from '../components/ResultSummaryBar';
 import TimeHeatmap from '../components/TimeHeatmap';
@@ -32,13 +40,16 @@ import {
   removeFromHistory,
   setSearchQuery,
 } from '../store/slices/searchSlice';
-import { COLORS, config, formatTimeTz } from '../constants';
-import { CountItem, ImageObject, LocationSummaryItem, SearchQuery } from '../types';
+import { COLORS } from '../constants';
+import { CountItem, ImageObject, LocationData, LocationSummaryItem, SearchQuery } from '../types';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.extend(customParseFormat);
 
-const SEG_PAGE = 20;   // segments loaded per page
+const IMG_PAGE = 60;
+const COLS = 3;
+const IMG_SIZE = Math.floor((Dimensions.get('window').width - (COLS + 1) * 2) / COLS);
 const MAPTILER_KEY = 'bcAmE6kzFa3YgI6GTxUH';
 
 const MAP_HTML = `<!DOCTYPE html>
@@ -93,7 +104,21 @@ map.on('click',function(e){
 
 const TIME_OF_DAY_OPTIONS = ['morning', 'afternoon', 'midday', 'evening', 'night'];
 const DAY_OF_WEEK_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const SEASON_OPTIONS = ['spring', 'summer', 'autumn', 'winter'];
 const MONTH_OPTIONS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+type FilterTab = 'time' | 'day' | 'season' | 'month' | 'year' | 'date' | 'location' | 'people';
+
+const DATE_FORMATS = ['D MMM YYYY', 'D MMMM YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'D/M/YYYY'];
+
+const parseDate = (text: string): dayjs.Dayjs | null => {
+  for (const fmt of DATE_FORMATS) {
+    const d = dayjs(text.trim(), fmt, true);
+    if (d.isValid()) return d;
+  }
+  const d = dayjs(text.trim());
+  return d.isValid() ? d : null;
+};
 
 const FilterChip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity style={[styles.filterChip, active && styles.filterChipActive]} onPress={onPress}>
@@ -103,45 +128,6 @@ const FilterChip = ({ label, active, onPress }: { label: string; active: boolean
   </TouchableOpacity>
 );
 
-// ── Segment group row ─────────────────────────────────────────────────────────
-interface SegmentGroupProps {
-  segment: ImageObject[];
-  deviceId: string;
-  onEditActivity: (segment: ImageObject[]) => void;
-}
-
-const SegmentGroup = ({ segment, deviceId, onEditActivity }: SegmentGroupProps) => {
-  const first = segment[0];
-  const last = segment[segment.length - 1];
-  const tz = first.timezone || config.defaultTimezone;
-  const timeRange = `${formatTimeTz(first.timestamp, tz)} – ${formatTimeTz(last.timestamp, tz)}`;
-
-  return (
-    <View style={segStyles.container}>
-      <TouchableOpacity
-        style={segStyles.header}
-        onLongPress={() => onEditActivity(segment)}
-        delayLongPress={500}
-        activeOpacity={0.7}
-      >
-        <Text style={segStyles.time}>
-          {formatTimeTz(first.timestamp, tz)} · {timeRange}
-        </Text>
-        {first.description ? (
-          <Text style={segStyles.activity} numberOfLines={2}>{first.description}</Text>
-        ) : (
-          <Text style={segStyles.noActivity}>No description — hold to add</Text>
-        )}
-        <Text style={segStyles.count}>{segment.length} photo{segment.length !== 1 ? 's' : ''}</Text>
-      </TouchableOpacity>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={segStyles.imageRow}>
-        {segment.map((img, i) => (
-          <ImageCard key={`${i}-${img.imagePath}`} image={img} deviceId={deviceId} size={100} />
-        ))}
-      </ScrollView>
-    </View>
-  );
-};
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 const SearchScreen = () => {
@@ -151,11 +137,11 @@ const SearchScreen = () => {
   const searchHistory = useAppSelector(s => s.search.history);
 
   const [textQuery, setTextQuery] = useState(searchQuery.text ?? '');
-  const [results, setResults] = useState<ImageObject[][]>([]);
-  const [displayCount, setDisplayCount] = useState(SEG_PAGE);
+  const [segments, setSegments] = useState<ImageObject[][]>([]);
+  const [displayCount, setDisplayCount] = useState(IMG_PAGE);
   const [loading, setLoading] = useState(false);
   const [sortBy, setSortBy] = useState<'relevance' | 'time'>('relevance');
-  const [filterTab, setFilterTab] = useState<'time' | 'day' | 'month' | null>(null);
+  const [filterTab, setFilterTab] = useState<FilterTab | null>(null);
   const [summaryText, setSummaryText] = useState('');
   const [topLocations, setTopLocations] = useState<LocationSummaryItem[]>([]);
   const [topCountries, setTopCountries] = useState<CountItem[]>([]);
@@ -164,12 +150,19 @@ const SearchScreen = () => {
   const [showMap, setShowMap] = useState(false);
   const [allDates, setAllDates] = useState<string[]>([]);
 
-  // Activity edit modal
-  const [editingSegment, setEditingSegment] = useState<ImageObject[] | null>(null);
-  const [editActivity, setEditActivity] = useState('');
-  const [savingActivity, setSavingActivity] = useState(false);
+  // New filter state
+  const [startDateText, setStartDateText] = useState('');
+  const [endDateText, setEndDateText] = useState('');
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
+  const [availableCountries, setAvailableCountries] = useState<string[]>([]);
+  const [availableLocations, setAvailableLocations] = useState<LocationData[]>([]);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [searchedLocations, setSearchedLocations] = useState<LocationData[]>([]);
+  const [availableFaces, setAvailableFaces] = useState<{ name: string; images: string[]; id: string }[]>([]);
 
+  const allImages = useMemo(() => segments.flat(), [segments]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const locationSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Persist history to AsyncStorage whenever it changes
   useEffect(() => {
@@ -177,15 +170,16 @@ const SearchScreen = () => {
   }, [searchHistory]);
 
   useEffect(() => {
-    if (!deviceId) { return; }
+    if (!deviceId) return;
     getAllDates(deviceId)
       .then(res => setAllDates(res.data as string[]))
       .catch(() => {});
   }, [deviceId]);
 
+  // Parse query filters on text change
   useEffect(() => {
-    if (!textQuery.trim()) { return; }
-    if (debounceRef.current) { clearTimeout(debounceRef.current); }
+    if (!textQuery.trim()) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       parseQueryFilters(textQuery, deviceId)
         .then(res => dispatch(setSearchQuery(res.data)))
@@ -193,23 +187,75 @@ const SearchScreen = () => {
     }, 800);
   }, [textQuery]);
 
-  const triggerSearch = useCallback(async () => {
+  // Load available years
+  useEffect(() => {
+    if (!deviceId) return;
+    getAvailableValues(deviceId, 'year')
+      .then(res => setAvailableYears((res.data as string[]).map(Number).filter(n => !isNaN(n)).sort((a, b) => b - a)))
+      .catch(() => {});
+  }, [deviceId]);
+
+  // Load available countries (changes when isMoving changes)
+  useEffect(() => {
+    if (!deviceId) return;
+    const field = searchQuery.isMoving ? 'moving-cross-country' : 'country';
+    getAvailableValues(deviceId, field)
+      .then(res => setAvailableCountries(res.data as string[]))
+      .catch(() => {});
+  }, [deviceId, searchQuery.isMoving]);
+
+  // Load available locations (changes when countries or isMoving change)
+  useEffect(() => {
+    if (!deviceId) return;
+    const countries = searchQuery.countries ?? [];
+    const apiCall = searchQuery.isMoving
+      ? getMovingPeriods(deviceId, countries)
+      : getLocations(deviceId, countries);
+    apiCall
+      .then(res => setAvailableLocations(res.data))
+      .catch(() => {});
+  }, [deviceId, (searchQuery.countries ?? []).join(','), searchQuery.isMoving]);
+
+  // Load faces for people filter
+  useEffect(() => {
+    if (!deviceId) return;
+    getAllFaces(deviceId)
+      .then(res => setAvailableFaces(res.data))
+      .catch(() => {});
+  }, [deviceId]);
+
+  // Debounced location search
+  useEffect(() => {
+    if (!deviceId || locationSearch.trim().length < 2) {
+      setSearchedLocations([]);
+      return;
+    }
+    if (locationSearchDebounceRef.current) clearTimeout(locationSearchDebounceRef.current);
+    locationSearchDebounceRef.current = setTimeout(() => {
+      searchLocations(deviceId, locationSearch)
+        .then(res => setSearchedLocations(res.data))
+        .catch(() => {});
+    }, 300);
+  }, [locationSearch, deviceId]);
+
+  const triggerSearch = useCallback(async (sortOverride?: 'relevance' | 'time') => {
     Keyboard.dismiss();
+    const effectiveSort = sortOverride ?? sortBy;
     const full: SearchQuery = { ...searchQuery, text: textQuery };
     dispatch(pushToHistory(full));
     dispatch(setSearchQuery({ text: textQuery }));
     setLoading(true);
-    setDisplayCount(SEG_PAGE);
+    setDisplayCount(IMG_PAGE);
     try {
-      const res = await searchImages(deviceId, full, sortBy);
-      const { segments, topLocations: locs, topCountries: ctrs, topPeople: ppl } = res.data;
-      const ordered = sortBy === 'relevance' ? [...segments].reverse() : segments;
-      setResults(ordered);
+      const res = await searchImages(deviceId, full, effectiveSort);
+      const { segments: segs, topLocations: locs, topCountries: ctrs, topPeople: ppl } = res.data;
+      const ordered = effectiveSort === 'relevance' ? [...segs].reverse() : segs;
+      setSegments(ordered);
       setTopLocations(locs ?? []);
       setTopCountries(ctrs ?? []);
       setTopPeople(ppl ?? []);
       const total = ordered.reduce((s, seg) => s + seg.length, 0);
-      setSummaryText(`${ordered.length} events · ${total} photos`);
+      setSummaryText(`${total} photos · ${ordered.length} events`);
     } catch {}
     finally { setLoading(false); }
   }, [searchQuery, textQuery, deviceId, sortBy]);
@@ -229,35 +275,318 @@ const SearchScreen = () => {
     dispatch(setSearchQuery({ [field]: next } as any));
   };
 
-  const openEditActivity = (segment: ImageObject[]) => {
-    setEditingSegment(segment);
-    setEditActivity(segment[0]?.description ?? '');
+  const toggleYear = (year: number) => {
+    const current = searchQuery.years ?? [];
+    const next = current.includes(year) ? current.filter(y => y !== year) : [...current, year];
+    dispatch(setSearchQuery({ years: next }));
   };
 
-  const handleSaveActivity = async () => {
-    if (!editingSegment || !deviceId) { return; }
-    const first = editingSegment[0];
-    const segDate = first.date ?? first.timestamp.slice(0, 10);
-    const segId = Number(first.segmentId ?? 0);
-    setSavingActivity(true);
-    try {
-      await changeSegmentActivity(deviceId, segDate, segId, editActivity.trim());
-      // Update local results
-      setResults(prev => prev.map(seg =>
-        seg[0]?.segmentId === first.segmentId
-          ? seg.map(img => ({ ...img, description: editActivity.trim() }))
-          : seg,
-      ));
-      setEditingSegment(null);
-    } catch {
-      // still close — backend may have accepted
-      setEditingSegment(null);
-    } finally {
-      setSavingActivity(false);
+  const toggleCountry = (country: string) => {
+    const current = searchQuery.countries ?? [];
+    const isRemoving = current.includes(country);
+    const next = isRemoving ? current.filter(c => c !== country) : [...current, country];
+    // Clear locationIds when countries change
+    dispatch(setSearchQuery({ countries: next, locationIds: isRemoving ? searchQuery.locationIds : [] }));
+  };
+
+  const toggleLocation = (id: string) => {
+    const current = searchQuery.locationIds ?? [];
+    const next = current.includes(id) ? current.filter(l => l !== id) : [...current, id];
+    dispatch(setSearchQuery({ locationIds: next }));
+  };
+
+  const toggleFace = (id: string) => {
+    const current = searchQuery.peopleIds ?? [];
+    const next = current.includes(id) ? current.filter(p => p !== id) : [...current, id];
+    dispatch(setSearchQuery({ peopleIds: next }));
+  };
+
+  const handleAddDateRange = () => {
+    const start = parseDate(startDateText);
+    if (!start) return;
+    const end = endDateText.trim() ? (parseDate(endDateText) ?? start) : start;
+    const startStr = start.format('YYYY-MM-DD');
+    const endStr = end.format('YYYY-MM-DD');
+    const current = searchQuery.customRanges ?? [];
+    if (current.some(r => r.start === startStr && r.end === endStr)) return;
+    dispatch(setSearchQuery({ customRanges: [...current, { start: startStr, end: endStr }] }));
+    setStartDateText('');
+    setEndDateText('');
+  };
+
+  const setFilterTabAndClear = (tab: FilterTab | null) => {
+    setFilterTab(prev => prev === tab ? null : tab);
+    setShowHeatmap(false);
+    setShowMap(false);
+  };
+
+  // ── Filter panel renderers ──────────────────────────────────────────────────
+
+  const renderChipsPanel = (options: string[], selected: string[], onToggle: (v: string) => void) => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPanel} contentContainerStyle={styles.filterPanelContent}>
+      {options.map(opt => (
+        <FilterChip
+          key={opt}
+          label={opt}
+          active={selected.includes(opt)}
+          onPress={() => onToggle(opt)}
+        />
+      ))}
+    </ScrollView>
+  );
+
+  const renderDatePanel = () => (
+    <View style={styles.datePanel}>
+      <View style={styles.dateInputRow}>
+        <TextInput
+          style={[styles.dateInput, startDateText && !parseDate(startDateText) ? styles.dateInputError : null]}
+          placeholder="Start: 15 Jun 2024"
+          placeholderTextColor={COLORS.textSecondary}
+          value={startDateText}
+          onChangeText={setStartDateText}
+          onSubmitEditing={handleAddDateRange}
+          returnKeyType="next"
+        />
+        <TextInput
+          style={[styles.dateInput, endDateText && !parseDate(endDateText) ? styles.dateInputError : null]}
+          placeholder="End (optional)"
+          placeholderTextColor={COLORS.textSecondary}
+          value={endDateText}
+          onChangeText={setEndDateText}
+          onSubmitEditing={handleAddDateRange}
+          returnKeyType="done"
+        />
+        <TouchableOpacity
+          style={[styles.addDateBtn, (!startDateText || !parseDate(startDateText)) && styles.addDateBtnDisabled]}
+          onPress={handleAddDateRange}
+          disabled={!startDateText || !parseDate(startDateText)}
+        >
+          <Text style={styles.addDateBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+      {(searchQuery.customRanges ?? []).length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPanelContent}>
+          {(searchQuery.customRanges ?? []).map((r, i) => {
+            const label = r.start === r.end
+              ? dayjs(r.start).format('D MMM YYYY')
+              : `${dayjs(r.start).format('D MMM')} – ${dayjs(r.end).format('D MMM YYYY')}`;
+            return (
+              <View key={i} style={styles.dateRangeChip}>
+                <Text style={styles.dateRangeChipText}>{label}</Text>
+                <TouchableOpacity onPress={() => {
+                  const filtered = (searchQuery.customRanges ?? []).filter((_, idx) => idx !== i);
+                  dispatch(setSearchQuery({ customRanges: filtered }));
+                }}>
+                  <Text style={styles.dateRangeChipRemove}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+
+  const renderLocationPanel = () => {
+    const displayedLocations = locationSearch.trim().length >= 2 ? searchedLocations : availableLocations;
+    const selectedLocationIds = searchQuery.locationIds ?? [];
+    const selectedCountries = searchQuery.countries ?? [];
+
+    return (
+      <ScrollView style={styles.locationPanel} contentContainerStyle={styles.locationPanelContent} keyboardShouldPersistTaps="handled">
+        {/* isMoving toggle */}
+        <View style={styles.locationRow}>
+          <Text style={styles.locationSectionLabel}>On the Move</Text>
+          <TouchableOpacity
+            style={[styles.toggleChip, searchQuery.isMoving && styles.toggleChipActive]}
+            onPress={() => dispatch(setSearchQuery({ isMoving: !searchQuery.isMoving, countries: [], locationIds: [] }))}
+          >
+            <Text style={[styles.toggleChipText, searchQuery.isMoving && styles.toggleChipTextActive]}>
+              {searchQuery.isMoving ? 'On ✓' : 'Off'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Countries */}
+        {availableCountries.length > 0 && (
+          <View>
+            <Text style={styles.locationSectionLabel}>Countries</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPanelContent}>
+              {availableCountries.map(c => (
+                <FilterChip
+                  key={c}
+                  label={c}
+                  active={selectedCountries.includes(c)}
+                  onPress={() => toggleCountry(c)}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Location search */}
+        <TextInput
+          style={styles.locationSearchInput}
+          placeholder="Search places…"
+          placeholderTextColor={COLORS.textSecondary}
+          value={locationSearch}
+          onChangeText={setLocationSearch}
+          returnKeyType="search"
+        />
+
+        {/* Locations list */}
+        {displayedLocations.length > 0 && (
+          <View>
+            <Text style={styles.locationSectionLabel}>Places</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPanelContent}>
+              {displayedLocations.map(loc => {
+                const id = loc.id ?? '';
+                if (!id) return null;
+                const parts = [loc.suburb && loc.suburb !== loc.city ? loc.suburb : null, loc.city, loc.country].filter(Boolean);
+                const subtitle = parts.join(', ');
+                const isActive = selectedLocationIds.includes(id);
+                return (
+                  <TouchableOpacity
+                    key={id}
+                    style={[styles.locationChip, isActive && styles.locationChipActive]}
+                    onPress={() => toggleLocation(id)}
+                  >
+                    <Text style={[styles.locationChipName, isActive && styles.locationChipNameActive]} numberOfLines={1}>
+                      {loc.name ?? id}
+                    </Text>
+                    {subtitle ? (
+                      <Text style={[styles.locationChipSub, isActive && styles.locationChipSubActive]} numberOfLines={1}>
+                        {subtitle}
+                      </Text>
+                    ) : null}
+                    {loc.count != null ? (
+                      <Text style={[styles.locationChipSub, isActive && styles.locationChipSubActive]}>
+                        {loc.count} visits
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Active location chips */}
+        {selectedLocationIds.length > 0 && displayedLocations.length === 0 && (
+          <View>
+            <Text style={styles.locationSectionLabel}>Selected</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPanelContent}>
+              {selectedLocationIds.map(id => (
+                <FilterChip
+                  key={id}
+                  label={id}
+                  active
+                  onPress={() => toggleLocation(id)}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </ScrollView>
+    );
+  };
+
+  const renderPeoplePanel = () => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPanel} contentContainerStyle={styles.peoplePanelContent}>
+      {availableFaces.length === 0 ? (
+        <View style={styles.emptyPeopleHint}>
+          <Text style={styles.emptyPeopleText}>No known people</Text>
+        </View>
+      ) : (
+        availableFaces.map(face => {
+          const isSelected = (searchQuery.peopleIds ?? []).includes(face.id);
+          return (
+            <TouchableOpacity
+              key={face.id}
+              style={[styles.faceChip, isSelected && styles.faceChipActive]}
+              onPress={() => toggleFace(face.id)}
+            >
+              {face.images[0] ? (
+                <Image source={{ uri: face.images[0] }} style={styles.faceAvatar} />
+              ) : (
+                <View style={[styles.faceAvatar, styles.faceAvatarPlaceholder]}>
+                  <Text style={{ fontSize: 16 }}>👤</Text>
+                </View>
+              )}
+              <Text style={[styles.faceChipText, isSelected && styles.faceChipTextActive]} numberOfLines={1}>
+                {face.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })
+      )}
+    </ScrollView>
+  );
+
+  const renderFilterPanel = () => {
+    if (!filterTab || showHeatmap) return null;
+    switch (filterTab) {
+      case 'time':
+        return renderChipsPanel(TIME_OF_DAY_OPTIONS, searchQuery.timeOfDays ?? [], v => toggleFilter('timeOfDays', v));
+      case 'day':
+        return renderChipsPanel(DAY_OF_WEEK_OPTIONS, searchQuery.dayOfWeeks ?? [], v => toggleFilter('dayOfWeeks', v));
+      case 'season':
+        return renderChipsPanel(SEASON_OPTIONS, searchQuery.seasons ?? [], v => toggleFilter('seasons', v));
+      case 'month':
+        return renderChipsPanel(MONTH_OPTIONS, searchQuery.months ?? [], v => toggleFilter('months', v));
+      case 'year':
+        return renderChipsPanel(
+          availableYears.map(String),
+          (searchQuery.years ?? []).map(String),
+          v => toggleYear(Number(v)),
+        );
+      case 'date':
+        return renderDatePanel();
+      case 'location':
+        return renderLocationPanel();
+      case 'people':
+        return renderPeoplePanel();
     }
   };
 
-  const pagedSegments = results.slice(0, displayCount);
+  // ── Active filter label helpers ─────────────────────────────────────────────
+
+  const tabLabel = (tab: FilterTab) => {
+    const check = (count: number) => count > 0 ? ` (${count})` : '';
+    switch (tab) {
+      case 'time':   return `Time${check((searchQuery.timeOfDays ?? []).length)}`;
+      case 'day':    return `Day${check((searchQuery.dayOfWeeks ?? []).length)}`;
+      case 'season': return `Season${check((searchQuery.seasons ?? []).length)}`;
+      case 'month':  return `Month${check((searchQuery.months ?? []).length)}`;
+      case 'year':   return `Year${check((searchQuery.years ?? []).length)}`;
+      case 'date': {
+        const n = (searchQuery.customRanges ?? []).length;
+        return `Date${n > 0 ? ` (${n})` : ''}`;
+      }
+      case 'location': {
+        const n = (searchQuery.countries ?? []).length + (searchQuery.locationIds ?? []).length + (searchQuery.isMoving ? 1 : 0);
+        return `Location${n > 0 ? ` (${n})` : ''}`;
+      }
+      case 'people':
+        return `People${check((searchQuery.peopleIds ?? []).length)}`;
+    }
+  };
+
+  const isTabActive = (tab: FilterTab) => {
+    switch (tab) {
+      case 'time':     return (searchQuery.timeOfDays ?? []).length > 0;
+      case 'day':      return (searchQuery.dayOfWeeks ?? []).length > 0;
+      case 'season':   return (searchQuery.seasons ?? []).length > 0;
+      case 'month':    return (searchQuery.months ?? []).length > 0;
+      case 'year':     return (searchQuery.years ?? []).length > 0;
+      case 'date':     return (searchQuery.customRanges ?? []).length > 0;
+      case 'location': return (searchQuery.countries ?? []).length > 0 || (searchQuery.locationIds ?? []).length > 0 || !!searchQuery.isMoving;
+      case 'people':   return (searchQuery.peopleIds ?? []).length > 0;
+    }
+  };
+
+  const pagedImages = allImages.slice(0, displayCount);
+  const FILTER_TABS: FilterTab[] = ['time', 'day', 'season', 'month', 'year', 'date', 'location', 'people'];
 
   return (
     <View style={styles.container}>
@@ -271,9 +600,9 @@ const SearchScreen = () => {
           placeholderTextColor={COLORS.textSecondary}
           multiline={false}
           returnKeyType="search"
-          onSubmitEditing={triggerSearch}
+          onSubmitEditing={() => triggerSearch()}
         />
-        <TouchableOpacity style={styles.searchBtn} onPress={triggerSearch} disabled={loading}>
+        <TouchableOpacity style={styles.searchBtn} onPress={() => triggerSearch()} disabled={loading}>
           <Text style={styles.searchBtnText}>{loading ? '…' : 'Go'}</Text>
         </TouchableOpacity>
       </View>
@@ -281,7 +610,15 @@ const SearchScreen = () => {
       {/* Sort + summary */}
       <View style={styles.sortRow}>
         {(['relevance', 'time'] as const).map(s => (
-          <FilterChip key={s} label={s === 'relevance' ? 'By Relevance' : 'By Time'} active={sortBy === s} onPress={() => setSortBy(s)} />
+          <FilterChip
+            key={s}
+            label={s === 'relevance' ? 'By Relevance' : 'By Time'}
+            active={sortBy === s}
+            onPress={() => {
+              setSortBy(s);
+              if (allImages.length > 0) triggerSearch(s);
+            }}
+          />
         ))}
         <View style={{ flex: 1 }} />
         {summaryText ? <Text style={styles.summary}>{summaryText}</Text> : null}
@@ -289,14 +626,20 @@ const SearchScreen = () => {
 
       {/* Filter tabs */}
       <View style={styles.filterTabRow}>
-        {(['time', 'day', 'month'] as const).map(tab => (
+        {FILTER_TABS.map(tab => (
           <TouchableOpacity
             key={tab}
-            style={[styles.filterTab, filterTab === tab && styles.filterTabActive]}
-            onPress={() => { setFilterTab(prev => prev === tab ? null : tab); setShowHeatmap(false); setShowMap(false); }}
+            style={[
+              styles.filterTab,
+              (filterTab === tab || isTabActive(tab)) && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterTabAndClear(tab)}
           >
-            <Text style={[styles.filterTabText, filterTab === tab && styles.filterTabTextActive]}>
-              {tab === 'time' ? 'Time of Day' : tab === 'day' ? 'Day of Week' : 'Month'}
+            <Text style={[
+              styles.filterTabText,
+              (filterTab === tab || isTabActive(tab)) && styles.filterTabTextActive,
+            ]}>
+              {tabLabel(tab)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -316,18 +659,8 @@ const SearchScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Filter chips */}
-      {filterTab && !showHeatmap && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPanel} contentContainerStyle={styles.filterPanelContent}>
-          {(filterTab === 'time' ? TIME_OF_DAY_OPTIONS : filterTab === 'day' ? DAY_OF_WEEK_OPTIONS : MONTH_OPTIONS).map(opt => (
-            <FilterChip
-              key={opt} label={opt}
-              active={(filterTab === 'time' ? searchQuery.timeOfDays : filterTab === 'day' ? searchQuery.dayOfWeeks : searchQuery.months).includes(opt)}
-              onPress={() => toggleFilter(filterTab === 'time' ? 'timeOfDays' : filterTab === 'day' ? 'dayOfWeeks' : 'months', opt)}
-            />
-          ))}
-        </ScrollView>
-      )}
+      {/* Filter panels */}
+      {renderFilterPanel()}
 
       {showHeatmap && <TimeHeatmap dates={allDates} />}
 
@@ -349,7 +682,7 @@ const SearchScreen = () => {
       )}
 
       {/* History */}
-      {results.length === 0 && searchHistory.length > 0 && !loading && (
+      {allImages.length === 0 && searchHistory.length > 0 && !loading && (
         <View style={styles.historySection}>
           <View style={styles.historyHeader}>
             <Text style={styles.historyTitle}>Recent Searches</Text>
@@ -359,8 +692,10 @@ const SearchScreen = () => {
           </View>
           {searchHistory.slice(0, 8).map((entry, i) => {
             const filterCount = [
-              entry.timeOfDays?.length, entry.dayOfWeeks?.length, entry.months?.length,
-              entry.years?.length, entry.locationIds?.length, entry.peopleIds?.length,
+              entry.timeOfDays?.length, entry.dayOfWeeks?.length, entry.seasons?.length,
+              entry.months?.length, entry.years?.length, entry.customRanges?.length,
+              entry.countries?.length, entry.locationIds?.length, entry.peopleIds?.length,
+              entry.isMoving ? 1 : 0,
             ].reduce((sum, n) => sum + (n ?? 0), 0);
             return (
               <View key={i} style={styles.historyRow}>
@@ -383,13 +718,15 @@ const SearchScreen = () => {
         <ActivityIndicator style={{ marginTop: 40 }} color={COLORS.primary} size="large" />
       ) : (
         <FlatList
-          data={pagedSegments}
-          keyExtractor={(_, i) => String(i)}
+          data={pagedImages}
+          keyExtractor={(img, i) => `${i}-${img.imagePath}`}
+          numColumns={COLS}
+          columnWrapperStyle={styles.gridRow}
           contentContainerStyle={styles.grid}
           ListHeaderComponent={
-            results.length > 0 ? (
+            segments.length > 0 ? (
               <ResultSummaryBar
-                results={results}
+                results={segments}
                 topLocations={topLocations}
                 topCountries={topCountries}
                 topPeople={topPeople}
@@ -397,77 +734,27 @@ const SearchScreen = () => {
               />
             ) : null
           }
-          renderItem={({ item: seg }) => (
-            <SegmentGroup segment={seg} deviceId={deviceId} onEditActivity={openEditActivity} />
+          renderItem={({ item: img }) => (
+            <ImageCard image={img} deviceId={deviceId} size={IMG_SIZE} />
           )}
-          onEndReached={() => setDisplayCount(c => Math.min(c + SEG_PAGE, results.length))}
+          onEndReached={() => setDisplayCount(c => Math.min(c + IMG_PAGE, allImages.length))}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            displayCount < results.length ? (
+            displayCount < allImages.length ? (
               <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 16 }} />
             ) : null
           }
           ListEmptyComponent={
-            results.length === 0 ? null : (
+            allImages.length === 0 ? null : (
               <View style={styles.empty}><Text style={styles.emptyText}>No results</Text></View>
             )
           }
         />
       )}
-
-      {/* Activity edit modal */}
-      <Modal visible={!!editingSegment} transparent animationType="slide" onRequestClose={() => setEditingSegment(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit Activity</Text>
-            {editingSegment && (
-              <Text style={styles.modalSub}>
-                {formatTimeTz(editingSegment[0].timestamp, editingSegment[0].timezone || config.defaultTimezone)}
-              </Text>
-            )}
-            <TextInput
-              style={styles.modalInput}
-              value={editActivity}
-              onChangeText={setEditActivity}
-              placeholder="e.g. Walking in the park"
-              placeholderTextColor={COLORS.textSecondary}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={handleSaveActivity}
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditingSegment(null)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBtn, savingActivity && styles.saveBtnDisabled]}
-                onPress={handleSaveActivity}
-                disabled={savingActivity}
-              >
-                {savingActivity
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={styles.saveBtnText}>Save</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
 
-const segStyles = StyleSheet.create({
-  container: {
-    marginBottom: 4, backgroundColor: COLORS.surface,
-    borderRadius: 12, overflow: 'hidden', marginHorizontal: 6, elevation: 1,
-  },
-  header: { paddingHorizontal: 12, paddingVertical: 8 },
-  time: { fontSize: 11, fontWeight: '700', color: COLORS.primary, marginBottom: 2 },
-  activity: { fontSize: 13, color: COLORS.textPrimary, lineHeight: 18 },
-  noActivity: { fontSize: 12, color: COLORS.textSecondary, fontStyle: 'italic' },
-  count: { fontSize: 10, color: COLORS.textSecondary, marginTop: 3 },
-  imageRow: { paddingHorizontal: 6, paddingBottom: 8, gap: 2 },
-});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
@@ -495,6 +782,76 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: COLORS.secondary, borderColor: COLORS.secondary },
   filterChipText: { fontSize: 12, color: COLORS.textSecondary },
   filterChipTextActive: { color: '#fff', fontWeight: '600' },
+
+  // Date range panel
+  datePanel: {
+    borderTopWidth: 1, borderColor: COLORS.divider,
+    paddingHorizontal: 10, paddingVertical: 8, gap: 6,
+  },
+  dateInputRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dateInput: {
+    flex: 1, height: 34, paddingHorizontal: 10, fontSize: 12,
+    backgroundColor: COLORS.surface, borderRadius: 8,
+    borderWidth: 1, borderColor: COLORS.divider, color: COLORS.textPrimary,
+  },
+  dateInputError: { borderColor: '#e74c3c' },
+  addDateBtn: {
+    backgroundColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 8,
+  },
+  addDateBtnDisabled: { backgroundColor: COLORS.divider },
+  addDateBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  dateRangeChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14,
+    backgroundColor: COLORS.secondary, borderWidth: 1, borderColor: COLORS.secondary,
+  },
+  dateRangeChipText: { fontSize: 11, color: '#fff', fontWeight: '600' },
+  dateRangeChipRemove: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginLeft: 2 },
+
+  // Location panel
+  locationPanel: { maxHeight: 220, borderTopWidth: 1, borderColor: COLORS.divider },
+  locationPanelContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 8 },
+  locationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  locationSectionLabel: { fontSize: 11, fontWeight: '600', color: COLORS.textSecondary, marginBottom: 2 },
+  locationSearchInput: {
+    height: 34, paddingHorizontal: 10, fontSize: 12,
+    backgroundColor: COLORS.surface, borderRadius: 8,
+    borderWidth: 1, borderColor: COLORS.divider, color: COLORS.textPrimary,
+  },
+  toggleChip: {
+    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14,
+    borderWidth: 1, borderColor: COLORS.divider, backgroundColor: COLORS.background,
+  },
+  toggleChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  toggleChipText: { fontSize: 12, color: COLORS.textSecondary },
+  toggleChipTextActive: { color: '#fff', fontWeight: '600' },
+  locationChip: {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+    borderWidth: 1, borderColor: COLORS.divider, backgroundColor: COLORS.background,
+    maxWidth: 150,
+  },
+  locationChipActive: { backgroundColor: COLORS.secondary, borderColor: COLORS.secondary },
+  locationChipName: { fontSize: 12, color: COLORS.textPrimary },
+  locationChipNameActive: { color: '#fff', fontWeight: '600' },
+  locationChipSub: { fontSize: 10, color: COLORS.textSecondary },
+  locationChipSubActive: { color: 'rgba(255,255,255,0.8)' },
+
+  // People panel
+  peoplePanelContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 10, alignItems: 'center' },
+  faceChip: {
+    alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6,
+    borderRadius: 10, borderWidth: 1, borderColor: COLORS.divider, backgroundColor: COLORS.background,
+    minWidth: 60,
+  },
+  faceChipActive: { backgroundColor: COLORS.secondary, borderColor: COLORS.secondary },
+  faceAvatar: { width: 36, height: 36, borderRadius: 18 },
+  faceAvatarPlaceholder: { backgroundColor: COLORS.surface, alignItems: 'center', justifyContent: 'center' },
+  faceChipText: { fontSize: 10, color: COLORS.textPrimary, textAlign: 'center', maxWidth: 56 },
+  faceChipTextActive: { color: '#fff' },
+  emptyPeopleHint: { paddingVertical: 10, paddingHorizontal: 4 },
+  emptyPeopleText: { fontSize: 12, color: COLORS.textSecondary },
+
   mapPanel: { height: 280, borderTopWidth: 1, borderColor: COLORS.divider },
   mapWebView: { flex: 1 },
   historySection: { paddingHorizontal: 12, paddingVertical: 8 },
@@ -508,30 +865,10 @@ const styles = StyleSheet.create({
   filterBadge: { fontSize: 11, color: COLORS.secondary, fontWeight: '600' },
   removeBtn: { padding: 6 },
   removeText: { fontSize: 12, color: COLORS.textSecondary },
-  grid: { paddingTop: 6, paddingBottom: 24 },
+  grid: { paddingTop: 4, paddingBottom: 24 },
+  gridRow: { gap: 2, marginBottom: 2, paddingHorizontal: 2 },
   empty: { padding: 40, alignItems: 'center' },
   emptyText: { color: COLORS.textSecondary, fontSize: 14 },
-  // Activity edit modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalCard: {
-    backgroundColor: COLORS.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: 34, gap: 10,
-  },
-  modalTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
-  modalSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: -4 },
-  modalInput: {
-    borderWidth: 1, borderColor: COLORS.divider, borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: COLORS.textPrimary,
-  },
-  modalBtns: { flexDirection: 'row', gap: 10 },
-  cancelBtn: {
-    flex: 1, paddingVertical: 12, borderRadius: 10,
-    borderWidth: 1, borderColor: COLORS.divider, alignItems: 'center',
-  },
-  cancelBtnText: { fontSize: 14, color: COLORS.textSecondary, fontWeight: '600' },
-  saveBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: COLORS.secondary, alignItems: 'center' },
-  saveBtnDisabled: { opacity: 0.45 },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });
 
 export default SearchScreen;
