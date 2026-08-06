@@ -43,7 +43,7 @@ const DeviceSelect = ({
     }, [devices, device, onChange]);
 
     return (
-        <FormControl fullWidth sx={{ width: '200px' }} size="small">
+        <FormControl sx={{ width: { xs: 130, sm: 200 } }} size="small">
             <InputLabel id="device-select-label">Device</InputLabel>
             <CameraAltRounded
                 sx={{

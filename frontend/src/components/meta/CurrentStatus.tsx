@@ -72,12 +72,12 @@ export default function CurrentStatus({ device }: { device: string }) {
             <Stack spacing={1.5}>
                 {/* Header row */}
                 <Stack
-                    direction="row"
+                    direction={{ xs: 'column', sm: 'row' }}
                     spacing={1.5}
-                    alignItems="center"
+                    alignItems={{ xs: 'flex-start', sm: 'center' }}
                     justifyContent="space-between"
                 >
-                    <Stack direction="row" spacing={1} alignItems="center">
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                         <OnlineDot online={data.cameraOnline} />
                         <Typography variant="subtitle1" fontWeight="bold">
                             Current Status
@@ -100,7 +100,7 @@ export default function CurrentStatus({ device }: { device: string }) {
                     </Stack>
 
                     {/* Sensor dots */}
-                    <Stack direction="row" spacing={1} alignItems="center">
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap rowGap={0.5}>
                         {data.sensors.map((s) => (
                             <Tooltip
                                 key={`${s.deviceId}-${s.sensorType}`}
@@ -131,13 +131,20 @@ export default function CurrentStatus({ device }: { device: string }) {
                 <Divider />
 
                 {/* Activity + location */}
-                <Stack direction="row" spacing={2} alignItems="flex-start">
+                <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={2}
+                    alignItems={{ xs: 'stretch', sm: 'flex-start' }}
+                >
                     {data.currentLat && data.currentLon && (
                         <Box
-                            width={180}
-                            height={72}
                             flexShrink={0}
-                            sx={{ borderRadius: 1, overflow: 'hidden' }}
+                            sx={{
+                                width: { xs: '100%', sm: 180 },
+                                height: { xs: 140, sm: 72 },
+                                borderRadius: 1,
+                                overflow: 'hidden',
+                            }}
                         >
                             <MapContainer
                                 center={[data.currentLat, data.currentLon]}
@@ -158,6 +165,13 @@ export default function CurrentStatus({ device }: { device: string }) {
                         </Box>
                     )}
 
+                    <Stack
+                        direction="row"
+                        spacing={2}
+                        flex={1}
+                        minWidth={0}
+                        alignItems="flex-start"
+                    >
                     {thumbnailUrl && (
                         <Box
                             component="img"
@@ -253,6 +267,7 @@ export default function CurrentStatus({ device }: { device: string }) {
                                 </Typography>
                             </Stack>
                         )}
+                    </Stack>
                     </Stack>
                 </Stack>
 

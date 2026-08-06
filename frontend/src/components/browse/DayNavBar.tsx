@@ -1,4 +1,4 @@
-import { Box, IconButton, Tooltip, Typography } from '@mui/material';
+import { Box, Collapse, IconButton, Stack, Tooltip, Typography, useMediaQuery, useTheme } from '@mui/material';
 import EditLocationAltIcon from '@mui/icons-material/EditLocationAlt';
 import NoPhotographyIcon from '@mui/icons-material/NoPhotography';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
@@ -318,6 +318,14 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
     const [activeRunIdx, setActiveRunIdx] = useState<number | null>(null);
     const [editRun, setEditRun] = useState<{ segmentIds: number[]; name?: string | null } | null>(null);
 
+    // On a phone the horizontal timeline shrinks to untappable slivers, so the
+    // same location runs are rendered as a vertical, finger-sized list instead.
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    // Collapsed by default so the photo list is what you see first; the list of
+    // places expands on tap and re-collapses once you pick one.
+    const [mobileOpen, setMobileOpen] = useState(false);
+
     // Scroll-fade hints: show a soft gradient on whichever edge has more bar
     // off-screen, so a busy (horizontally scrolling) day reads as scrollable.
     const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -355,6 +363,208 @@ export default function DayNavBar({ navSegments, selectedSegmentId, viewingSegme
         ((endMs - startMs) / totalSpan) * 100;
 
     const locationRuns = buildLocationRuns(segments);
+
+    // ── Mobile: vertical tap list ────────────────────────────────────────────
+    if (isMobile) {
+        const runSelected = (ids: number[]): boolean => {
+            if (selectedSegmentId == null || selectedSegmentId === 'unsegmented')
+                return false;
+            return Array.isArray(selectedSegmentId)
+                ? ids.some((id) => selectedSegmentId.includes(id))
+                : ids.includes(selectedSegmentId);
+        };
+        const runIds = (run: LocationRun) =>
+            run.segments.map((s) => s.segmentId).filter((id): id is number => id != null);
+        const runEmoji = (run: LocationRun) =>
+            run.isMove
+                ? (run.mode ? MODE_ICON[run.mode] ?? '🚶' : '🚶')
+                : (run.labelKind ? LABEL_ICON[run.labelKind] ?? '📍' : '📍');
+        const runLabel = (run: LocationRun) =>
+            run.isMove ? run.name || 'In transit' : run.name || 'Unknown place';
+
+        // Compact header reflects the current selection so the collapsed bar is
+        // still informative.
+        const isRecentSel = selectedSegmentId === 'unsegmented';
+        const currentRun = locationRuns.find((r) => runSelected(runIds(r)));
+        const placeCount = locationRuns.length + (hasRecent ? 1 : 0);
+        const headerEmoji = isRecentSel ? '🆕' : currentRun ? runEmoji(currentRun) : '📍';
+        const headerLabel = isRecentSel
+            ? 'Recent'
+            : currentRun
+              ? runLabel(currentRun)
+              : 'Places';
+        const headerTime = currentRun
+            ? `${hm(currentRun.startMs, currentRun.tz)}–${hm(currentRun.endMs, currentRun.tz)}`
+            : null;
+
+        return (
+            <Box sx={{ width: '100%' }}>
+                {/* Collapsed summary bar — tap to reveal the full place list */}
+                <Box
+                    onClick={() => setMobileOpen((o) => !o)}
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        minHeight: 48,
+                        borderRadius: 1,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        bgcolor: 'background.paper',
+                        cursor: 'pointer',
+                    }}
+                >
+                    <Typography sx={{ fontSize: 18, lineHeight: 1 }}>{headerEmoji}</Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography noWrap fontWeight={700} variant="body2">
+                            {headerLabel}
+                        </Typography>
+                        {headerTime && (
+                            <Typography variant="caption" color="text.secondary">
+                                {headerTime}
+                            </Typography>
+                        )}
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                        {placeCount} places
+                    </Typography>
+                    <Typography
+                        sx={{
+                            fontSize: 16,
+                            lineHeight: 1,
+                            transition: 'transform 0.2s',
+                            transform: mobileOpen ? 'rotate(180deg)' : 'none',
+                        }}
+                    >
+                        ▾
+                    </Typography>
+                </Box>
+
+                <Collapse in={mobileOpen} unmountOnExit>
+                  <Stack spacing={0.5} sx={{ width: '100%', mt: 0.5, maxHeight: '50vh', overflowY: 'auto' }}>
+                {locationRuns.map((run, ri) => {
+                    const ids = run.segments
+                        .map((s) => s.segmentId)
+                        .filter((id): id is number => id != null);
+                    const bg = run.isMove ? '#9575cd' : colorForPlace(run.name);
+                    const emoji = run.isMove
+                        ? (run.mode ? MODE_ICON[run.mode] ?? '🚶' : '🚶')
+                        : (run.labelKind ? LABEL_ICON[run.labelKind] ?? '📍' : '📍');
+                    const label = run.isMove
+                        ? run.name || 'In transit'
+                        : run.name || 'Unknown place';
+                    const isSel = runSelected(ids);
+                    const clickable = ids.length > 0;
+                    const gapBefore = ri > 0 ? run.startMs - locationRuns[ri - 1].endMs : 0;
+                    const showBreak = ri > 0 && gapBefore >= BREAK_THRESHOLD_MS;
+                    const canCorrect =
+                        !run.isMove && device && date &&
+                        run.segments.some((s) => s.segmentId != null);
+                    return (
+                        <Fragment key={ri}>
+                            {showBreak && (
+                                <Typography
+                                    variant="caption"
+                                    color="text.disabled"
+                                    sx={{ pl: 1, fontSize: 11 }}
+                                >
+                                    ┈ no recording · {fmtDuration(gapBefore / 1000)} ┈
+                                </Typography>
+                            )}
+                            <Box
+                                onClick={() => {
+                                    if (!clickable) return;
+                                    setActiveRunIdx((x) => (x === ri ? null : ri));
+                                    onSelectSegment(ids.length === 1 ? ids[0] : ids);
+                                    setMobileOpen(false);
+                                }}
+                                sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 1,
+                                    p: 1,
+                                    minHeight: 48,
+                                    borderRadius: 1,
+                                    borderLeft: `4px solid ${bg}`,
+                                    bgcolor: isSel ? 'action.selected' : 'background.paper',
+                                    cursor: clickable ? 'pointer' : 'default',
+                                    opacity: clickable ? 1 : 0.6,
+                                }}
+                            >
+                                <Typography sx={{ fontSize: 18, lineHeight: 1 }}>
+                                    {emoji}
+                                </Typography>
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography noWrap fontWeight={700} variant="body2">
+                                        {label}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                        {hm(run.startMs, run.tz)}–{hm(run.endMs, run.tz)}
+                                        {' · '}{fmtDuration(run.totalSeconds)}
+                                        {!clickable && ' · no photos'}
+                                    </Typography>
+                                </Box>
+                                {canCorrect && (
+                                    <IconButton
+                                        size="small"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (ids.length)
+                                                setEditRun({ segmentIds: ids, name: run.name });
+                                        }}
+                                    >
+                                        <EditLocationAltIcon sx={{ fontSize: 18 }} />
+                                    </IconButton>
+                                )}
+                            </Box>
+                        </Fragment>
+                    );
+                })}
+                {hasRecent && (
+                    <Box
+                        onClick={() => {
+                            setActiveRunIdx(null);
+                            onSelectSegment('unsegmented');
+                            setMobileOpen(false);
+                        }}
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            p: 1,
+                            minHeight: 48,
+                            borderRadius: 1,
+                            borderLeft: '4px solid #26a69a',
+                            bgcolor:
+                                selectedSegmentId === 'unsegmented'
+                                    ? 'action.selected'
+                                    : 'background.paper',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        <Typography sx={{ fontSize: 18, lineHeight: 1 }}>🆕</Typography>
+                        <Typography fontWeight={700} variant="body2">
+                            Recent
+                        </Typography>
+                    </Box>
+                )}
+                  </Stack>
+                </Collapse>
+                {device && date && editRun && (
+                    <StopCorrectionDialog
+                        open
+                        device={device}
+                        date={date}
+                        segmentIds={editRun.segmentIds}
+                        currentName={editRun.name}
+                        onClose={() => setEditRun(null)}
+                        onCorrected={onLocationCorrected}
+                    />
+                )}
+            </Box>
+        );
+    }
 
     // On busy days the runs would shrink to unreadable slivers (or clip). Give
     // each run a readable minimum and let the whole bar scroll horizontally when
