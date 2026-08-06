@@ -275,8 +275,16 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         ml: { xs: 0, md: 3 },
                         mt: 1,
                         px: { xs: 1, md: 3 },
-                        maxHeight: 'calc(100vh - 88px)',
-                        overflow: 'auto',
+                        width: '100%',
+                        maxWidth: '100%',
+                        // dvh, not vh: on mobile the URL bar makes 100vh taller
+                        // than the visible area, pushing content under the fold.
+                        maxHeight: 'calc(100dvh - 88px)',
+                        // Vertical scroll only — overflow:'auto' also scrolls
+                        // sideways when any child spills a few px, which reads as
+                        // a broken, wider-than-screen page on a phone.
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
                     }}
                 >
                     {children}

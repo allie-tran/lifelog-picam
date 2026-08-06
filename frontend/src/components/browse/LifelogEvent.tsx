@@ -112,7 +112,7 @@ const LifelogEvent = ({
                 }}
             >
                 <Divider />
-                <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+                <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'flex-start' }} spacing={2}>
                     {/* LEFT — time + activity */}
                     <Stack spacing={0.5} sx={{ flexShrink: 0 }}>
                         <Typography variant="subtitle2" color="textSecondary">
@@ -252,7 +252,7 @@ const LifelogEvent = ({
                     direction="row"
                     spacing={2}
                     sx={{
-                        maxWidth: '100vw',
+                        maxWidth: '100%',
                         width: '100%',
                         // overflowY: 'auto',
                         // height: '300px',
@@ -280,7 +280,7 @@ const LifelogEvent = ({
                 </Stack>
             </Stack>
             <ModalWithCloseButton open={edit} onClose={() => setEdit(false)}>
-                <Stack spacing={2} sx={{ padding: 2, width: '400px' }}>
+                <Stack spacing={2} sx={{ padding: 2, width: { xs: '85vw', sm: 400 }, maxWidth: '100%' }}>
                     <Typography>
                         Edit activity for segment #{firstImage.segmentId}
                     </Typography>
