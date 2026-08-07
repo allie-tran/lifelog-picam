@@ -22,6 +22,7 @@ import {
 import { addSensorToUser, changeUserAccess, getUsers, removeDeviceAccess, removeSensorAccess } from 'apis/auth';
 import { getAllDeviceSettings, setRecognitionMode } from 'apis/browsing';
 import ModalWithCloseButton from 'components/common/ModalWithCloseButton';
+import FeedbackReview from 'components/feedback/FeedbackReview';
 import React from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate } from 'react-router';
@@ -541,6 +542,8 @@ const Admin = () => {
                     </Button>
                 </Stack>
             </ModalWithCloseButton>
+            <Divider flexItem sx={{ my: 2 }} />
+            <FeedbackReview />
         </Stack>
     );
 };

@@ -45,6 +45,7 @@ from routers.profile import router as profile_router
 from routers.status import router as status_router
 from routers.vbslog import router as vbslog_router
 from routers.chat import router as chat_router
+from routers.feedback import router as feedback_router
 
 
 load_dotenv()
@@ -103,6 +104,7 @@ app.include_router(profile_router, prefix="/profile", tags=["profile"])
 app.include_router(status_router, prefix="/status", tags=["status"])
 app.include_router(vbslog_router, prefix="/log", tags=["vbs-log"])
 app.include_router(chat_router, prefix="/chat", tags=["chat"])
+app.include_router(feedback_router, prefix="/feedback", tags=["feedback"])
 # Day summary / targets / segment-activity — kept at root paths (no prefix).
 app.include_router(day_summary_router, tags=["day-summary"])
 

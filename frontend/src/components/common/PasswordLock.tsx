@@ -39,6 +39,7 @@ import DeviceSelect from 'pages/DeviceSelect';
 import DRESSettings from 'components/meta/DRESSettings';
 import NotificationsPanel from 'components/notifications/NotificationsPanel';
 import ChatPanel from 'components/chat/ChatPanel';
+import { ReportButton } from 'components/feedback/UserFeedbackControls';
 
 const DRESWidget = () => {
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -257,6 +258,7 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         {!isMobile && <DRESWidget />}
                         <ChatPanel />
                         <NotificationsPanel />
+                        <ReportButton device={device} variant="icon" />
                     </Toolbar>
                 </AppBar>
                 <Drawer

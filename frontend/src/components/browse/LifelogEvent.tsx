@@ -30,6 +30,7 @@ import ImageWithDate from 'components/common/ImageWithDate';
 import { useOnInView } from 'react-intersection-observer';
 import { setHighlightedTrack } from 'reducers/map';
 import { parseErrorResponse } from '@utils/misc';
+import { RatingThumbs, FlagButton } from 'components/feedback/UserFeedbackControls';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -247,6 +248,17 @@ const LifelogEvent = ({
                             </Button>
                         </Tooltip>
                     )}
+                    {firstImage.segmentId ? (
+                        <FlagButton device={device} targetType="segment" targetId={String(firstImage.segmentId)} />
+                    ) : null}
+                    {firstImage.segmentId ? (
+                        <RatingThumbs
+                            device={device}
+                            targetType="segment"
+                            targetId={String(firstImage.segmentId)}
+                            meta={{ date }}
+                        />
+                    ) : null}
                 </Stack>
                 <Stack
                     direction="row"

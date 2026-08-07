@@ -68,6 +68,7 @@ import '../../App.css';
 import { ImageZoom } from 'components/image/ImageZoom';
 import { parseErrorResponse } from '@utils/misc';
 import { PAGE_SIZE, queryFilterChips } from './helpers';
+import { RatingThumbs } from 'components/feedback/UserFeedbackControls';
 import SearchTextBox, { SearchTextBoxHandle } from './SearchTextBox';
 
 dayjs.extend(utc);
@@ -555,6 +556,14 @@ const SearchPage = () => {
                                             }}
                                         />
                                     )}
+                                    <Box sx={{ ml: 'auto' }} onClick={(e) => e.stopPropagation()}>
+                                        <RatingThumbs
+                                            device={device}
+                                            targetType="search"
+                                            targetId={image.imagePath}
+                                            meta={{ query: searchQuery.text || '' }}
+                                        />
+                                    </Box>
                                 </>
                             }
                         />

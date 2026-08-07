@@ -626,6 +626,58 @@ class Annotation(Base):
 
 
 # ---------------------------------------------------------------------------
+# User feedback (ratings / flags / reports)
+# ---------------------------------------------------------------------------
+
+
+class FeedbackKind(StrEnum):
+    RATING = "rating"   # thumbs up/down on a result
+    FLAG = "flag"       # flag a specific item for review
+    REPORT = "report"   # general free-text message / bug report
+
+
+class FeedbackStatus(StrEnum):
+    OPEN = "open"
+    REVIEWED = "reviewed"
+    RESOLVED = "resolved"
+
+
+class UserFeedback(Base):
+    """Unified user feedback store: ratings, content flags, and free-text reports.
+    Keyed by Mongo username (like LocationLabel)."""
+    __tablename__ = "user_feedback"
+    __table_args__ = (
+        Index("ix_user_feedback_username", "username"),
+        Index("ix_user_feedback_kind_status", "kind", "status"),
+        # One rating per user per target — lets re-rating upsert instead of stacking.
+        # Partial (ratings only) so flags/reports on the same item can repeat.
+        Index(
+            "uq_user_feedback_rating_target",
+            "username", "target_type", "target_id",
+            unique=True,
+            postgresql_where=text("kind = 'RATING'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    device_id: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[FeedbackKind] = mapped_column(Enum(FeedbackKind), nullable=False)
+    target_type: Mapped[str | None] = mapped_column(Text)   # search | segment | day_summary | image
+    target_id: Mapped[str | None] = mapped_column(Text)     # image path/id, segment id, date, query
+    value: Mapped[str | None] = mapped_column(Text)         # up/down for rating; reason slug for flag
+    comment: Mapped[str | None] = mapped_column(Text)
+    meta: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    status: Mapped[FeedbackStatus] = mapped_column(
+        Enum(FeedbackStatus), nullable=False, default=FeedbackStatus.OPEN
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Health Data
 # ---------------------------------------------------------------------------
 
