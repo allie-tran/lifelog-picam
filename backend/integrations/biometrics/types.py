@@ -42,6 +42,9 @@ class PPIData(MeasurementData):
     skin_contact_status: bool
     skin_contact_supported: bool
 
+class SkinTemperatureData(MeasurementData):
+    temperature: float
+
 class LogData(CamelCaseModel):
     type: str
     message: str
@@ -57,6 +60,7 @@ data_type_mapping = {
     "PPG": PPGData,
     "ACC": AccelerometerData,
     "HR": HeartRateData,
+    "SKIN_TEMPERATURE": SkinTemperatureData,
     "MAGNETOMETER": MagnetometerData,
     "GYRO": GyroscopeData,
     "PPI": PPIData,

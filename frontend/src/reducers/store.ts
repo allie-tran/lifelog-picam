@@ -8,6 +8,7 @@ import dresSlice from './dres';
 import notificationsSlice from './notifications';
 import vbsLogSlice from './vbsLog';
 import chatSlice from './chat';
+import uiSlice from './ui';
 
 export const store = configureStore({
     reducer: {
@@ -20,6 +21,7 @@ export const store = configureStore({
         notifications: notificationsSlice,
         vbsLog: vbsLogSlice,
         chat: chatSlice,
+        ui: uiSlice,
     },
 });
 

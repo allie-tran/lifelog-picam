@@ -85,7 +85,7 @@ async def lifespan(app: CustomFastAPI):
 # App setup
 # ---------------------------------------------------------------------------
 
-app = CustomFastAPI(lifespan=lifespan)
+app = CustomFastAPI(lifespan=lifespan, title="SelfHealth API", openapi_url="/openapi.json", docs_url="/docs", redoc_url="/redoc", version="1.0.0")
 
 # Sub-app routers. Prefixes preserve the original mount paths so external URLs
 # (frontend + camera clients) are unchanged after the APIRouter migration.

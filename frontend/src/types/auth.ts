@@ -5,6 +5,13 @@ export enum AccessLevel {
     NONE = 'none'
 }
 
+// Which UI tier the frontend renders. 'simple' hides power-user clutter
+// (DRES, chat, upload, admin, resync); 'advanced' is the full UI.
+export enum UIMode {
+    SIMPLE = 'simple',
+    ADVANCED = 'advanced'
+}
+
 export type DeviceAccess = {
     deviceId: string;
     accessLevel: AccessLevel;

@@ -89,6 +89,7 @@ def verify_user(request: LoginRequest, db_session: Session) -> LoginResponse:
             # From sensor_devices, not the user document: the row is what upload auth reads, so a
             # sensor reassigned elsewhere must not keep showing up in this user's session.
             sensors=list_user_sensors(db_session, request.username),
+            ui_mode=user.ui_mode,
         )
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")

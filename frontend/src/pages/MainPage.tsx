@@ -28,7 +28,7 @@ import { setDevice } from 'reducers/auth';
 import { setLoading, showNotification } from 'reducers/feedback';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import useSWR, { useSWRConfig } from 'swr';
-import { AccessLevel } from 'types/auth';
+import { AccessLevel, UIMode } from 'types/auth';
 import '../App.css';
 import {
     deleteImages,
@@ -107,6 +107,7 @@ function MainPage() {
     }, [selectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const { deviceAccess } = useAppSelector((state) => state.auth);
+    const isAdvanced = useAppSelector((state) => state.ui.mode === UIMode.ADVANCED);
     const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -451,7 +452,7 @@ function MainPage() {
                         <Box sx={{ flex: 1 }}>
                             <CustomDatePicker date={date} allDates={allDates} />
                         </Box>
-                        {isAuthorised && date && (
+                        {isAuthorised && isAdvanced && date && (
                             <Tooltip title="Re-sync segmentation (preserves LLM annotations)">
                                 <span>
                                     <IconButton

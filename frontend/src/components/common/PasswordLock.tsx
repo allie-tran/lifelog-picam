@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useCookies } from 'react-cookie';
 import { useNavigate, useSearchParams } from 'react-router';
-import { verifyTokenRequest } from 'apis/auth';
+import { verifyTokenRequest, setUiModeRequest } from 'apis/auth';
 import {
     AppBar,
     Box,
@@ -20,6 +20,8 @@ import {
 } from '@mui/material';
 import { useAppDispatch, useAppSelector } from 'reducers/hooks';
 import { login, logout } from 'reducers/auth';
+import { setUIMode } from 'reducers/ui';
+import { UIMode } from 'types/auth';
 import axios from 'axios';
 import { useSWRConfig } from 'swr';
 import DeletedImages from 'components/browse/DeletedImages';
@@ -33,7 +35,9 @@ import {
     MenuRounded,
     MonitorHeartRounded,
     SearchRounded,
+    TuneRounded,
     UploadRounded,
+    ViewCompactRounded,
 } from '@mui/icons-material';
 import DeviceSelect from 'pages/DeviceSelect';
 import DRESSettings from 'components/meta/DRESSettings';
@@ -88,7 +92,18 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const { isAuthenticated, device } = useAppSelector((state) => state.auth);
+    const uiMode = useAppSelector((state) => state.ui.mode);
+    const isAdvanced = uiMode === UIMode.ADVANCED;
     const dispatch = useAppDispatch();
+
+    // Flip UI tier for this account. Optimistic: the mode drives conditional
+    // render everywhere, so update local state immediately and persist in the
+    // background, rolling back if the server rejects it.
+    const toggleUIMode = React.useCallback(() => {
+        const next = isAdvanced ? UIMode.SIMPLE : UIMode.ADVANCED;
+        dispatch(setUIMode(next));
+        setUiModeRequest(next).catch(() => dispatch(setUIMode(uiMode)));
+    }, [dispatch, isAdvanced, uiMode]);
 
     // The icon rail is a permanent Drawer on desktop; on a phone it has to slide
     // in instead, or it eats the viewport. No bottom bar here on purpose — the
@@ -134,6 +149,9 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                                 sensors: response.data.sensors,
                             })
                         );
+                        if (response.data.uiMode) {
+                            dispatch(setUIMode(response.data.uiMode as UIMode));
+                        }
                         axios.defaults.headers.common['Authorization'] =
                             `Bearer ${cookies.token}`;
                     } else {
@@ -149,6 +167,8 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
         }
     }, []);
 
+    // `advancedOnly` items are hidden in Simple mode to cut clutter; the rest are
+    // the everyday surface every user sees.
     const navItems = [
         {
             title: 'Home',
@@ -174,18 +194,25 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
             title: 'Admin Panel',
             icon: <AdminPanelSettingsRounded />,
             onClick: () => navTo('/admin'),
+            advancedOnly: true,
         },
         {
             title: 'Upload Images/Videos',
             icon: <UploadRounded />,
             onClick: () => navTo('/upload'),
+            advancedOnly: true,
         },
         {
             title: 'Logout',
             icon: <LogoutRounded />,
             onClick: clearAuthentication,
         },
-    ];
+    ].filter((item) => isAdvanced || !item.advancedOnly);
+
+    const modeToggleTitle = isAdvanced
+        ? 'Switch to Simple view'
+        : 'Switch to Advanced view';
+    const modeToggleIcon = isAdvanced ? <ViewCompactRounded /> : <TuneRounded />;
 
     // Icon-only rail on desktop (tooltips carry the meaning); labelled rows on
     // mobile, where there is room for them and no hover to reveal a tooltip.
@@ -203,6 +230,17 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                 </Button>
             ))}
             <DeletedImages label="Deleted Images" onOpen={() => setNavOpen(false)} />
+            <Button
+                color="secondary"
+                startIcon={modeToggleIcon}
+                onClick={() => {
+                    toggleUIMode();
+                    setNavOpen(false);
+                }}
+                sx={{ justifyContent: 'flex-start', width: '100%', px: 2, py: 1 }}
+            >
+                {modeToggleTitle}
+            </Button>
         </Stack>
     ) : (
         <Stack spacing={2} alignItems="center" mt={2}>
@@ -214,6 +252,11 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                 </Tooltip>
             ))}
             <DeletedImages />
+            <Tooltip title={modeToggleTitle}>
+                <IconButton size="large" color="secondary" onClick={toggleUIMode}>
+                    {modeToggleIcon}
+                </IconButton>
+            </Tooltip>
         </Stack>
     );
 
@@ -255,8 +298,8 @@ const PasswordLock = ({ children }: { children: React.ReactNode }) => {
                         </Typography>
                         <Box sx={{ flex: 1 }} />
                         <DeviceSelect />
-                        {!isMobile && <DRESWidget />}
-                        <ChatPanel />
+                        {isAdvanced && !isMobile && <DRESWidget />}
+                        {isAdvanced && <ChatPanel />}
                         <NotificationsPanel />
                         <ReportButton device={device} variant="icon" />
                     </Toolbar>

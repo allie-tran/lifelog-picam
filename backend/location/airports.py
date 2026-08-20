@@ -25,7 +25,19 @@ _DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "airports.json")
 # "inside" the airport.  Large hubs sprawl several km from their centroid;
 # medium fields are tighter.  Airports sit far apart, so generous radii rarely
 # collide — and when they could, the nearest one wins.
-_RADIUS_KM = {"large": 6.0, "medium": 3.5}
+#
+# These are *type defaults*.  6.0 km overreached: Dublin Airport's centroid sits
+# 4.75 km from DCU (Glasnevin), so the old disk swallowed the campus and labelled
+# it "Dublin Airport".  3.75 km covers a large hub's terminals/aprons without
+# spilling into the surrounding suburbs.  A per-airport ``radius_km`` field in
+# airports.json overrides the default for hubs whose real footprint differs.
+_RADIUS_KM = {"large": 3.75, "medium": 3.0}
+
+
+def _radius(a: dict) -> float:
+    """Per-airport radius override (airports.json ``radius_km``) or type default."""
+    r = a.get("radius_km")
+    return r if r is not None else _RADIUS_KM.get(a["type"], 3.0)
 
 
 @lru_cache(maxsize=1)
@@ -56,6 +68,6 @@ def nearest_airport(lat: float, lon: float) -> dict | None:
         if abs(a["lat"] - lat) > 0.15 or abs(a["lon"] - lon) > 0.2:
             continue
         d = _haversine_km(lat, lon, a["lat"], a["lon"])
-        if d <= _RADIUS_KM.get(a["type"], 3.5) and (best_d is None or d < best_d):
+        if d <= _radius(a) and (best_d is None or d < best_d):
             best, best_d = a, d
     return best

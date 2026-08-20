@@ -16,6 +16,13 @@ class AccessLevel(StrEnum):
     ADMIN = "admin"
     NONE = "none"
 
+class UIMode(StrEnum):
+    # Which UI tier the frontend renders. "simple" hides power-user clutter
+    # (DRES, chat, upload, admin, resync); "advanced" is the full UI. Stored on
+    # the user so the choice follows the account across devices.
+    SIMPLE = "simple"
+    ADVANCED = "advanced"
+
 class DeviceAccess(CamelCaseModel):
     device_id: str
     access_level: AccessLevel = AccessLevel.NONE
@@ -52,6 +59,7 @@ class LoginResponse(CamelCaseModel):
     username: str | None = None
     devices: list[DeviceAccess] | None = None
     sensors: list[SensorDeviceWithDate] | None = None
+    ui_mode: UIMode = UIMode.SIMPLE
 
 class AccessChangeRequest(CamelCaseModel):
     username: str
@@ -67,6 +75,7 @@ class User(Document):
     # No `sensors` here: sensor ownership lives in the `sensor_devices` table, which is what
     # upload auth reads. Documents written before that may still carry the key; it is ignored.
     goal_targets: list[CustomTarget] = []
+    ui_mode: UIMode = UIMode.SIMPLE
 
     class ODMConfig(Document.ODMConfig):
         collection_name = "users"

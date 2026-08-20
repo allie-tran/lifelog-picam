@@ -22,7 +22,7 @@ from auth.auth_models import (
     verify_user,
 )
 from auth.devices import list_user_sensors, sensors_by_username
-from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, SensorStatus, User, UserResponse
+from auth.types import AccessChangeRequest, AccessLevel, CreateUserRequest, LoginRequest, LoginResponse, SensorStatus, UIMode, User, UserResponse
 from database.models import Device, SensorDevice
 from core.dependencies import CamelCaseModel
 
@@ -91,7 +91,22 @@ def verify(token: str, db_session: session.Session = Depends(get_session)):
         "username": user.username,
         "devices": user.devices,
         "sensors": list_user_sensors(db_session, user.username),
+        "uiMode": user.ui_mode,
     }
+
+
+class UIModeRequest(CamelCaseModel):
+    ui_mode: UIMode
+
+
+@router.put("/set-ui-mode")
+def set_ui_mode(request: UIModeRequest, user: Annotated[User, Depends(get_user)]):
+    """
+    Persist the caller's UI tier (simple/advanced) on their own user document so
+    the choice follows the account. Any signed-in user may switch their own mode.
+    """
+    User.update_one({"username": user.username}, {"$set": {"ui_mode": request.ui_mode}})
+    return {"uiMode": request.ui_mode}
 
 
 # -----------------------------------------------------------------------

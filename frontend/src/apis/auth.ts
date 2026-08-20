@@ -1,7 +1,12 @@
 
 import axios from 'axios';
 import { BACKEND_URL } from '../constants/urls';
-import { AccessLevel, UserInfo } from 'types/auth';
+import { AccessLevel, UIMode, UserInfo } from 'types/auth';
+
+// Persist the caller's UI tier on their user document (auth header set globally).
+export const setUiModeRequest = (mode: UIMode) => {
+    return axios.put(`${BACKEND_URL}/auth/set-ui-mode`, { uiMode: mode });
+};
 
 export const createUserRequest = (username: string, password: string, email: string, adminCode: string) => {
     return axios.post(`${BACKEND_URL}/auth/register`, {
