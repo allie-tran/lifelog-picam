@@ -84,8 +84,12 @@ async def lifespan(app: CustomFastAPI):
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
-
-app = CustomFastAPI(lifespan=lifespan, title="SelfHealth API", openapi_url="/openapi.json", docs_url="/docs", redoc_url="/redoc", version="1.0.0")
+app = CustomFastAPI(lifespan=lifespan, title="SelfHealth API",
+                    root_path="/selfhealth/be",
+                    openapi_url="/openapi.json",
+                    docs_url="/docs",
+                    redoc_url="/redoc",
+                    version="1.0.0")
 
 # Sub-app routers. Prefixes preserve the original mount paths so external URLs
 # (frontend + camera clients) are unchanged after the APIRouter migration.
@@ -158,6 +162,17 @@ async def add_process_time_header(request: Request, call_next):
 @app.get("/")
 async def root():
     return {"message": "Hello, World!"}
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - Swagger UI",
+        swagger_ui_parameters={"persistAuthorization": True},
+        # Inject JavaScript to pre-set the authorization header in Swagger UI
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+    )
 
 @app.get("/_debug/tasks")
 async def get_running_tasks():
