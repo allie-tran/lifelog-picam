@@ -120,6 +120,22 @@ async def upload_image(
                 )
                 raise HTTPException(status_code=400, detail="Invalid image file.")
 
+        # PIL only reads the header on open; decode now so a truncated or corrupt body fails
+        # here as a 400 (which uploaders drop) instead of a 500 from save() (which they retry
+        # forever). The KC002's v1 capture script could copy a frame mid-write.
+        try:
+            image.load()
+        except OSError:
+            traceback.print_exc()
+            mark_error(
+                session,
+                username,
+                date,
+                f"{date}/{file_name}",
+                timestamp.astimezone(timezone.utc),
+            )
+            raise HTTPException(status_code=400, detail="Corrupt or truncated image file.")
+
         if  rotation is not None:
             image = image.rotate(rotation, expand=True)
             exif = image.getexif()

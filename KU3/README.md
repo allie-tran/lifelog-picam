@@ -72,30 +72,3 @@ Anything custom must live on `/tmp/sd` or `/config`. An early version wrote phot
 
 Hardware: Ingenic T41ZX/T41ZN (MIPS), uClibc, BusyBox. The vendor bundle includes a `mips-gcc720-uclibc` cross toolchain for building anything custom.
 
-### Why a phone is in the loop
-
-The camera cannot upload to `dcu.allietran.com` directly, for two reasons:
-- **TLS.** BusyBox's `ssl_client` supports only RSA cipher suites, and the backend's Let's Encrypt certificate is ECDSA, so the handshake fails with `alert code 40`. Fixes: reissue the certificate as RSA (`certbot --key-type rsa`), or put an RSA-terminated relay in front of the backend.
-- **No upload client.** BusyBox `wget` has no `--post-data`/`--post-file`, and there is no `curl`. A direct upload would need a cross-compiled client.
-
-Until one of those is solved, the camera buffers photos and the phone pulls them over FTP and uploads them, along with its own GPS.
-
-### Registering a camera with the backend
-
-Each camera needs its own device id, registered as a `camera` sensor. The app's Device tab does this (**Account & registration**). The same thing by hand:
-
-```sh
-TOKEN=$(curl -s -X POST https://dcu.allietran.com/selfhealth/be/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "<user>", "password": "<pass>"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
-
-curl -s -X PUT https://dcu.allietran.com/selfhealth/be/auth/add-sensor \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"deviceId": "kc002_camera_2", "deviceNickname": "KC002 Camera 2",
-       "sensorType": "camera", "associatedUsername": "<user>"}'
-```
-
-### Open questions
-
-- Does our unit have a populated SIM slot? If it does, does `GpsInfo.gprmcbuf=?` report a fix once 4G is up?
-- After a Client → AP → Client Wi-Fi mode switch, the camera forgets its client credentials. The state is probably in `/config/app/conf`.

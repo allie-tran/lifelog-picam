@@ -3,18 +3,21 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from dotenv import load_dotenv
 import requests
+from dotenv import load_dotenv
 from timezonefinder import TimezoneFinder
 
 load_dotenv()
 
 device_id = os.getenv("DEVICE_ID", "omi")
+DIR = "/mnt/ssd0/LifelogPicam"
 tf = TimezoneFinder()
-from_date = datetime(2025, 5, 15, tzinfo=timezone.utc)
+since_date = datetime(2026, 5, 21, tzinfo=timezone.utc)
+to_date = datetime(2026, 6, 7, tzinfo=timezone.utc)
+
 
 def get_points():
-    json_file = "Timeline-Jun.json"
+    json_file = "Timeline.json"
     with open(json_file, "r") as f:
         timeline = json.load(f)
         timeline = timeline["semanticSegments"]
@@ -107,29 +110,30 @@ def get_points():
                 }
             )
 
-            # interpolate points every 10s between start and end time, but only if the activity is longer than 1 minute
-            if (end_time - start_time) > timedelta(minutes=1):
-                gap = 10
-                for t in pd.date_range(start_time, end_time, freq=f"{gap}s"):
-                    ratio = (t - start_time).total_seconds() / (
-                        end_time - start_time
-                    ).total_seconds()
-                    lat = start_lat + ratio * (end_lat - start_lat)
-                    lon = start_lon + ratio * (end_lon - start_lon)
-                    all_points.append(
-                        {
-                            "latitude": lat,
-                            "longitude": lon,
-                            "timestamp": t,
-                            "date": t.date().isoformat(),
-                            "interpolated": True,
-                        }
-                    )
-                    dates.add(t.date().isoformat())
+            # # interpolate points every 10s between start and end time, but only if the activity is longer than 1 minute
+            # if (end_time - start_time) > timedelta(minutes=1):
+            #     gap = 10
+            #     for t in pd.date_range(start_time, end_time, freq=f"{gap}s"):
+            #         ratio = (t - start_time).total_seconds() / (
+            #             end_time - start_time
+            #         ).total_seconds()
+            #         lat = start_lat + ratio * (end_lat - start_lat)
+            #         lon = start_lon + ratio * (end_lon - start_lon)
+            #         all_points.append(
+            #             {
+            #                 "latitude": lat,
+            #                 "longitude": lon,
+            #                 "timestamp": t,
+            #                 "date": t.date().isoformat(),
+            #                 "interpolated": True,
+            #             }
+            #         )
+            #         dates.add(t.date().isoformat())
 
     all_points = sorted(all_points, key=lambda p: p["timestamp"])
     point_timestamps = [p["timestamp"] for p in all_points]
     return all_points, dates, point_timestamps
+
 
 if __name__ == "__main__":
     points = "all_points.csv"
@@ -142,32 +146,55 @@ if __name__ == "__main__":
         all_points = df.to_dict(orient="records")
 
     all_dates = sorted(set(p["date"] for p in all_points))
-    end_point = "http://localhost:8082/location/upload-gps"
     for date in all_dates:
-        if date < from_date.date().isoformat():
+        end_point = "http://localhost:8082/location/upload-gps"
+        if date < since_date.date().isoformat() or date > to_date.date().isoformat():
             continue
-        for point in all_points:
-            if point["date"] == date:
-                payload = {
-                    "latitude": point["latitude"],
-                    "longitude": point["longitude"],
-                    "timestamp": point["timestamp"],
-                    "device_id": device_id,
-                }
+        if os.path.isdir(f"{DIR}/allie/{date}"):
+            print(f"Uploading GPS data for date {date}...")
+            points = []
+            for point in all_points:
+                if point["date"] == date:
+                    payload = {
+                        "latitude": point["latitude"],
+                        "longitude": point["longitude"],
+                        "timestamp": point["timestamp"],
+                        "t": datetime.fromisoformat(point["timestamp"]),
+                        "device_id": device_id,
+                    }
+                    points.append(payload)
+
+            # Sample GPS data for each second
+            every_second_points = []
+            t = points[0]["t"]
+            for point in points[1:]:
+                t2 = point["t"]
+                if (t2 - t).total_seconds() >= 1:
+                    every_second_points.append(point)
+                    t = t2
+
+            for point in every_second_points:
                 response = requests.put(
                     end_point,
-                    json=payload, timeout=10
+                    json={
+                        "latitude": point["latitude"],
+                        "longitude": point["longitude"],
+                        "timestamp": point["timestamp"],
+                        "device_id": device_id,
+                    },
+                    timeout=10,
                 )
-                print(f"Sent point: {payload}, Response: {response.status_code}")
                 if response.status_code != 200:
                     print(f"Error sending point: {response.text}")
-                else:
-                    print(f"Response: {response.json()}")
 
-        end_point = f"http://localhost:8082/location/process-gps?date={date}&device=allie"
-        response = requests.get(end_point, timeout=10, headers={"X-Device-ID": device_id})
-        print(f"Processing GPS data for date {date}, Response: {response.status_code}")
-        if response.status_code != 200:
-            print(f"Error processing GPS data: {response.text}")
-        else:
-            print(f"Response: {response.json()}")
+            end_point = (
+                f"http://localhost:8082/location/process-gps?date={date}&device=allie"
+            )
+            response = requests.get(
+                end_point, timeout=10, headers={"X-Device-ID": device_id}
+            )
+            print(
+                f"Processing GPS data for date {date}, Response: {response.status_code}"
+            )
+            if response.status_code != 200:
+                print(f"Error processing GPS data: {response.text}")
